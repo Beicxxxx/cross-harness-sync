@@ -1,0 +1,14 @@
+{
+  "budgets": {
+    "AGENTS.md": 65,
+    ".ai/state/CURRENT.md": 60,
+    ".ai/handoff/LATEST.md": 80,
+    ".ai/handoff/NEXT_PROMPT.md": 100,
+    ".ai/state/DECISIONS_INDEX.md": 110
+  },
+  "decisions_max_active_entries": 20,
+  "decisions_file": ".ai/state/DECISIONS.md",
+  "secret_files": [".env"],
+  "secret_mirrors": [],
+  "extra_checks": []
+}
