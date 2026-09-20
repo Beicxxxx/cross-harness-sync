@@ -126,6 +126,47 @@ def _retry_sharing(fn):
             delay = min(delay * 2, 0.2)
 
 
+def _read_raw_or_error(path):
+    """The bytes behind one read, as (raw, err): the F1 boundary on its own.
+
+    FileNotFoundError is the ONLY answer that means "absent". Every other
+    OSError — the Errno 13 this host raises routinely — is named, never folded
+    into "no file". Kept separate from the parsing so a caller that is about to
+    write can re-compare bytes without re-decoding them (B6/8).
+    """
+    try:
+        raw = _retry_sharing(path.read_bytes)
+    except FileNotFoundError:
+        return None, None
+    except OSError as exc:
+        return None, f"cannot read: {exc}"
+    return raw, None
+
+
+def read_json_for_update(path):
+    """(data, err, raw): the parsed object AND the exact bytes it came from.
+
+    A caller that will write the record back needs `raw` so it can refuse when
+    the file changed underneath it. `raw` is None only for a genuinely absent
+    file, which is what makes "create it" and "replace what arrived mid-command"
+    distinguishable at write time.
+    """
+    raw, err = _read_raw_or_error(path)
+    if err:
+        return {}, err, None
+    if raw is None:
+        return {}, None, None
+    if b"<<<<<<<" in raw or b">>>>>>>" in raw:
+        return {}, "merge conflict markers", raw
+    try:
+        data = json.loads(raw.decode("utf-8-sig"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        return {}, f"cannot parse: {exc}", raw
+    if not isinstance(data, dict):
+        return {}, "cannot parse: expected a JSON object", raw
+    return data, None, raw
+
+
 def read_json_or_error(path):
     """Read a JSON object, reporting WHY it could not be read.
 
@@ -141,32 +182,63 @@ def read_json_or_error(path):
     opened directly and only a genuine FileNotFoundError means absent; anything
     else the OS refuses becomes an error, the same way an unparseable record
     already does.
+
+    B6/1: this is the single error-aware read every state file now goes
+    through — the lock, runtime/STATUS.json and protocol/VERSION alike.
+    """
+    data, err, _raw = read_json_for_update(path)
+    return data, err
+
+
+def _probe(path):
+    """One stat, three honest answers: (size,) | None | ("unreadable", err).
+
+    B6/1: `path.exists()` answers False when the stat behind it is refused, so
+    `--status` and `--validate` printed MISSING for a file that was there. The
+    probe opens with stat() and names a refusal instead of guessing absence.
     """
     try:
-        raw = _retry_sharing(path.read_bytes)
+        stat_result = _retry_sharing(path.stat)
     except FileNotFoundError:
-        return {}, None
+        return None
     except OSError as exc:
-        return {}, f"cannot read: {exc}"
-    if b"<<<<<<<" in raw or b">>>>>>>" in raw:
-        return {}, "merge conflict markers"
-    try:
-        data = json.loads(raw.decode("utf-8-sig"))
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        return {}, f"cannot parse: {exc}"
-    if not isinstance(data, dict):
-        return {}, "cannot parse: expected a JSON object"
-    return data, None
+        return "unreadable", f"cannot stat: {exc}"
+    return ("ok", stat_result.st_size)
 
 
 def read_json(path):
     """Best-effort read for the untracked runtime files: {} means "no data".
 
     Lock consumers must NOT use this — they need the error, which is the whole
-    of D1. See read_json_or_error.
+    of D1. See read_json_or_error. State WRITERS must not use it either: a
+    discarded error is how checkpoint_count restarted from 0 (B6/1).
     """
     data, _err = read_json_or_error(path)
     return data
+
+
+def _write_json_if_unchanged(path, data, raw, label):
+    """Compare-and-write (B6/8): refuse to replace bytes this command never read.
+
+    `raw` is what `read_json_for_update` validated. A file that cannot be read at
+    write time counts as changed — overwriting an answer we cannot see is the same
+    lie. Bounded and advisory: no extra lock file, no enforcement, and the window
+    narrows to the instant between the probe and os.replace.
+
+    This is for the lock's read-modify-write cycle ONLY. runtime/STATUS.json is an
+    untracked last-writer-wins runtime file and two local checkpoints racing it is
+    the expected case RETRY_ON_SHARING exists for; making that race abort was tried
+    in this round and tests/test_write_atomicity.py's concurrent-checkpoint pin
+    (every rc 0) says so. Finding 1's ruling there is about the READ, not the write.
+    """
+    current, err = _read_raw_or_error(path)
+    if err or current != raw:
+        print(f"{label} ABORTED: {path.name} "
+              f"{err or 'changed since it was read'} — the file on disk is not "
+              "the one this command validated, so nothing was written.")
+        return False
+    write_json(path, data)
+    return True
 
 
 def _atomic_write(path, payload):
@@ -208,10 +280,26 @@ def write_text_atomic(path, text):
 
 
 def get_protocol_version():
+    """The protocol VERSION, as (value, err) — never "unknown" for "no answer".
+
+    B6/1: the old `version_file.exists() / read_text() / else "unknown"` route
+    could not tell "there is no VERSION" from "the OS refused to read it", and
+    `cmd_checkpoint` then PERSISTED the "unknown" into runtime/STATUS.json. On
+    this host Errno 13 is routine, so a transient denial produced a
+    self-consistent-looking state file built on no answer at all, with no named
+    degradation. Absent is now the only route to "unknown"; a refusal returns
+    (None, "cannot read: …") so the caller can omit the key and say so.
+    """
     version_file = PROTOCOL_DIR / "VERSION"
-    if version_file.exists():
-        return version_file.read_text(encoding="utf-8").strip()
-    return "unknown"
+    raw, err = _read_raw_or_error(version_file)
+    if err:
+        return None, err
+    if raw is None:
+        return "unknown", None
+    try:
+        return raw.decode("utf-8").strip(), None
+    except UnicodeDecodeError as decode_exc:
+        return None, f"cannot read: {decode_exc}"
 
 
 def parse_ts(raw):
@@ -266,13 +354,33 @@ def lock_state():
     return LockStatus("held", holder, f"until {lock['expires_at']}")
 
 
+def _report_file(path, name):
+    """One `--status` line: OK, MISS, or ERR — never MISS for a file we could not see."""
+    probed = _probe(path)
+    if probed is None:
+        print(f"  [MISS] {name} (missing)")
+    elif probed[0] == "unreadable":
+        print(f"  [ERR ] {name} ({probed[1]})")
+    else:
+        print(f"  [OK ] {name} ({probed[1]} bytes)")
+
+
 def cmd_status(args):
     _require_paths()
-    status = read_json(RUNTIME_DIR / "STATUS.json")
-    if not status:
+    status, status_err = read_json_or_error(RUNTIME_DIR / "STATUS.json")
+    if status_err:
+        print(f"WARN: session state not read: runtime/STATUS.json "
+              f"{status_err} — unknown, not empty.")
+    elif not status:
         print("No active session found (runtime/STATUS.json missing or empty)")
     else:
-        print(f"Protocol Version : {status.get('protocol_version') or get_protocol_version()}")
+        version = status.get("protocol_version")
+        if not version:
+            version, version_err = get_protocol_version()
+            if version_err:
+                print(f"WARN: protocol version not read ({version_err})")
+                version = "not read"
+        print(f"Protocol Version : {version or 'not read'}")
         print(f"Active Agent     : {status.get('active_agent', '?')}")
         print(f"Last Checkpoint  : {status.get('last_checkpoint', '?')}")
         print(f"Status           : {status.get('status', '?')}")
@@ -296,17 +404,11 @@ def cmd_status(args):
     print("\nState files:")
     for name in ["CURRENT.md", "TASK.md", "DECISIONS.md", "DECISIONS_INDEX.md",
                  "BLOCKERS.md", "ROLE_POLICY.md"]:
-        path = STATE_DIR / name
-        mark = "OK " if path.exists() else "MISS"
-        size = f"({path.stat().st_size} bytes)" if path.exists() else "(missing)"
-        print(f"  [{mark}] {name} {size}")
+        _report_file(STATE_DIR / name, name)
 
     print("\nHandoff files:")
     for name in ["LATEST.md", "NEXT_PROMPT.md"]:
-        path = HANDOFF_DIR / name
-        mark = "OK " if path.exists() else "MISS"
-        size = f"({path.stat().st_size} bytes)" if path.exists() else "(missing)"
-        print(f"  [{mark}] {name} {size}")
+        _report_file(HANDOFF_DIR / name, name)
 
     if ARCHIVE_DIR.exists():
         print(f"\n  Archived handoffs: {len(list(ARCHIVE_DIR.glob('*.md')))}")
@@ -315,7 +417,17 @@ def cmd_status(args):
 def cmd_checkpoint(args):
     _require_paths()
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-    status = read_json(RUNTIME_DIR / "STATUS.json")
+    status_path = RUNTIME_DIR / "STATUS.json"
+    # B6/1: a count this command could not read is not a count of 0. The old
+    # read_json() discarded the F1 error, so one transient denial restarted the
+    # sequence and wrote the reset over the real state — a lie, not a
+    # degradation. Refuse the write and leave the file alone.
+    status, err = read_json_or_error(status_path)
+    if err:
+        print(f"CHECKPOINT ABORTED: runtime/STATUS.json {err} — the existing "
+              "checkpoint count is unknown, so it is not reset to 0 and no state "
+              "file is written.")
+        sys.exit(2)
     status["last_checkpoint"] = now_iso()
     status["checkpoint_count"] = status.get("checkpoint_count", 0) + 1
     status["status"] = "active"
@@ -324,8 +436,13 @@ def cmd_checkpoint(args):
         write_text_atomic(RUNTIME_DIR / "ACTIVE_AGENT", args.agent + "\n")
     if args.task:
         status["current_task"] = args.task
-    status["protocol_version"] = get_protocol_version()
-    write_json(RUNTIME_DIR / "STATUS.json", status)
+    version, version_err = get_protocol_version()
+    if version_err:
+        print(f"WARN: protocol version not read ({version_err}) — the key is "
+              'omitted from runtime/STATUS.json rather than recorded as "unknown".')
+    else:
+        status["protocol_version"] = version
+    write_json(status_path, status)
     print(f"Checkpoint #{status['checkpoint_count']} at {now_display()}")
 
 
@@ -357,11 +474,20 @@ def cmd_prime(args):
     else:
         lock_line = "none — free to acquire."
 
-    status = read_json(RUNTIME_DIR / "STATUS.json")
+    status, status_err = read_json_or_error(RUNTIME_DIR / "STATUS.json")
+    version, version_err = get_protocol_version()
     last = status.get("last_checkpoint", "never")
     agent = status.get("active_agent", "?")
+    if status_err:
+        last, agent = "not read", "?"
 
-    print(f"== SESSION PRIME (cross-harness-sync v{get_protocol_version()}) ==")
+    print(f"== SESSION PRIME (cross-harness-sync v{version or 'not read'}) ==")
+    if version_err:
+        print(f"WARN: protocol version not read ({version_err}) — the protocol in "
+              "use is not confirmed.")
+    if status_err:
+        print(f"WARN: session state not read: runtime/STATUS.json {status_err} — "
+              "the last checkpoint is not confirmed, and 'never' would be a lie.")
     print(f"Writer lock: {lock_line}")
     print(f"Last checkpoint: {last} by {agent}")
     print()
@@ -382,6 +508,17 @@ def cmd_prime(args):
 
 def cmd_handoff(args):
     _require_paths()
+    status_path = RUNTIME_DIR / "STATUS.json"
+    # B6/1: the same discarded error sat in front of this write, and its symptom
+    # is quieter and worse than the checkpoint one — the rewrite drops every
+    # other key the file held and still prints "Handoff prepared". Read first and
+    # abort before archiving, so a refusal leaves no trace at all.
+    status, err = read_json_or_error(status_path)
+    if err:
+        print(f"HANDOFF ABORTED: runtime/STATUS.json {err} — the state on disk is "
+              "unknown, so it is not rewritten and no handoff is prepared.")
+        sys.exit(2)
+
     latest = HANDOFF_DIR / "LATEST.md"
     if latest.exists():
         ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
@@ -391,12 +528,11 @@ def cmd_handoff(args):
         shutil.copy2(str(latest), str(ARCHIVE_DIR / archive_name))
         print(f"Archived previous handoff -> {archive_name}")
 
-    status = read_json(RUNTIME_DIR / "STATUS.json")
     status["status"] = "handed-off"
     status["last_checkpoint"] = now_iso()
     if args.agent:
         status["active_agent"] = args.agent
-    write_json(RUNTIME_DIR / "STATUS.json", status)
+    write_json(status_path, status)
 
     print(f"Handoff prepared at {now_display()}")
     print()
@@ -422,16 +558,33 @@ def cmd_validate(args):
         PROTOCOL_DIR / "VERSION",
     ]
     all_ok = True
+    unreadable = []
     for path in required_files:
         rel = path.relative_to(AI_DIR)
-        if not path.exists():
+        probed = _probe(path)
+        if probed is None:
             print(f"  MISSING: {rel}")
             all_ok = False
-        elif path.stat().st_size == 0:
-            print(f"  EMPTY:   {rel}")
-            all_ok = False
+        elif probed[0] == "unreadable":
+            # B6/1: exists() answered False for a refused stat, so a file that
+            # was present printed MISSING — "looks fine" inverted into the
+            # read-only direction. A file we cannot see is neither present nor
+            # absent, so it gets its own line and its own exit code.
+            print(f"  UNREADABLE: {rel} ({probed[1]})")
+            unreadable.append(str(rel))
         else:
-            print(f"  OK:      {rel} ({path.stat().st_size} bytes)")
+            size = probed[1]
+            if size == 0:
+                print(f"  EMPTY:   {rel}")
+                all_ok = False
+            else:
+                print(f"  OK:      {rel} ({size} bytes)")
+    if unreadable:
+        print(f"\nValidation not confirmed: {len(unreadable)} required file(s) "
+              "could not be read, so their presence was neither confirmed nor "
+              "denied. rc 2 means 'no verdict'; rc 1 still means 'files missing "
+              "or empty'.")
+        sys.exit(2)
     print("\nAll state files present and non-empty." if all_ok
           else "\nSome files are missing or empty.")
     sys.exit(0 if all_ok else 1)
@@ -515,7 +668,7 @@ def cmd_unlock(args):
     # failed read returns would leave a released_at-only stub whose next read
     # says "free": exactly the evidence this batch exists to keep. The record
     # written back is therefore either one that parsed or nothing at all.
-    lock, err = read_json_or_error(LOCK_PATH)
+    lock, err, lock_raw = read_json_for_update(LOCK_PATH)
     if err:
         print(f"UNLOCK ABORTED: the lock record could not be parsed ({err}); "
               "refusing to release a record this command cannot read. Resolve "
@@ -523,7 +676,12 @@ def cmd_unlock(args):
         sys.exit(2)
     lock["released_at"] = now_iso()
     lock["released_by"] = args.agent
-    write_json(LOCK_PATH, lock)   # never deleted: the record is the audit trail
+    # B6/8: F2 closed the parse-error half of the read→write window, not the
+    # window. A merge that PARSES is the harder case — nothing is wrong with the
+    # bytes this command holds, they are simply no longer the bytes on disk, and
+    # os.replace would destroy an uncommitted conflict. Compare and refuse.
+    if not _write_json_if_unchanged(LOCK_PATH, lock, lock_raw, "UNLOCK"):
+        sys.exit(2)
     print(f"Writer lock released at {now_display()}")
 
 
@@ -538,23 +696,34 @@ def _guard_state_writes(command, args):
     The lock stays ADVISORY, deliberately: it coordinates honest agents, and the
     protocol refuses to require a server, so a record that merely names another
     holder warns BY NAME and continues. Only an unreadable record — the state
-    this batch defined as HELD — blocks the write, and --force remains the local
-    override for it. No enforcement that needs a server, and no wall that
-    --force cannot open.
+    this batch defined as HELD — blocks the write.
+
+    B6/2: the override is now the SAME pair --lock demands. Plain --force used to
+    open the wall for a state writer while cmd_lock refused it without
+    --discard-lock, so an honest agent that obeyed the printed hint cleared the
+    block AND left the tracked, still-conflicted WRITER_LOCK.json in the tree for
+    the close-out `git add -A` to commit. --force does not resolve a conflict;
+    the refusal says so, and the WARN says what the pair does and does not buy.
     """
     status = lock_state()
     if status.state in ("free", "expired"):
         return
     force = bool(getattr(args, "force", False))
+    discard = bool(getattr(args, "discard_lock", False))
     if status.state == "error":
-        if force:
+        if force and discard:
             print(f"WARN {command}: the writer lock record is unreadable "
-                  f"({status.detail}); --force writes state over it anyway.")
+                  f"({status.detail}); --force --discard-lock writes state over "
+                  "it anyway. That does NOT resolve the conflict: the tracked "
+                  "record stays in the tree until --lock --force --discard-lock "
+                  "or a git resolve replaces it, and the abandoned bytes stay in "
+                  "git history, so the hold remains auditable.")
             return
         print(f"{command.upper()} REFUSED: the writer lock record is unreadable "
               f"({status.detail}), which is HELD, not free — no state file is "
-              "written. Resolve the conflict, or re-run with --force to write "
-              "anyway.")
+              "written. Resolve the git conflict and re-run, or re-run with "
+              "--force --discard-lock to write anyway; --force alone does not "
+              "resolve the conflict, so it is not accepted here either.")
         sys.exit(1)
     if status.holder == getattr(args, "agent", None):
         return
@@ -611,20 +780,27 @@ def main():
         cmd_status(args)
     elif args.prime:
         cmd_prime(args)
-    elif args.handoff or args.validate or not (args.lock or args.unlock):
-        # F3: the three commands that change the tree are --handoff, --validate
-        # and the bare-checkpoint default, and none of them had ever looked at
-        # the lock, so skipping --lock was enough to clobber state beside a
-        # conflicted (i.e. HELD) record. One gate, at the one place where the
-        # command being run is known, so a writer cannot be reached without the
-        # lock having been consulted.
-        command = ("handoff" if args.handoff else
-                   "validate" if args.validate else "checkpoint")
+    elif args.validate:
+        # B6/3: --validate writes nothing, and its documented rc 1 means "state
+        # files missing or empty" (usage block above, SKILL.md). The F3 gate made
+        # rc 1 ALSO mean "the lock was unreadable and nothing was checked", which
+        # overloads the code and reports a verdict the command never reached. It
+        # is ungated; its own reads are error-aware instead (rc 2 = no verdict).
+        cmd_validate(args)
+    elif args.handoff or not (args.lock or args.unlock):
+        # F3: the two commands that change the tree are --handoff and the
+        # bare-checkpoint default, and neither had ever looked at the lock, so
+        # skipping --lock was enough to clobber state beside a conflicted (i.e.
+        # HELD) record. One gate, at the one place in the CLI where the command
+        # being run is known, so THROUGH THE CLI a writer cannot be reached
+        # without the lock having been consulted. An in-process cmd_* call after
+        # a hand-wired _set_paths() skips it — _require_paths() plus
+        # tests/test_ai_common.py is what keeps that route a test and not a
+        # workflow.
+        command = "handoff" if args.handoff else "checkpoint"
         _guard_state_writes(command, args)
         if args.handoff:
             cmd_handoff(args)
-        elif args.validate:
-            cmd_validate(args)
         else:
             cmd_checkpoint(args)
     elif args.lock:
