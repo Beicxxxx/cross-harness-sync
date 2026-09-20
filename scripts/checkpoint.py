@@ -28,8 +28,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
+import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import NamedTuple
@@ -57,6 +60,9 @@ PROTOCOL_DIR: Path | None = None
 LOCK_PATH: Path | None = None
 
 DEFAULT_TTL_SECONDS = 4 * 3600
+# How long a concurrent checkpoint on this machine may keep this one waiting:
+# 8 tries doubling from 10ms is ~0.7s, then the error is real and propagates.
+RETRY_ON_SHARING = 8
 
 
 def _set_paths(ai_dir: Path) -> None:
@@ -102,6 +108,24 @@ def now_display():
     return f"{local:%Y-%m-%d %H:%M:%S} ({zone}, UTC{offset})"
 
 
+def _retry_sharing(fn):
+    """Run `fn`, retrying the transient sharing violations Windows raises while
+    another process is mid-replace on the same path (Errno 13 / WinError 5).
+
+    Both halves of an atomic write need it: retrying only the writer leaves the
+    paired read dying under a concurrent checkpoint (D9).
+    """
+    delay = 0.01
+    for left in range(RETRY_ON_SHARING, 0, -1):
+        try:
+            return fn()
+        except PermissionError:
+            if left == 1:
+                raise
+            time.sleep(delay)
+            delay = min(delay * 2, 0.2)
+
+
 def read_json_or_error(path):
     """Read a JSON object, reporting WHY it could not be read.
 
@@ -111,7 +135,7 @@ def read_json_or_error(path):
     """
     if not path.exists():
         return {}, None
-    raw = path.read_bytes()
+    raw = _retry_sharing(path.read_bytes)
     if b"<<<<<<<" in raw or b">>>>>>>" in raw:
         return {}, "merge conflict markers"
     try:
@@ -133,12 +157,42 @@ def read_json(path):
     return data
 
 
+def _atomic_write(path, payload):
+    """tempfile in the target's own directory -> fsync -> os.replace (D8, D9).
+
+    Plain `os.rename` raises on Windows when the target exists, so the
+    convenience wrapper around it degrades to copy+unlink — neither atomic nor
+    safe for a tracked file. `os.replace` is the atomic form on both platforms,
+    and a unique temp name keeps two local writers from clobbering each other's
+    partial file. `payload(handle)` writes the bytes; nothing is left behind if
+    it raises.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp",
+                               dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            payload(handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        _retry_sharing(lambda: os.replace(tmp, str(path)))
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
 def write_json(path, data):
-    tmp_path = path.with_suffix(".tmp")
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-    shutil.move(str(tmp_path), str(path))
+    def payload(handle):
+        json.dump(data, handle, indent=2, ensure_ascii=False)
+        handle.write("\n")
+    _atomic_write(path, payload)
+
+
+def write_text_atomic(path, text):
+    """The same discipline for the non-JSON runtime files: a reader must never
+    see ACTIVE_AGENT half-written."""
+    _atomic_write(path, lambda handle: handle.write(text))
 
 
 def get_protocol_version():
@@ -255,7 +309,7 @@ def cmd_checkpoint(args):
     status["status"] = "active"
     if args.agent:
         status["active_agent"] = args.agent
-        (RUNTIME_DIR / "ACTIVE_AGENT").write_text(args.agent + "\n", encoding="utf-8")
+        write_text_atomic(RUNTIME_DIR / "ACTIVE_AGENT", args.agent + "\n")
     if args.task:
         status["current_task"] = args.task
     status["protocol_version"] = get_protocol_version()
@@ -311,7 +365,7 @@ def cmd_prime(args):
     print("Before writing any state file:")
     print("  python .ai/scripts/checkpoint.py --lock --agent <your-harness-name>")
     print("At close-out: python .ai/scripts/sync_verify.py must be all green,")
-    print("then --unlock, commit, and push.")
+    print("then --unlock --agent <your-name>, commit, and push.")
 
 
 def cmd_handoff(args):
@@ -340,7 +394,8 @@ def cmd_handoff(args):
     print("     Evidence pointers / Warnings / Next step / Must-read list")
     print(f"  3. {HANDOFF_DIR / 'NEXT_PROMPT.md'} — next agent's starting prompt")
     print()
-    print("Then run sync_verify.py, release the lock (--unlock), commit, and push.")
+    print("Then run sync_verify.py, release the lock "
+          "(--unlock --agent <name>), commit, and push.")
 
 
 def cmd_validate(args):
@@ -422,25 +477,30 @@ def cmd_unlock(args):
     _require_paths()
     status = lock_state()
     if status.state == "error":
-        # D1 on the release path: a record that cannot be read cannot be
-        # "released" — releasing it would erase the other machine's evidence.
-        print(f"Lock record cannot be parsed ({status.detail}); it is treated as "
-              "HELD, so there is nothing to release here. Resolve the git "
-              "conflict first.")
+        print(f"Lock record is unreadable ({status.detail}); refusing to release "
+              "it blind. Resolve the git conflict, then --unlock --agent <name>.")
+        sys.exit(2)
+    if status.state == "free":
+        # Nothing to release: no record, or one already released — the record is
+        # the audit trail, so it is kept, never deleted.
+        print("Writer lock: none" + ("" if status.detail == "no lock file"
+                                     else f" — {status.detail}"))
+        return
+    # D2: the holder check used to run only when --agent happened to be passed,
+    # which is exactly the command --prime told users to run. An expired record
+    # still names whose pen it was, so it needs the name too.
+    if not args.agent:
+        print(f"--unlock requires --agent <name>: the lock is held by "
+              f"{status.holder} ({status.detail}).")
+        sys.exit(2)
+    if status.holder != args.agent and not args.force:
+        print(f"Lock is held by {status.holder}, not {args.agent}. "
+              "Use --force to override.")
         sys.exit(1)
     lock, _err = read_json_or_error(LOCK_PATH)
-    if not lock:
-        print("No lock file found — nothing to release.")
-        return
-    # Only an unexpired hold blocks a release here: `expired` keeps its old
-    # meaning (the TTL ended the hold), so no holder is reported. Who may
-    # release whose pen is Task 5.
-    holder = status.holder if status.state == "held" else None
-    if holder and args.agent and holder != args.agent and not args.force:
-        print(f"Lock is held by {holder}, not {args.agent}. Use --force to override.")
-        sys.exit(1)
     lock["released_at"] = now_iso()
-    write_json(LOCK_PATH, lock)  # audit artifact: mark released, never delete
+    lock["released_by"] = args.agent
+    write_json(LOCK_PATH, lock)   # never deleted: the record is the audit trail
     print(f"Writer lock released at {now_display()}")
 
 
@@ -480,7 +540,8 @@ def main():
     group.add_argument("--lock", action="store_true",
                        help="Acquire the advisory writer lock")
     group.add_argument("--unlock", action="store_true",
-                       help="Release the advisory writer lock")
+                       help="Release the advisory writer lock "
+                            "(--agent <name> is required against a live lock)")
 
     args = parser.parse_args()
 
