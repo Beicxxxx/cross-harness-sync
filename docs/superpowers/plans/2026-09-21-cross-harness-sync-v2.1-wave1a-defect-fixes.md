@@ -45,7 +45,7 @@ The repo has no tests, no `tests/`, no `pytest.ini`. Nothing below can be TDD'd 
 `requirements-dev.txt`:
 
 ```
-pytest>=7,<9
+pytest>=7,<10
 ```
 
 `pytest.ini`:
@@ -187,15 +187,18 @@ def test_scaffold_into_git_repo_exits_zero(ai_repo):
 
 
 def test_fresh_scaffold_verifies_all_green(ai_repo):
-    """Baseline for later tasks: 14 checks, none failing. If this count changes,
-    a task changed the check set and must be reviewed, not silently absorbed."""
+    """Baseline for later tasks: every check that ran passed, and none were
+    skipped. Deliberately NOT a literal count — Tasks 3, 6 and 7 each change the
+    check set, and a hard-coded number turns every legitimate change into a
+    re-edit of this test. The final count is pinned once, in Task 12."""
     res = run_python(ai_repo / ".ai" / "scripts" / "sync_verify.py", cwd=ai_repo)
     assert res.rc == 0, res.stdout
-    summary = [ln for ln in res.lines if ln.startswith("==")]
-    assert any(summary[0].startswith("== sync_verify:")), summary
-    assert any(ln.endswith("checks passed") and ln.startswith("== 14/14")
-               for ln in summary), summary
-    assert not any(ln.startswith("[FAIL]") for ln in res.lines), res.lines
+    checks = [ln for ln in res.lines if ln.startswith("[")]
+    assert checks, res.lines
+    assert not any(ln.startswith("[FAIL]") for ln in checks), checks
+    assert not any(ln.startswith("[SKIP]") for ln in checks), checks
+    summary = [ln for ln in res.lines if "checks passed" in ln]
+    assert len(summary) == 1, res.lines
 
 
 def test_scaffold_is_idempotent(ai_repo):
@@ -210,7 +213,7 @@ def test_scaffold_is_idempotent(ai_repo):
 - [ ] **Step 5: Run it**
 
 Run: `python -m pytest tests/test_harness_smoke.py -v`
-Expected: PASS, 4 tests. If the `14/14` assertion fails, print the real count and **do not** weaken the assertion — record the number in the commit message, because the count is the tripwire for later tasks.
+Expected: PASS, 4 tests. Record the actual `N/N` from the summary line in the commit message — that number is the baseline later tasks are expected to move, and the assertion here is deliberately count-free so it cannot go stale.
 
 - [ ] **Step 6: Commit**
 
@@ -410,22 +413,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     from ai_common import RepoError, decode, is_git_repo, protect_stdio, \
         resolve_roots, run_git
-except ImportError:  # shipped fallback: keep old behaviour if not copied in
-    RepoError = RuntimeError
-    def decode(raw): return (raw or b"").decode("utf-8", "replace")
-    def is_git_repo(root): return True
-    def protect_stdio(): return None
-    AI = Path(__file__).resolve().parent.parent
-    def resolve_roots(_f): return AI, AI.parent
-    def run_git(root, args, timeout=60):
-        import subprocess
-        p = subprocess.run(["git", *args], cwd=str(root), capture_output=True,
-                           timeout=timeout)
-        class R: rc, stdout, stderr, timed_out, ok = p.returncode, p.stdout, p.stderr, False, p.returncode == 0
-        def out(self=R): return decode(self.stdout)
-        R.out = out
-        return R()
+except ImportError:
+    print("[FAIL] install layout: ai_common.py is missing from .ai/scripts/ — "
+          "re-run init_sync.py so the shared primitives are copied in")
+    sys.exit(2)
 ```
+
+There is deliberately **no** inline fallback re-implementing `run_git`/`decode`. A second copy of the subprocess plumbing would be a second copy of the fail-open path this task exists to remove, and duplicated logic is a review defect on its own. If `ai_common.py` is absent, the install is broken and must say so.
 
 Then in `main()` the first lines become:
 
@@ -513,9 +507,13 @@ def test_user_budget_entry_does_not_erase_other_caps(ai_repo, sv):
 
 
 def test_user_secret_files_still_covers_env(ai_repo, sv):
+    """The deep merge must ADD prod.env to the list, not replace it. `.env` itself
+    PASSES because init_sync writes it into .gitignore, so git check-ignore
+    succeeds — asserting FAIL here would demand the opposite of correct."""
     write_cfg(ai_repo, {"secret_files": ["prod.env"]})
     res = run_python(sv, cwd=ai_repo)
-    assert any(ln.startswith("[FAIL] secret ignored: .env")
+    assert res.rc == 1, res.stdout
+    assert any(ln.startswith("[PASS] secret ignored: .env")
                for ln in res.lines), res.lines
     assert any(ln.startswith("[FAIL] secret ignored: prod.env")
                for ln in res.lines), res.lines
@@ -764,7 +762,7 @@ and extend `FILE_MAP` with `("authorizations/INDEX.md", ".ai/state/authorization
 - [ ] **Step 5: Run the suite**
 
 Run: `python -m pytest tests/ -q`
-Expected: all PASS; the smoke test's `14/14` will now read `16/16` (two new required files) — update the smoke assertion to the new number **in the same commit** and state the reason in the message.
+Expected: all PASS. This task adds two required files, so the verifier's check count rises by two; the smoke test's assertion is count-free by design, so it needs no edit here — state the new `N/N` in the commit message instead.
 
 - [ ] **Step 6: Commit**
 
@@ -908,8 +906,8 @@ def lock_state():
     expires = parse_ts(lock.get("expires_at"))
     if expires is None:
         return LockStatus("held", holder,
-                          "malformed or absent expires_at — never auto-expires; "
-                          "expire it with --unlock --force")
+                          "no expiry (malformed or absent expires_at) — do not "
+                          "rely on the TTL; release with --unlock --force")
     if now_dt() > expires:
         return LockStatus("expired", holder, f"expired {lock['expires_at']}")
     return LockStatus("held", holder, f"until {lock['expires_at']}")
@@ -1736,12 +1734,6 @@ Expected: FAIL — both commands currently succeed, and the lock in one worktree
 
 ```python
 def checkout_layout(root: Path) -> tuple[str, str]:
-    try:
-        resolved = root.resolve()
-    except OSError:
-        resolved = root
-    if resolved != root and resolved.is_relative_to(getattr(Path.cwd(), "parent", root)):
-        pass  # resolution alone is normal; only .ai itself being a link matters
     ai = root / AI_DIR_NAME
     if ai.is_symlink():
         return "symlinked", f"{ai} is a symlink -> {ai.readlink()}"
@@ -1870,7 +1862,10 @@ def test_downgrade_is_refused(ai_repo):
 
 
 def test_no_milestones_references_remain():
-    out = subprocess.run(["git", "grep", "-l", "MILESTONES"], cwd=str(REPO),
+    """docs/superpowers is excluded on purpose: the spec and this plan discuss the
+    D25 removal by name, so a bare git grep could never pass."""
+    out = subprocess.run(["git", "grep", "-l", "MILESTONES", "--",
+                          ":!docs/superpowers"], cwd=str(REPO),
                          capture_output=True, text=True).stdout
     assert out.strip() == "", out
 
