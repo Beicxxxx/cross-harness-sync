@@ -1,0 +1,8 @@
+# Review-tooling and test artifacts that must never enter a commit.
+# Added by controller ruling during Task 0 review: this repo had no root
+# .gitignore, so every later `git add tests/` in wave 1a would have committed
+# the .pyc files pytest leaves behind.
+__pycache__/
+*.pyc
+.pytest_cache/
+.superpowers/
