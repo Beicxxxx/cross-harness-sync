@@ -2,9 +2,11 @@
 """Scaffold the cross-harness-sync system into a target repository.
 
 Usage:
-    python init_sync.py [REPO_ROOT] [--force] [--no-agents-block]
+    python init_sync.py [REPO_ROOT] [--force] [--clobber] [--scripts-only]
+                        [--no-agents-block]
 
-Creates (never overwrites unless --force):
+Creates (never overwrites unless --force, and --force never overwrites state
+the caller has edited unless --clobber):
     .ai/state/{CURRENT,TASK,BLOCKERS,ROLE_POLICY,DECISIONS,DECISIONS_INDEX}.md
     .ai/handoff/{LATEST,NEXT_PROMPT}.md + archive/
     .ai/protocol/VERSION
@@ -19,10 +21,23 @@ Creates (never overwrites unless --force):
 
 After running, fill in every <placeholder> in AGENTS.md / SYNC_PROMPT.md and
 the state files, then commit and push.
+
+Flags:
+    --force          refresh every file that is still an untouched copy of its
+                     template (scripts, protocol files and unedited state).
+                     Edited state/config prints KEEP (edited) and survives: in
+                     this tool `.ai/state` IS the work state (D7).
+    --clobber        overwrite edited state too (implies --force). Prints a
+                     warning telling you to commit first, because this is the
+                     one path that can destroy work.
+    --scripts-only   refresh `.ai/scripts/` and `.ai/protocol/VERSION` and
+                     nothing else: no state, config, template, AGENTS.md,
+                     CLAUDE.md or .gitignore is read, written or created.
 """
 from __future__ import annotations
 
 import argparse
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -78,10 +93,120 @@ GITIGNORE_LINES = [
     ".env",
 ]
 
+# Destinations that hold the caller's work rather than the skill's own files:
+# everything init installs except `.ai/templates/`, which is protocol text the
+# skill re-ships on every upgrade. `--force` refreshes the scripts and these
+# only while they are still untouched templates (D7).
+PROTECTED_DESTS = frozenset(dst for _, dst in FILE_MAP
+                            if not dst.startswith(".ai/templates/"))
 
-def copy_file(src: Path, dst: Path, force: bool) -> str:
-    if dst.exists() and not force:
-        return f"SKIP (exists): {dst}"
+PLACEHOLDER_RE = re.compile(r"<[^<>]*>")
+_TEMPLATE_INDEX: tuple[frozenset[str], frozenset[str]] | None = None
+
+
+def _normalised(text: str) -> str:
+    """Fold newline style, drop a BOM and trailing whitespace, drop leading and
+    trailing blank lines. Content in the middle is left exactly as it is."""
+    text = text.lstrip("\ufeff").replace("\r\n", "\n").replace("\r", "\n")
+    lines = [ln.rstrip() for ln in text.split("\n")]
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    return "\n".join(lines)
+
+
+def _installed_template_texts() -> list[str]:
+    paths = [TEMPLATES / rel for rel, _ in FILE_MAP]
+    paths.append(TEMPLATES / "AGENTS.md")
+    out = []
+    for path in paths:
+        if not path.is_file():
+            continue
+        try:
+            out.append(_normalised(path.read_text(encoding="utf-8-sig")))
+        except (OSError, UnicodeDecodeError):
+            continue
+    return out
+
+
+def _template_index() -> tuple[frozenset[str], frozenset[str]]:
+    """`(whole templates, every line any template contains)`, built once."""
+    global _TEMPLATE_INDEX
+    if _TEMPLATE_INDEX is None:
+        blobs = frozenset(_installed_template_texts())
+        lines = {ln for blob in blobs for ln in blob.split("\n") if ln.strip()}
+        _TEMPLATE_INDEX = (blobs, frozenset(lines))
+    return _TEMPLATE_INDEX
+
+
+def is_template_shaped(text: str) -> bool:
+    """True only for a copy of one of OUR templates that nobody wrote in.
+
+    Both signals are measured against the shipped templates instead of against a
+    guess about what prose looks like:
+
+      * the text is one whole installed template, unchanged apart from newline /
+        BOM / trailing-whitespace noise, or
+      * every non-blank line is either a line that already appears in a shipped
+        template or a line still carrying an unfilled `<placeholder>`. The
+        second signal is what survives a protocol upgrade, where the file on
+        disk is the previous version's untouched template.
+
+    The line-by-line version of this rule, as written in the wave 1a plan,
+    cannot work: our
+    own templates hold static prose paragraphs ("Archived:
+    `.ai/state/archive/STAGE_MAP.md` ...") that no placeholder marks, so a rule
+    that demands a placeholder on every content line calls an untouched
+    CURRENT.md edited (and --force then refreshes nothing), while a rule that
+    skips `|`- and `-`-prefixed lines calls a filled-in state table untouched —
+    destroying exactly the file D7 is about.
+
+    Known limit: a caller who only DELETED lines from a template still reads as
+    untouched, and refreshing it puts those lines back. No text of theirs is
+    lost, which is the asymmetry this guard optimises for; `--clobber` stays the
+    only path that overwrites anything recognised as edited.
+    """
+    norm = _normalised(text)
+    if not norm:
+        return False
+    blobs, anchors = _template_index()
+    if norm in blobs:
+        return True
+    for line in (ln for ln in norm.split("\n") if ln.strip()):
+        if line in anchors or PLACEHOLDER_RE.search(line) or "<!--" in line:
+            continue
+        return False
+    return True
+
+
+def _read_text(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def copy_file(src: Path, dst: Path, force: bool,
+              protected: bool = False) -> str:
+    """Install one file. The return value is a printed line, never an exception.
+
+    D24: the source is checked before anything is written. `shutil.copy2` on a
+    missing template raised straight out of the install loop, so one deleted
+    template left a half-built `.ai/` tree and a traceback instead of a name.
+    """
+    if not src.is_file():
+        return f"ERROR (missing source template): {src}"
+    if dst.exists():
+        if not force:
+            return f"SKIP (exists): {dst}"
+        if protected:
+            existing = _read_text(dst)
+            if existing is None:
+                return (f"KEEP (unreadable): {dst} — not text we can compare; "
+                        "pass --clobber to overwrite")
+            if not is_template_shaped(existing):
+                return f"KEEP (edited): {dst} — pass --clobber to overwrite"
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(str(src), str(dst))
     return f"wrote: {dst}"
@@ -135,7 +260,17 @@ def main() -> int:
     parser.add_argument("repo_root", nargs="?", default=".",
                         help="Target repository root (default: cwd)")
     parser.add_argument("--force", action="store_true",
-                        help="Overwrite existing files")
+                        help="Overwrite existing files that are still "
+                             "untouched templates; edited state and config are "
+                             "kept (see --clobber)")
+    parser.add_argument("--clobber", action="store_true",
+                        help="Overwrite edited state files too (implies "
+                             "--force); commit first, this is the one path "
+                             "that can destroy work")
+    parser.add_argument("--scripts-only", action="store_true",
+                        help="Refresh .ai/scripts/ and protocol/VERSION only; "
+                             "leave state, config, AGENTS.md, CLAUDE.md and "
+                             ".gitignore alone")
     parser.add_argument("--no-agents-block", action="store_true",
                         help="Do not touch AGENTS.md")
     args = parser.parse_args()
@@ -145,15 +280,40 @@ def main() -> int:
         print(f"ERROR: {root} is not a directory")
         return 2
 
-    print(f"Scaffolding cross-harness-sync v{PROTOCOL_VERSION} into {root}\n")
+    # --clobber is strictly stronger than --force, so it implies it rather than
+    # silently doing nothing when it is the only one passed.
+    force = args.force or args.clobber
+    # With --clobber nothing is protected; copy_file keeps its original meaning
+    # of "overwrite this destination".
+    protect = not args.clobber
+    rc = 0
 
-    for rel_src, rel_dst in FILE_MAP:
-        print(copy_file(TEMPLATES / rel_src, root / rel_dst, args.force))
+    print(f"Scaffolding cross-harness-sync v{PROTOCOL_VERSION} into {root}\n")
+    if args.clobber:
+        print("WARNING: --clobber overwrites edited .ai state and config. Commit "
+              "the work first (`git add -A && git commit`) so this stays "
+              "recoverable.")
+
+    if args.scripts_only:
+        print("scripts-only: state files, handoff, sync_config.json, "
+              ".ai/templates/, AGENTS.md, CLAUDE.md and .gitignore are left "
+              "exactly as they are")
+    else:
+        for rel_src, rel_dst in FILE_MAP:
+            line = copy_file(TEMPLATES / rel_src, root / rel_dst, force,
+                             protected=protect and rel_dst in PROTECTED_DESTS)
+            print(line)
+            if line.startswith("ERROR"):
+                rc = 1
+
     for rel_src, rel_dst in SCRIPT_MAP:
-        print(copy_file(SKILL_DIR / "scripts" / rel_src, root / rel_dst, args.force))
+        line = copy_file(SKILL_DIR / "scripts" / rel_src, root / rel_dst, force)
+        print(line)
+        if line.startswith("ERROR"):
+            rc = 1
 
     version = root / ".ai/protocol/VERSION"
-    if args.force or not version.exists():
+    if force or not version.exists():
         version.parent.mkdir(parents=True, exist_ok=True)
         version.write_text(PROTOCOL_VERSION + "\n", encoding="utf-8")
         print(f"wrote: {version}")
@@ -161,10 +321,11 @@ def main() -> int:
     (root / ".ai/state/archive").mkdir(parents=True, exist_ok=True)
     (root / ".ai/runtime").mkdir(parents=True, exist_ok=True)
 
-    print(update_gitignore(root))
-    if not args.no_agents_block:
-        print(update_agents_md(root, args.force))
-    print(write_claude_pointer(root))
+    if not args.scripts_only:
+        print(update_gitignore(root))
+        if not args.no_agents_block:
+            print(update_agents_md(root, force))
+        print(write_claude_pointer(root))
 
     print("\nNext steps:")
     print("  1. Fill in every <placeholder> in AGENTS.md, .ai/SYNC_PROMPT.md,")
@@ -173,7 +334,7 @@ def main() -> int:
     print("     (extra_checks, secret_mirrors).")
     print("  3. python .ai/scripts/sync_verify.py  → should be all green.")
     print("  4. Commit and push.")
-    return 0
+    return rc
 
 
 if __name__ == "__main__":
