@@ -17,8 +17,9 @@ Before any work, in order:
    `python .ai/scripts/checkpoint.py --lock --agent <your-harness-name>`.
    If another agent holds an unexpired lock, STOP and report.
 5. At close-out: run `python .ai/scripts/sync_verify.py` (must be all green),
-   update CURRENT.md / LATEST.md, release the lock (`--unlock`), then commit
-   and push as `<NAME> <<EMAIL>>`. Never commit secrets.
+   update CURRENT.md / LATEST.md, release the lock
+   (`--unlock --agent <your-harness-name>`), then commit and push as
+   `<NAME> <<EMAIL>>`. Never commit secrets.
 
 Standing red lines: <one line, e.g. "Gate X = DO NOT ADVANCE; only the user
 lifts it."> The single active task is in `TASK.md`.

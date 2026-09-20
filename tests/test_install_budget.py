@@ -21,6 +21,10 @@ already had files of its own:
           `git add -A && git push` the installed instructions tell every agent
           to run at close-out committed the bytecode the installed scripts
           generate — and pushed it to the other machine.
+  N6      The managed block and `templates/SYNC_PROMPT.md` still taught a bare
+          `--unlock`, which Task 5 turns into exit 2: the installed canonical
+          instructions would order every agent to run a command the installed
+          tool refuses.
 
 Every assertion here is over file content, a config value, a `git` listing or a
 named printed line. Nothing asserts on the absence of subprocess output.
@@ -276,6 +280,53 @@ def test_an_unterminated_block_is_a_named_refusal_not_an_append(repo):
     assert path.read_text("utf-8") == damaged
     assert marker_count(path, "BEGIN CROSS-HARNESS-SYNC") == 1
     assert "damaged by a merge conflict" in path.read_text("utf-8")
+
+
+# --------------------------------------------------------------------------
+# N6 — the installed instructions must not teach a command the tool refuses
+
+
+UNLOCK_SITES = (
+    SCRIPTS / "init_sync.py",
+    SCRIPTS.parent / "templates" / "AGENTS.md",
+    SCRIPTS.parent / "templates" / "SYNC_PROMPT.md",
+    SCRIPTS.parent / "templates" / "ROLE_POLICY.md",
+)
+
+
+def test_no_installed_instruction_prints_a_bare_unlock():
+    """Task 5 makes a bare `--unlock` exit 2 unless the holder is named, so the
+    text this tool writes into the user's repo has to name the agent too.
+
+    The scan is bounded to the files this batch owns — the same bare form is
+    still in README.md / SKILL.md / reference.md, which are the doc lane's to
+    change (reported in batch-B5-report.md).
+    """
+    hits = []
+    for path in UNLOCK_SITES:
+        text = path.read_text("utf-8")
+        for ln in text.splitlines():
+            if "--unlock" in ln:
+                hits.append((path.name, ln.strip()))
+    assert len(hits) >= 2, hits
+    bare = [h for h in hits if "--agent" not in h[1] and "--force" not in h[1]]
+    assert not bare, bare
+
+
+def test_the_installed_sync_prompt_carries_the_agent_scoped_unlock(ai_repo):
+    text = (ai_repo / ".ai" / "SYNC_PROMPT.md").read_text("utf-8")
+    assert "--unlock --agent" in text, text
+    assert "release the lock (`--unlock`)" not in text, text
+
+
+def test_the_managed_block_carries_the_agent_scoped_unlock(repo):
+    write_agents(repo, 8)
+    res = scaffold(repo)
+    assert res.rc == 0, res.stdout + res.stderr
+    text = (repo / "AGENTS.md").read_text("utf-8")
+    assert "--unlock --agent" in text, text
+    assert line_count(repo / "AGENTS.md") == 8 + BLOCK_SPAN, line_count(
+        repo / "AGENTS.md")
 
 
 # --------------------------------------------------------------------------

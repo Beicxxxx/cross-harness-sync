@@ -66,8 +66,8 @@ MANAGED_BLOCK = f"""{MANAGED_BEGIN}
   before writing state files; review tiers in `.ai/state/ROLE_POLICY.md`.
 - New decision = one line in `DECISIONS_INDEX.md` + ≤ 15 lines in `DECISIONS.md`.
 - Handoff: `.ai/handoff/LATEST.md`, 6 sections, ≤ 80 lines.
-- Close out: `python .ai/scripts/sync_verify.py` all green → `--unlock` →
-  commit + push. Never force-push, never commit secrets.
+- Close out: `python .ai/scripts/sync_verify.py` all green → `--unlock --agent
+  <name>` → commit + push. Never force-push, never commit secrets.
 {MANAGED_END}"""
 
 # N2: the markers are recognised as a FAMILY, not as the two literals above.
