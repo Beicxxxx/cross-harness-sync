@@ -1,1 +1,2 @@
 pytest>=7,<10
+pytest-xdist>=3
