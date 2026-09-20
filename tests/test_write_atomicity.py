@@ -114,12 +114,22 @@ def test_the_paired_read_retries_too(tmp_path, monkeypatch):
 
 
 def test_concurrent_status_writes_leave_valid_json(tmp_path):
-    """D9: two local writers used to clobber each other's single .tmp file."""
-    ai = tmp_path / ".ai" / "scripts"
+    """D9: two local writers used to clobber each other's single .tmp file.
+
+    V-5's consequence, applied HERE rather than to the gate: the bare checkpoint
+    now classifies the checkout before it writes, so an install in a directory git
+    cannot resolve is refused (rc 1, nothing written) exactly as `--lock` had
+    already refused it. The fixture is therefore a real repository, which is what
+    every other state-writing test in this suite already runs against; the local
+    import keeps this file's import block untouched.
+    """
+    from helpers import make_repo
+    root = make_repo(tmp_path)
+    ai = root / ".ai" / "scripts"
     ai.mkdir(parents=True)
     for name in ("checkpoint.py", "ai_common.py"):
         shutil_copy(name, ai)
-    target = tmp_path / ".ai" / "runtime" / "STATUS.json"
+    target = root / ".ai" / "runtime" / "STATUS.json"
     target.parent.mkdir()
 
     results = []
@@ -128,7 +138,7 @@ def test_concurrent_status_writes_leave_valid_json(tmp_path):
         # run_python, not a hand-rolled subprocess: the hermetic env is applied
         # for us and cannot be forgotten here.
         results.append(run_python(ai / "checkpoint.py", ["--agent", f"a{i}"],
-                                  cwd=tmp_path))
+                                  cwd=root))
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         list(pool.map(one, range(8)))

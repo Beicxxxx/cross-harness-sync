@@ -167,17 +167,55 @@ def test_scripts_only_leaves_state_alone(ai_repo):
     assert not stray, stray
 
 
-def test_scripts_only_without_force_reports_skips(ai_repo):
-    """Without --force nothing is refreshed, and nothing is written either.
+def test_scripts_only_refreshes_without_needing_force(ai_repo):
+    """V-3: the flag does the job its docstring and its `--help` both promise.
 
-    The positive line is pinned first so the `not any(wrote:)` below cannot be
-    satisfied by a silent run.
+    RED at `2796c2f`, measured by the cross-lane reviewer and re-measured here:
+    `--scripts-only` printed `SKIP (exists)` three times, wrote no VERSION,
+    changed nothing and exited 0 — so the one path that upgrades the scripts on
+    an EXISTING install (exactly what wave 1a breaks) was a silent no-op wearing a
+    success code, and needed a second, undocumented flag to do anything.
+
+    The pin this replaces (`test_scripts_only_without_force_reports_skips`)
+    asserted the no-op: `not any(wrote:)`. Its discipline of pinning the positive
+    line FIRST is kept, and so is the positive half of "only": the run must be
+    shown to have refreshed the three scripts and VERSION and nothing else.
     """
+    scripts = ai_repo / ".ai" / "scripts"
+    pristine = {name: (scripts / name).read_bytes()
+                for name in ("ai_common.py", "checkpoint.py", "sync_verify.py")}
+    for name in pristine:
+        (scripts / name).write_bytes(b"# stale v2.0 copy\n")
+    version = ai_repo / ".ai" / "protocol" / "VERSION"
+    version.write_text("1.9.0\n", encoding="utf-8")
+    keep = "# Current state\n\nreal work, not a template\n"
+    (ai_repo / ".ai" / "state" / "CURRENT.md").write_text(keep, encoding="utf-8")
+    cfg_before = (ai_repo / ".ai" / "sync_config.json").read_bytes()
+    ignore_before = (ai_repo / ".gitignore").read_bytes()
+    agents_before = (ai_repo / "AGENTS.md").read_bytes()
+
     res = scaffold(ai_repo, "--scripts-only")
-    assert res.rc == 0, res.stdout
-    assert any(ln.startswith("SKIP (exists)") and "sync_verify.py" in ln
-               for ln in res.lines), res.lines
-    assert not any(ln.startswith("wrote:") for ln in res.lines), res.lines
+    assert res.rc == 0, res.stdout + res.stderr
+    for name, blob in pristine.items():
+        assert any(ln.startswith("wrote:") and name in ln
+                   for ln in res.lines), res.lines
+        assert (scripts / name).read_bytes() == blob, (
+            f"{name} reported as written but still holds the stale copy")
+    assert not [ln for ln in res.lines if ln.startswith("SKIP (exists)")
+                and ln.endswith(".py")], res.lines
+    assert version.read_text("utf-8").strip() == \
+        _load_init_sync().PROTOCOL_VERSION, res.stdout
+    # Non-destructive where it must stay non-destructive: state, config,
+    # AGENTS.md and .gitignore are not read, written or created by this flag.
+    assert (ai_repo / ".ai" / "state" / "CURRENT.md").read_text("utf-8") == keep
+    assert (ai_repo / ".ai" / "sync_config.json").read_bytes() == cfg_before
+    assert (ai_repo / ".gitignore").read_bytes() == ignore_before
+    assert (ai_repo / "AGENTS.md").read_bytes() == agents_before
+    written = [ln.split("wrote:", 1)[1].strip()
+               for ln in res.lines if ln.startswith("wrote:")]
+    stray = [w for w in written
+             if Path(w).parent.name != "scripts" and Path(w).name != "VERSION"]
+    assert not stray, stray
 
 
 def test_scripts_only_on_an_uninstalled_repo_installs_scripts(repo):

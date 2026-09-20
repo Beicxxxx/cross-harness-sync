@@ -72,8 +72,8 @@ MANAGED_BLOCK = f"""{MANAGED_BEGIN}
   before writing state files; review tiers in `.ai/state/ROLE_POLICY.md`.
 - New decision = one line in `DECISIONS_INDEX.md` + ≤ 15 lines in `DECISIONS.md`.
 - Handoff: `.ai/handoff/LATEST.md`, 6 sections, ≤ 80 lines.
-- Close out: `python .ai/scripts/sync_verify.py` all green → `--unlock --agent
-  <name>` → commit + push. Never force-push, never commit secrets.
+- Close out: `sync_verify.py` → no `FAILED:` line; a named `[SKIP]` is expected,
+  silence is not → `--unlock --agent <name>` → commit + push, never force-push.
 {MANAGED_END}"""
 
 # N2: the markers are recognised as a FAMILY, not as the two literals above.
@@ -645,7 +645,18 @@ def main() -> int:
 
     # --clobber is strictly stronger than --force, so it implies it rather than
     # silently doing nothing when it is the only one passed.
-    force = args.force or args.clobber
+    #
+    # V-3: --scripts-only implies it too. Its docstring and its --help both
+    # promise "refresh .ai/scripts/ and .ai/protocol/VERSION", and until now the
+    # flag needed a SECOND, undocumented flag to do any of that: on an installed
+    # repo it printed `SKIP (exists)` three times, wrote no VERSION, and exited 0
+    # having changed nothing — the upgrade path wave 1a depends on was a no-op
+    # wearing a success code, the same interface/silence class as the "all green"
+    # promise. Refreshing is safe as this flag's DEFAULT because the only things
+    # it can reach are the installer's own: with --scripts-only the state, config,
+    # template, AGENTS.md, CLAUDE.md and .gitignore paths below are never read,
+    # written or created, so no caller work is ever overwritten by it.
+    force = args.force or args.clobber or args.scripts_only
     # With --clobber nothing is protected; copy_file keeps its original meaning
     # of "overwrite this destination".
     protect = not args.clobber
@@ -724,13 +735,28 @@ def main() -> int:
                 print(line)
             print(write_claude_pointer(root))
 
+    # V-4: this block is a promise about what happens NEXT, and it used to print
+    # whatever the run had actually achieved — i.e. "should be all green" after
+    # an `ERROR (missing source template)` and an exit 1. `rc` is the outcome the
+    # run already reported (the same accumulation whose rationale
+    # `warn_agents_over_budget()` records at :522), so the gate is that value and
+    # not a second bookkeeping mechanism. A failed install names its failure
+    # instead of being told to expect green.
+    if rc:
+        print("\nInstall incomplete: a step above reported ERROR, so this run "
+              f"exits {rc} and the Next-steps list is deliberately withheld - "
+              "sync_verify.py would be looking at a half-built install.")
+        return rc
+
     print("\nNext steps:")
     print("  1. Fill in every <placeholder> in AGENTS.md, .ai/SYNC_PROMPT.md,")
     print("     and the .ai/state/*.md files.")
     print("  2. Declare project-specific checks in .ai/sync_config.json")
     print("     (extra_checks, secret_mirrors).")
-    print("  3. python .ai/scripts/sync_verify.py  -> should be all green.")
-    print("  4. Commit and push.")
+    print("  3. python .ai/scripts/sync_verify.py  -> no FAILED line; a named")
+    print("     [SKIP] is EXPECTED on a default install, because it registers no")
+    print("     project checks. Silence is not the same as clean.")
+    print("  4. Commit and push. Never commit secrets, never force-push.")
     return rc
 
 

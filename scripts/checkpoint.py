@@ -28,6 +28,15 @@ Usage:
                                         # worktree, a symlinked install or an
                                         # undetermined layout (D15); the layout
                                         # is recorded with the reason
+    python .ai/scripts/checkpoint.py --handoff --agent X --force
+    python .ai/scripts/checkpoint.py --force
+                                        # the same D15 layout refusal guards the
+                                        # two state-writing commands (--handoff
+                                        # and the bare checkpoint), because a
+                                        # per-worktree lock coordinates nobody;
+                                        # --force overrides with a WARN and,
+                                        # there being no lock record to write,
+                                        # records nothing about the split
 
 This script handles the MECHANICAL parts of checkpointing:
 - runtime/STATUS.json timestamps and counters
@@ -48,7 +57,7 @@ import shutil
 import sys
 import tempfile
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import NamedTuple
 
@@ -57,8 +66,8 @@ from typing import NamedTuple
 # second copy of the wrong-root path this removes (see scripts/ai_common.py).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
-    from ai_common import (RepoError, checkout_layout, protect_stdio,
-                           resolve_roots, worktree_listing)
+    from ai_common import (DEFAULT_REQUIRED_FILES, RepoError, checkout_layout,
+                           protect_stdio, resolve_roots, worktree_listing)
 except ImportError:
     print("[FAIL] install layout: ai_common.py is missing from .ai/scripts/ -- "
           "re-run init_sync.py so the shared primitives are copied in")
@@ -117,11 +126,26 @@ def now_iso():
 
 
 def now_display():
+    """A timestamp that is safe to put in a state file: ASCII plus an offset.
+
+    `reference.md`'s "Language and timestamps" asks for an explicit UTC offset,
+    and the zone name is the part that cannot be trusted: `datetime.tzname()` is
+    the OS's *localized* label, so on a zh host it returned
+    `澳大利亚东部标准时间` — non-ASCII bytes that `protect_stdio()` then pushes
+    out as forced UTF-8 into a console that is not UTF-8 (finding V-6, the exact
+    class the wave's ASCII pass just closed). The offset is therefore computed
+    from the host's own `utcoffset()` answer rather than read off a name, and a
+    name is printed only when it is ASCII to begin with.
+    """
     local = now_dt()
-    offset = local.strftime("%z")
-    offset = f"{offset[:3]}:{offset[3:]}" if len(offset) == 5 else offset
-    zone = local.tzname() or "local time"
-    return f"{local:%Y-%m-%d %H:%M:%S} ({zone}, UTC{offset})"
+    delta = local.utcoffset() or timedelta(0)
+    seconds = int(delta.total_seconds())
+    sign = "-" if seconds < 0 else "+"
+    seconds = abs(seconds)
+    offset = f"UTC{sign}{seconds // 3600:02d}:{seconds % 3600 // 60:02d}"
+    zone = local.tzname() or ""
+    label = f"{zone}, {offset}" if zone.isascii() else offset
+    return f"{local:%Y-%m-%d %H:%M:%S} ({label})"
 
 
 def _retry_sharing(fn):
@@ -518,8 +542,9 @@ def cmd_prime(args):
     print()
     print("Before writing any state file:")
     print("  python .ai/scripts/checkpoint.py --lock --agent <your-harness-name>")
-    print("At close-out: python .ai/scripts/sync_verify.py must be all green,")
-    print("then --unlock --agent <your-name>, commit, and push.")
+    print("At close-out: python .ai/scripts/sync_verify.py must print no FAILED")
+    print("line - a named [SKIP] is expected on a default install, silence is")
+    print("not. Then --unlock --agent <your-name>, commit, and push.")
 
 
 def cmd_handoff(args):
@@ -564,15 +589,27 @@ def cmd_handoff(args):
 
 def cmd_validate(args):
     _require_paths()
-    required_files = [
-        STATE_DIR / "CURRENT.md",
-        STATE_DIR / "TASK.md",
-        STATE_DIR / "DECISIONS.md",
-        STATE_DIR / "DECISIONS_INDEX.md",
-        STATE_DIR / "BLOCKERS.md",
-        HANDOFF_DIR / "LATEST.md",
-        PROTOCOL_DIR / "VERSION",
-    ]
+    # Finding V-1, the last surviving copy of D23: this used to be seven
+    # hardcoded paths under STATE_DIR / HANDOFF_DIR / PROTOCOL_DIR, and they
+    # drifted from `ai_common.DEFAULT_REQUIRED_FILES` — which is why deleting
+    # `.ai/state/ROLE_POLICY.md` left `--validate` printing "All state files
+    # present and non-empty." at rc 0 while `sync_verify.py` reported
+    # `[FAIL] required .ai/state/ROLE_POLICY.md` at rc 1. Two answers to one
+    # question, one of them false. Now the same imported list, in the same order
+    # the verifier reports it, resolved against THIS install's `.ai`.
+    required_files = []
+    for rel in DEFAULT_REQUIRED_FILES:
+        parts = [p for p in str(rel).split("/") if p and p != "."]
+        if parts and parts[0] == AI_DIR.name:
+            parts = parts[1:]
+        required_files.append(AI_DIR.joinpath(*parts) if parts else AI_DIR)
+    if not required_files:
+        # Empty is not "nothing wrong": it is "this command checked nothing", and
+        # the verdict it prints would be unearned (same law as the verifier's
+        # `required-file floor`, which refuses a declared list of zero).
+        print("Validation refused: the shared required-file list is empty, so "
+              "this command would certify a tree it never looked at.")
+        sys.exit(2)
     all_ok = True
     unreadable = []
     for path in required_files:
@@ -876,6 +913,37 @@ def cmd_unlock(args):
     print(f"Writer lock released at {now_display()}")
 
 
+def _refuse_unliveable_layout(command, args):
+    """V-5 (finding 2.3): the D15 layout gate for the commands that write state.
+
+    `install_layout()` was called from `cmd_lock` and nowhere else, so on a
+    linked worktree `--handoff` archived tracked files and exited 0 while
+    `--lock` in the very same checkout refused it: the protocol's invariant that
+    a per-worktree lock is meaningless was enforced on one of the five commands
+    that can create state. One classifier, one gate, same ADVISORY shape — a
+    refused layout exits 1 before a byte is written, and `--force` stays the
+    documented override.
+
+    What `--force` buys here is a WARN, not a quiet pass, and the WARN says why
+    it is weaker than the lock's: a state write creates no record, so there is
+    nothing to carry `forced_layout` to the next machine. The reason requirement
+    stays on `--lock`, per ruling 5 — a state write takes no pen.
+    """
+    kind, detail = install_layout()
+    if kind == "normal":
+        return
+    if getattr(args, "force", False):
+        print(f"WARN {command}: this checkout is {kind} ({detail}) and --force "
+              "was given, so state is written anyway. Nothing records the split: "
+              "unlike --lock there is no WRITER_LOCK.json entry to carry "
+              "forced_layout, so record it in the handoff yourself.")
+        return
+    _layout_refusal(kind, detail)
+    print(f"  {command}: the same gate --lock applies, and this command writes "
+          "no lock record; --force is the override here too.")
+    sys.exit(1)
+
+
 def _guard_state_writes(command, args):
     """F3: the commands that write state must consult the lock they never took.
 
@@ -895,7 +963,12 @@ def _guard_state_writes(command, args):
     block AND left the tracked, still-conflicted WRITER_LOCK.json in the tree for
     the close-out `git add -A` to commit. --force does not resolve a conflict;
     the refusal says so, and the WARN says what the pair does and does not buy.
+
+    V-5: the layout gate runs first, because on a refused checkout the question
+    "who else is writing?" is already meaningless — a second worktree holds its
+    own record, so a clean lock read here is not evidence of a single writer.
     """
+    _refuse_unliveable_layout(command, args)
     status = lock_state()
     if status.state in ("free", "expired"):
         return
