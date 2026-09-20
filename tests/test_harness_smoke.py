@@ -113,6 +113,67 @@ def test_git_helpers_ignore_ambient_git_state(tmp_path, monkeypatch):
     assert "real@example.invalid" in text and "t@example.invalid" not in text, text
 
 
+# The identity helpers.hermetic_env must put in the child's environment. Kept as
+# a literal here (not imported) so a future change to helpers cannot make both
+# sides of this assertion agree with each other.
+FIXTURE_IDENTITY = "Test Human <t@example.invalid>"
+
+
+def test_commit_works_inside_a_plain_clone(tmp_path):
+    """A clone must be commit-capable, not just config-protected (fix round 2).
+
+    `hermetic_env` pins GIT_CONFIG_GLOBAL/SYSTEM to the null device, and
+    `git clone` does not copy the source repo's repo-local `[user]` block, so a
+    clone has no identity from any config file. Tasks 7 and 12 commit inside
+    clones: without GIT_AUTHOR_*/GIT_COMMITTER_* in the environment the commit
+    dies with rc 128 "Author identity unknown" and reads as a product defect.
+    The assertion is on the identity the commit RECORDS, so quietly falling back
+    to the developer's own name/email (this host's global config resolves to a
+    real address) cannot pass.
+    """
+    src = make_repo(tmp_path / "scratch")
+    clone = tmp_path / "clone"
+    git(tmp_path, "clone", "-q", str(src), str(clone))
+
+    # The clone really has no repo-local identity: the env vars must be what
+    # saves it, otherwise this test would pass for the wrong reason.
+    cfg = (clone / ".git" / "config").read_text(encoding="utf-8")
+    assert "[user]" not in cfg, cfg
+
+    (clone / "HANDOFF.md").write_text("cloned work\n", encoding="utf-8")
+    git(clone, "add", "-A")
+    git(clone, "commit", "-q", "-m", "commit made inside a clone")
+    assert git(clone, "log", "-1", "--format=%an <%ae>") == FIXTURE_IDENTITY
+    assert git(clone, "log", "-1", "--format=%cn <%ce>") == FIXTURE_IDENTITY
+
+
+def test_explicit_env_must_not_bypass_the_git_scrub(tmp_path, monkeypatch):
+    """`env=` used to be applied verbatim, re-opening the leak the scrub exists
+    to close: `dict(os.environ, PYTHONIOENCODING=...)` carries GIT_DIR and the
+    developer's own GIT_AUTHOR_EMAIL straight into the child.
+
+    Contract is a merge, not a switch: hermetic base first, then the caller's
+    dict wins on keys the caller set *deliberately* (SOMETHING below; Task 6's
+    PYTHONIOENCODING; a later task's empty PATH) — while values merely copied
+    from the ambient environment are dropped.
+    """
+    monkeypatch.setenv("GIT_DIR", str(tmp_path / "outer" / ".git"))
+    monkeypatch.setenv("GIT_AUTHOR_EMAIL", "real@example.invalid")
+    probe = tmp_path / "show_env.py"
+    probe.write_text(
+        "import os\n"
+        "for k in ('GIT_DIR', 'GIT_AUTHOR_EMAIL', 'SOMETHING'):\n"
+        "    print(k, repr(os.environ.get(k)))\n",
+        encoding="utf-8")
+
+    res = run_python(probe, cwd=tmp_path, env=dict(os.environ, SOMETHING="x"))
+    assert res.rc == 0, res.stderr
+    seen = dict(ln.split(" ", 1) for ln in res.lines)
+    assert seen["GIT_DIR"] == "None", seen
+    assert seen["GIT_AUTHOR_EMAIL"] == repr("t@example.invalid"), seen
+    assert seen["SOMETHING"] == repr("x"), seen
+
+
 def _annotations(tree: ast.AST) -> list[ast.expr]:
     out: list[ast.expr] = []
     for node in ast.walk(tree):
