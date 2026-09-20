@@ -6,7 +6,10 @@ not hardcoded here. Checks, in order:
 
   0. The install layout is one git can describe (linked worktrees and symlinked
      payloads leave a `WRITER_LOCK.json` the other writer never sees, so every
-     check below would be about the wrong tree). `ai_common.checkout_layout`.
+     check below would be about the wrong tree). `ai_common.invocation_layout`,
+     which asks the unresolved invocation path FIRST and the checkout second —
+     the same witness `checkpoint.py --lock` asks, so one entry point is not
+     verified and the other blind (finding B7a-6).
   1. The config itself is readable, parses, and holds a JSON object. Reading it
      is the precondition of every other line, so failing here stops the run
      instead of falling back to defaults (D4).
@@ -54,9 +57,9 @@ from pathlib import Path
 # UnicodeEncodeError and rc 1 instead of the rc 2 named below.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
-    from ai_common import (DEFAULT_REQUIRED_FILES, RepoError, checkout_layout,
-                           decode, git_available, is_git_repo, protect_stdio,
-                           resolve_roots, run_argv, run_git)
+    from ai_common import (DEFAULT_REQUIRED_FILES, RepoError, decode,
+                           git_available, invocation_layout, is_git_repo,
+                           protect_stdio, resolve_roots, run_argv, run_git)
 except ImportError:
     print("[FAIL] install layout: ai_common.py is missing from .ai/scripts/ -- "
           "re-run init_sync.py so the shared primitives are copied in")
@@ -549,13 +552,29 @@ def check_secret_mirrors(cfg: dict) -> None:
     # Every entry is a validated 2-item list of path strings by now: a flat
     # list used to make `pair[0]` index the CHARACTERS of a path and report a
     # mirror check that could PASS on nonsense (D19's class, one key over).
+    #
+    # D6: mirrored secrets are git-IGNORED by design, so a second machine that
+    # cloned the repo legitimately has neither side on disk. Recording that as a
+    # FAIL made close-out unreachable there — the only way to go green was to
+    # commit a secret, which is the failure this check exists to prevent. Both
+    # absences are therefore a named SKIP, and the two shapes are named apart:
+    # "nothing mirrored on this machine" and "one side is here, the other is not"
+    # are different things for a human to act on. What stays a FAIL is the only
+    # case with evidence behind it: both sides present and disagreeing.
     for pair in cfg["secret_mirrors"]:
         a, b = ROOT / pair[0], ROOT / pair[1]
+        name = f"secret mirror {pair[0]} vs {pair[1]}"
+        if not a.exists() and not b.exists():
+            record(name, None, "SKIP(no mirrored secrets on this machine)")
+            continue
         if not (a.exists() and b.exists()):
-            record(f"secret mirror {pair[0]} vs {pair[1]}", False, "one file missing")
+            here = pair[0] if a.exists() else pair[1]
+            there = pair[1] if a.exists() else pair[0]
+            record(name, None, f"SKIP(present on this machine: {here}; "
+                               f"absent: {there})")
             continue
         ka, kb = keys(a), keys(b)
-        record(f"secret mirror {pair[0]} vs {pair[1]}", ka == kb,
+        record(name, ka == kb,
                f"{pair[0]}-only={sorted(ka - kb)}, {pair[1]}-only={sorted(kb - ka)}")
 
 
@@ -670,7 +689,14 @@ def main() -> int:
         record("git repository", False,
                f"{ROOT} is not a git work tree; `git check-ignore` and the "
                f"mirror checks have nothing to answer about")
-    kind, layout_detail = checkout_layout(ROOT)
+    # Task 7 step 1 (finding B7a-6): `checkout_layout(ROOT)` alone could not see
+    # an `.ai` that was INVOKED THROUGH a link, because `resolve_roots()` above
+    # had already resolved past it and ROOT named the relocation target's parent
+    # — an ordinary-looking tree. `invocation_layout` probes the unresolved
+    # invocation path first and falls back to the checkout question, which is
+    # exactly what `checkpoint.install_layout` does before it writes a lock, so
+    # the writer and the verifier now answer from one function.
+    kind, layout_detail = invocation_layout(ROOT, __file__)
     if kind != "normal":
         # D15: a linked worktree keeps its own on-disk WRITER_LOCK.json and a
         # symlinked payload is not versioned in this tree, so the single-writer
@@ -681,9 +707,11 @@ def main() -> int:
         # wrong-tree run print PASS.
         record("install layout", False,
                f"{kind}: {layout_detail} - every check below would be about a "
-               f"tree that is not this checkout (coverage limit: a symlinked "
-               f"`.ai` this script was invoked THROUGH is invisible here, "
-               f"because resolve_roots() resolved past it)")
+               f"tree that is not this checkout (both the path this script was "
+               f"invoked through and the checkout ROOT names were probed; "
+               f"coverage limit: an `.ai` reached only after resolve_roots() "
+               f"resolved past it, i.e. one this script was NOT invoked "
+               f"THROUGH, stays invisible here)")
         return _summarise()
     try:
         cfg, nulled = load_config()

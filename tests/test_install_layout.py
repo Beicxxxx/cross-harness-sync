@@ -13,11 +13,15 @@ load-bearing and pinned here:
     `== 0/1 checks passed ==` verdict line instead of looking like a crash, and
     the tally says out loud that nothing else was reached.
 
-Two limits, both stated rather than worked around: `checkout_layout(ROOT)`
+The limit this file used to state instead of testing — "checkout_layout(ROOT)
 structurally cannot see an `.ai` that is *itself* the symlink this script was
-invoked through (`resolve_roots()` resolves past it), and this host needs a
-privilege to create symlinks at all — so the evidence line names the limitation,
-and no test here claims the symlinked half is covered.
+invoked through, and no test here claims the symlinked half is covered" — is
+closed by Task 7 step 1: the verifier now asks `ai_common.invocation_layout`
+(r2 finding B7a-6), the same witness `checkpoint.py --lock` asks, so the
+invoked-through case is named rather than resolved past. `test_the_verifier_sees
+an_ai_it_was_invoked_through` below is that coverage; the residual limit it
+names in the evidence line is an `.ai` reached only through an already-resolved
+path, which no witness inside the process can recover.
 """
 from __future__ import annotations
 
@@ -94,3 +98,53 @@ def test_a_repository_git_cannot_place_is_not_reported_normal(tmp_path):
     assert any(ln.startswith("[FAIL] install layout: outside-repo")
                for ln in res.lines), res.lines
     assert "layout not determined" in " ".join(res.lines), res.lines
+
+
+def test_the_verifier_sees_an_ai_it_was_invoked_through(ai_repo, tmp_path):
+    """r2 finding B7a-6, wired: the verifier used to answer with
+    `checkout_layout(ROOT)`, and `resolve_roots()` had already resolved PAST the
+    link that got us here, so ROOT named the relocation target's parent — a tree
+    that looked ordinary from inside. `invocation_layout` keeps the unresolved
+    invocation path as the witness, which is the one thing that saw the link.
+
+    Red before the wiring: the run reported `outside-repo`, i.e. the right
+    severity about the wrong fact — the payload is relocated, and that is what
+    the operator has to fix.
+    """
+    from test_worktree_refusal import (JUNCTION_WORD, drop_junction,
+                                       make_junction, require_junction)
+    require_junction(tmp_path)
+    ai = ai_repo / ".ai"
+    elsewhere = tmp_path / "relocated-ai"
+    elsewhere.mkdir()
+    moved = elsewhere / ".ai"
+    ai.rename(moved)
+    make_junction(ai, moved)
+    try:
+        res = run_python(ai / "scripts" / "sync_verify.py", cwd=ai_repo,
+                         env={"GIT_CEILING_DIRECTORIES": str(tmp_path)})
+        assert res.rc == 1, res.stdout + res.stderr
+        layout = [ln for ln in res.lines if ln.startswith("[FAIL] install layout")]
+        assert layout, res.lines
+        line = layout[0]
+        assert line.startswith("[FAIL] install layout: symlinked"), line
+        assert JUNCTION_WORD in line.lower(), line
+        assert "relocated" in line, line
+        # The destination has to be IN the text: "somewhere else" is not
+        # auditable. Comparing in the posix form because the witness prints the
+        # junction target as git/Win32 reports it, with forward slashes.
+        flat = lambda s: str(s).replace("\\", "/").lower()
+        assert flat(moved) in flat(line), line
+        # Nothing behind the gate ran, and the tally says so. The passed count is
+        # zero whichever pre-flight line shares the run: the ceiling guard makes
+        # ROOT itself a tree git cannot place, so `git repository` is named too.
+        summary = [ln for ln in res.lines if "checks passed" in ln]
+        assert len(summary) == 1, res.lines
+        assert summary[0].startswith("== 0/"), summary[0]
+        assert any(ln.startswith("FAILED:") and "install layout" in ln
+                   for ln in res.lines), res.lines
+        assert not any(ln.startswith("[PASS] required ") for ln in res.lines), \
+            res.lines
+    finally:
+        drop_junction(ai)
+        moved.rename(ai)

@@ -125,6 +125,12 @@ GITIGNORE_LINES = [
     "# cross-harness-sync",
     ".ai/runtime/*",
     "!.ai/runtime/WRITER_LOCK.json",
+    # D16: `.ai/runtime/` is the one protocol directory that is empty on install
+    # day, and git does not track empty directories, so it never reached a clone.
+    # The placeholder that fixes that lives INSIDE the ignore glob above, so it
+    # needs its own exception or `git add -A` silently skips it and the second
+    # machine is back to a missing directory.
+    "!.ai/runtime/.gitkeep",
     ".env",
     # N5: the protocol's own scripts generate bytecode inside the target, and
     # the installed instructions tell every agent to `git add -A && git commit
@@ -677,6 +683,22 @@ def main() -> int:
     (root / ".ai/handoff/archive").mkdir(parents=True, exist_ok=True)
     (root / ".ai/state/archive").mkdir(parents=True, exist_ok=True)
     (root / ".ai/runtime").mkdir(parents=True, exist_ok=True)
+
+    # D16: an empty directory is invisible to git, so a fresh clone on a second
+    # machine arrives WITHOUT the directories the installer just made — and the
+    # first `--handoff` there writes into `.ai/runtime/`, which was never cloned.
+    # A zero-byte tracked placeholder per protocol directory is the fix that
+    # survives the clone; `git ls-files` is what proves it, not `Path.exists()`,
+    # because the question is what the OTHER machine receives. Idempotent by the
+    # same `if not exists()` rule the VERSION write above uses: a second scaffold
+    # says nothing rather than reporting a file it did not write.
+    for keep in (".ai/handoff/archive/.gitkeep", ".ai/state/archive/.gitkeep",
+                 ".ai/state/authorizations/.gitkeep", ".ai/runtime/.gitkeep"):
+        path = root / keep
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            _write_text(path, "")
+            print(f"wrote: {path}")
 
     if not args.scripts_only:
         line = update_gitignore(root)

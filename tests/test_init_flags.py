@@ -81,10 +81,10 @@ def test_gitignore_keeps_untouched_entries_and_custom_lines(ai_repo):
     assert text.startswith(before), repr(text)
     assert text.count("build/\n") == 1, repr(text)
     assert text.count(".ai/runtime/*\n") == 1, repr(text)
-    # `.env` was present, so it must not be re-added: 6 lines were (marker,
-    # runtime glob, lock exception, blank separator, and the two bytecode-cache
-    # entries N5 added).
-    assert reported_count(ignore_line(res)) == 6, ignore_line(res)
+    # `.env` was present, so it must not be re-added: 7 lines were (marker,
+    # runtime glob, lock exception, the D16 `.gitkeep` exception, blank
+    # separator, and the two bytecode-cache entries N5 added).
+    assert reported_count(ignore_line(res)) == 7, ignore_line(res)
     assert text.splitlines().count(".env") == 1, repr(text)
 
 
