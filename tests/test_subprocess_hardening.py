@@ -425,7 +425,18 @@ def test_verifier_surfaces_a_raw_nonascii_path(walked, sv):
     assert WEN_PY in walk_line(res), res.lines
 
 
+@pytest.mark.filterwarnings(
+    "ignore::pytest.PytestUnhandledThreadExceptionWarning")
 def test_text_capture_goes_blind_on_a_byte_the_host_codec_rejects():
+    """Same shape as the codec test below: the crash is the finding.
+
+    This test asserts that the legacy `text=True` capture goes BLIND — rc 0
+    with `stdout is None` — which can only happen because the reader thread
+    died in this process, and pytest reports that death as
+    PytestUnhandledThreadExceptionWarning. The warning is the expected shape
+    of a passing assertion here, so it is ignored for this test alone rather
+    than for the suite.
+    """
     if BAD_BYTE is None and sys.platform == "win32":
         pytest.fail("the host codec decodes every byte 0x80-0xFF, so the silent "
                     "form of D5 cannot be exhibited here; do not let this one "
@@ -445,8 +456,21 @@ def test_text_capture_goes_blind_on_a_byte_the_host_codec_rejects():
         assert fixed.stdout == bytes([BAD_BYTE]), ascii(fixed.stdout)
 
 
+@pytest.mark.filterwarnings(
+    "ignore::pytest.PytestUnhandledThreadExceptionWarning")
 @pytest.mark.parametrize("codec", ["cp936", "shift_jis", "big5"])
 def test_the_hazard_does_not_depend_on_the_host_codepage(monkeypatch, codec):
+    """The reader-thread crash IS the assertion, not something suppressed.
+
+    With `text=True` and a child byte the host codec rejects, CPython's
+    subprocess _readerthread dies inside THIS process. pytest surfaces that as
+    PytestUnhandledThreadExceptionWarning, and the test then passes — on
+    `stdout is None`, which is exactly the D5 blindness under test. A green
+    suite may not carry that warning: a listing gate reads a warning-laden run
+    as an unstable one, and `-W error` CI would fail on a passing test. So the
+    filter is scoped to this test and nowhere else; anywhere else in the suite
+    an unhandled thread exception still surfaces.
+    """
     if not hasattr(subprocess, "_text_encoding"):
         pytest.skip("CPython < 3.12 has no subprocess._text_encoding to force")
     monkeypatch.setattr(subprocess, "_text_encoding", lambda: codec)
