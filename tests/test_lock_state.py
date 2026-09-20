@@ -104,10 +104,25 @@ def load(cp_path):
     which is the only host this wave runs on. So the predicate is pinned at the
     function boundary against the real install layout instead of with a
     permission test that would pass vacuously.
+
+    checkpoint.py does `from ai_common import ...` at import time, which would
+    leave `ai_common` registered for the rest of the session — and
+    tests/test_ai_common.py pins that an installed script's shared module is NOT
+    the one in sys.modules. Its own globals keep the references it took, so the
+    entry is dropped again here rather than left for a later lane's test to trip
+    over.
     """
+    import sys
+
+    had_common = "ai_common" in sys.modules
     spec = importlib.util.spec_from_file_location("cp_under_test", str(cp_path))
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if not had_common:
+            sys.modules.pop("ai_common", None)
+        sys.modules.pop("cp_under_test", None)
     return module
 
 
