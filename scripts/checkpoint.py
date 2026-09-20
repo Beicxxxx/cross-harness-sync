@@ -13,6 +13,11 @@ Usage:
     python .ai/scripts/checkpoint.py --lock --agent X --force --discard-lock
                                         # abandon an UNREADABLE lock record: the
                                         # only override for a merged/corrupt one
+    python .ai/scripts/checkpoint.py --lock --agent X --force --reason "<why>"
+                                        # the only override for a linked git
+                                        # worktree, a symlinked install or an
+                                        # undetermined layout (D15); --force
+                                        # there without --reason is refused too
 
 This script handles the MECHANICAL parts of checkpointing:
 - runtime/STATUS.json timestamps and counters
@@ -42,7 +47,8 @@ from typing import NamedTuple
 # second copy of the wrong-root path this removes (see scripts/ai_common.py).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
-    from ai_common import RepoError, protect_stdio, resolve_roots
+    from ai_common import (RepoError, checkout_layout, protect_stdio,
+                           resolve_roots, worktree_listing)
 except ImportError:
     print("[FAIL] install layout: ai_common.py is missing from .ai/scripts/ — "
           "re-run init_sync.py so the shared primitives are copied in")
@@ -590,11 +596,107 @@ def cmd_validate(args):
     sys.exit(0 if all_ok else 1)
 
 
+def install_layout():
+    """This checkout's `(kind, detail)`, read from the two directions that lie.
+
+    `checkout_layout(ROOT)` covers a linked worktree and a symlink inside the
+    install. It cannot see the one case this process created itself:
+    `resolve_roots()` calls `Path.resolve()`, which follows symlinks, so an
+    invoked `.ai` that IS a symlink leaves ROOT pointing at the target's parent
+    — a different tree that then looks perfectly ordinary from the inside. The
+    unresolved invocation path is the only witness, so it is compared here.
+    """
+    kind, detail = checkout_layout(ROOT)
+    if kind != "normal":
+        return kind, detail
+    script = Path(__file__)
+    if not script.is_absolute():
+        script = Path.cwd() / script
+    logical_ai = script.parent.parent
+    if logical_ai.is_symlink():
+        try:
+            target = logical_ai.readlink().as_posix()
+        except OSError as exc:
+            target = f"<target not readable: {type(exc).__name__}>"
+        return "symlinked", (f"{logical_ai} is a symlink -> {target}, and ROOT "
+                             f"resolved through it to {ROOT}")
+    return kind, detail
+
+
+def _layout_refusal(kind, detail):
+    """What a refused layout prints: the name, the why, the way out."""
+    if kind == "linked-worktree":
+        head = (f"REFUSED: this checkout is a linked git worktree ({detail}).\n"
+                "WRITER_LOCK.json lives on disk per worktree, so locking here "
+                "does not stop another worktree from writing.")
+        where = "Work in the main checkout, or"
+    elif kind == "symlinked":
+        head = (f"REFUSED: part of this install is a symlink ({detail}).\n"
+                "The state and the lock behind that symlink are not files this "
+                "checkout versions, so they do not travel by git pull and are "
+                "not the ones another harness reads.")
+        where = "Work on the real checkout, or"
+    else:
+        head = (f"REFUSED: the checkout layout could not be determined "
+                f"({kind}: {detail}).\n"
+                "An install that cannot say where it is may not claim a "
+                "single-writer lock: not-determined is an error state, not a "
+                "clean one.")
+        where = "Fix the repository location (or run inside the project's git " \
+                "work tree), or"
+    print(head)
+    other, err = worktree_listing(ROOT)
+    if err:
+        print(f"  other worktrees: not enumerated ({err})")
+    elif len(other) > 1:
+        print("  worktrees of this repository: "
+              + ", ".join(p for p in other))
+    print(f"{where} run\n"
+          f"  python .ai/scripts/checkpoint.py --lock --agent <name> --force "
+          f"--reason \"<why>\"\nonly after recording the split in the handoff: "
+          "the lock stays advisory, and the\noverride is written into "
+          "WRITER_LOCK.json so the takeover is visible in git.")
+
+
+def _next_epoch(prev, err):
+    """One past the epoch the displaced record carried, or None if it had no answer.
+
+    `epoch` is wave 1b's schema; starting to write it now is additive. None is
+    what a record that could not be read leaves behind — the key is omitted and
+    the gap named, rather than a first epoch asserted over an unknown history.
+    """
+    if err:
+        return None
+    raw = prev.get("epoch", 0)
+    try:
+        return int(raw) + 1
+    except (TypeError, ValueError):
+        return 0 + 1
+
+
 def cmd_lock(args):
     _require_paths()
     if not args.agent:
         print("--lock requires --agent <harness-name>")
         sys.exit(2)
+    # D15: classify BEFORE anything is written — including the runtime directory
+    # this command creates on its way to the lock file.
+    kind, detail = install_layout()
+    force_reason = (getattr(args, "reason", None) or "").strip()
+    forced_layout = False
+    if kind != "normal":
+        if not args.force:
+            _layout_refusal(kind, detail)
+            sys.exit(1)
+        if not force_reason:
+            print(f"--force over a {kind} checkout ({detail}) must name a "
+                  "--reason: the split has to be recorded in the lock itself, "
+                  "or the override is indistinguishable from an accident.")
+            sys.exit(1)
+        forced_layout = True
+        print(f"WARN {kind}: --force with --reason {force_reason!r} — the "
+              f"layout is recorded in WRITER_LOCK.json as forced_layout. "
+              f"{detail}")
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     # `getattr`: the guard tests build a Namespace by hand, so a new flag must
     # not be the reason an unwired command stops raising RuntimeError.
@@ -623,6 +725,11 @@ def cmd_lock(args):
         sys.exit(1)
     acquired = now_dt()
     expires = acquired.timestamp() + args.ttl
+    # Takeover must be auditable AFTER it is pushed: this file is tracked, so
+    # whatever is copied out of the displaced record here is what the next
+    # machine reads. Read it once, here, whatever the branches above did.
+    prev, prev_err = read_json_or_error(LOCK_PATH)
+    epoch = _next_epoch(prev, prev_err)
     record = {
         "agent": args.agent,
         "reason": args.reason or "",
@@ -631,6 +738,25 @@ def cmd_lock(args):
                              .isoformat(timespec="seconds"),
         "released_at": None,
     }
+    if epoch is None:
+        print(f"WARN: the epoch is not recorded — the previous lock record was "
+              f"not read ({prev_err}); restarting the count at 1 would claim a "
+              "history this command cannot see.")
+    else:
+        record["epoch"] = epoch
+    if args.force:
+        displaced = prev.get("agent")
+        if prev_err:
+            record["forced_over_unreadable"] = prev_err
+        elif displaced and displaced != args.agent:
+            record["forced_over"] = {
+                "agent": displaced,
+                "epoch": prev.get("epoch"),
+                "acquired_at": prev.get("acquired_at"),
+            }
+        if forced_layout:
+            record["forced_layout"] = kind
+            record["forced_layout_detail"] = detail
     write_json(LOCK_PATH, record)
     print(f"Writer lock acquired by {args.agent} until {record['expires_at']} "
           f"(TTL {args.ttl}s, advisory)")
@@ -753,9 +879,13 @@ def main():
     parser.add_argument("--ttl", type=int, default=DEFAULT_TTL_SECONDS,
                         help="Lock TTL in seconds (default 4h)")
     parser.add_argument("--reason", type=str, default=None,
-                        help="Task/issue ID or reason recorded on the lock")
+                        help="Task/issue ID or reason recorded on the lock; "
+                             "required with --force over a non-normal checkout "
+                             "layout (linked worktree, symlinked install, "
+                             "undetermined root)")
     parser.add_argument("--force", action="store_true",
-                        help="Override a conflicting lock")
+                        help="Override a conflicting lock (and, together with "
+                             "--reason, a refused checkout layout — D15)")
     parser.add_argument("--discard-lock", action="store_true",
                         help="With --force, abandon a lock record that cannot be "
                              "parsed; the discarded bytes stay in git history")

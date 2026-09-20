@@ -190,3 +190,109 @@ def os_environ_with_git_silence() -> dict[str, str]:
     base.setdefault("GIT_OPTIONAL_LOCKS", "0")
     base.setdefault("GCM_INTERACTIVE", "never")
     return base
+
+
+# D15: the pieces of the install whose BYTES are the protocol. A symlink at any
+# of these paths means the state lives outside this checkout, so it neither
+# travels by `git pull` nor is the file another harness or machine reads — the
+# same "two writers, one name" failure the tracked WRITER_LOCK.json exists to
+# prevent, reached without any git at all.
+LAYOUT_PAYLOAD_PATHS = (
+    "",                      # .ai itself
+    "state",
+    "runtime",
+    "runtime/WRITER_LOCK.json",
+    "scripts",
+    "handoff",
+    "protocol",
+)
+
+# `git rev-parse --absolute-git-dir` for a linked worktree is
+# `<main>/.git/worktrees/<name>`, while the common dir stays `<main>/.git`.
+_WORKTREE_MARKER = "/worktrees/"
+
+
+def _symlink_label(path: Path, ai: Path) -> str:
+    rel = path.relative_to(ai).as_posix()
+    return AI_DIR_NAME if rel in ("", ".") else f"{AI_DIR_NAME}/{rel}"
+
+
+def checkout_layout(root: Path) -> tuple[str, str]:
+    """Classify the checkout `root` names: `(kind, detail)`, kind one of four.
+
+    "normal" | "linked-worktree" | "symlinked" | "outside-repo".
+
+    D15 has two halves and this is where both become visible:
+
+    * A LINKED WORKTREE holds its own on-disk `.ai/runtime/WRITER_LOCK.json`.
+      The lock is tracked so a second MACHINE sees the first machine's hold
+      through `git pull`; two worktrees on one machine share no such thing, so
+      R1's single-writer rule is broken locally, silently, with no git involved.
+    * A SYMLINKED part of the install means the payload is not in this tree.
+      `resolve_roots()` calls `Path.resolve()`, which follows symlinks, so a
+      linked or relocated `.ai` can name a ROOT in a different repository and
+      every read, write and report below it is then about the wrong tree.
+
+    "outside-repo" carries "the layout could not be determined" as well as "not
+    a repository": an rc 128 from either `rev-parse` is an ERROR state, and a
+    caller must never read it as "normal" (spec §4 — a degradation is named, and
+    "cannot tell" is not "clean"). `detail` says which of the two it was.
+
+    Advisory by design: this classifies, it does not enforce. Callers refuse and
+    offer the documented `--force` escape hatch.
+    """
+    ai = root / AI_DIR_NAME
+    for rel in LAYOUT_PAYLOAD_PATHS:
+        part = ai if not rel else ai / rel
+        if part.is_symlink():
+            try:
+                dest = part.readlink().as_posix()
+            except OSError as exc:
+                dest = f"<target not readable: {type(exc).__name__}>"
+            return "symlinked", f"{_symlink_label(part, ai)} is a symlink -> {dest}"
+
+    inside = run_git(root, ["rev-parse", "--is-inside-work-tree"], timeout=15)
+    git_dir = run_git(root, ["rev-parse", "--absolute-git-dir"], timeout=15)
+    common = run_git(root, ["rev-parse", "--path-format=absolute",
+                            "--git-common-dir"], timeout=15)
+    if not inside.ok or not git_dir.ok:
+        rc = inside.rc if not inside.ok else git_dir.rc
+        return "outside-repo", (
+            f"git could not locate a work tree for {root} (rev-parse rc {rc}); "
+            "layout not determined")
+    if not common.ok:
+        return "outside-repo", (
+            f"{root} is inside a work tree but git would not report its common "
+            f"directory (rev-parse --git-common-dir rc {common.rc}); layout not "
+            "determined")
+    gd = git_dir.out().strip().replace("\\", "/").rstrip("/")
+    cd = common.out().strip().replace("\\", "/").rstrip("/")
+    if gd != cd and _WORKTREE_MARKER in gd:
+        return "linked-worktree", f"{gd} (common {cd})"
+    return "normal", str(root)
+
+
+def worktree_listing(root: Path) -> tuple[list[str], str | None]:
+    """`(paths, err)` for every checkout of this repository — the deciding form.
+
+    `err` is set whenever git did not answer, so "no other worktree" and "no
+    answer" cannot be confused: an empty list with an error attached is not
+    evidence of anything.
+    """
+    res = run_git(root, ["worktree", "list", "--porcelain"], timeout=15)
+    if not res.ok:
+        return [], f"git worktree list did not answer (rc {res.rc})"
+    return [ln.split(" ", 1)[1] for ln in decode(res.stdout).splitlines()
+            if ln.startswith("worktree ")], None
+
+
+def worktrees(root: Path) -> list[str]:
+    """Every checkout path of this repository, for REPORTING only.
+
+    Never branch on this: `[]` also means "git did not answer" (B7a correction
+    3), which is exactly the fail-open shape D5 exists to end. A caller that has
+    to decide, or that has to say why it cannot, calls `worktree_listing()`.
+    """
+    paths, _err = worktree_listing(root)
+    return paths
+
