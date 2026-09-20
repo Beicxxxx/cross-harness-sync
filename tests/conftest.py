@@ -8,6 +8,7 @@ from helpers import make_repo, scaffold
 INSTALL_SENTINELS = (
     ".ai/state/CURRENT.md",
     ".ai/sync_config.json",
+    ".ai/scripts/ai_common.py",
     ".ai/scripts/checkpoint.py",
     ".ai/scripts/sync_verify.py",
 )

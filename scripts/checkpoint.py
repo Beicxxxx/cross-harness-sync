@@ -21,28 +21,65 @@ It does NOT generate semantic content (CURRENT.md updates, handoff summaries).
 That is the coding agent's job.
 """
 
+from __future__ import annotations
+
 import argparse
-import io
 import json
 import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Force UTF-8 stdout (Windows consoles default to legacy codepages)
-if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+# Shared primitives, installed next to this file by init_sync.py. There is
+# deliberately no inline fallback: a second copy of that plumbing would be a
+# second copy of the wrong-root path this removes (see scripts/ai_common.py).
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    from ai_common import RepoError, protect_stdio, resolve_roots
+except ImportError:
+    print("[FAIL] install layout: ai_common.py is missing from .ai/scripts/ — "
+          "re-run init_sync.py so the shared primitives are copied in")
+    sys.exit(2)
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-AI_DIR = SCRIPT_DIR.parent
-STATE_DIR = AI_DIR / "state"
-HANDOFF_DIR = AI_DIR / "handoff"
-ARCHIVE_DIR = HANDOFF_DIR / "archive"
-RUNTIME_DIR = AI_DIR / "runtime"
-PROTOCOL_DIR = AI_DIR / "protocol"
-LOCK_PATH = RUNTIME_DIR / "WRITER_LOCK.json"
+# Every path below belongs to main(): resolve_roots() finds `.ai`, _set_paths()
+# derives the rest. They are None until then, and each command checks.
+AI_DIR: Path | None = None
+ROOT: Path | None = None
+STATE_DIR: Path | None = None
+HANDOFF_DIR: Path | None = None
+ARCHIVE_DIR: Path | None = None
+RUNTIME_DIR: Path | None = None
+PROTOCOL_DIR: Path | None = None
+LOCK_PATH: Path | None = None
 
 DEFAULT_TTL_SECONDS = 4 * 3600
+
+
+def _set_paths(ai_dir: Path) -> None:
+    """Derive every module-level path from a resolved `.ai` directory."""
+    global AI_DIR, ROOT, STATE_DIR, HANDOFF_DIR, ARCHIVE_DIR, RUNTIME_DIR, \
+        PROTOCOL_DIR, LOCK_PATH
+    AI_DIR = ai_dir
+    ROOT = ai_dir.parent
+    STATE_DIR = ai_dir / "state"
+    HANDOFF_DIR = ai_dir / "handoff"
+    ARCHIVE_DIR = HANDOFF_DIR / "archive"
+    RUNTIME_DIR = ai_dir / "runtime"
+    PROTOCOL_DIR = ai_dir / "protocol"
+    LOCK_PATH = RUNTIME_DIR / "WRITER_LOCK.json"
+
+
+def _require_paths() -> None:
+    """Refuse to run a command whose install paths were never wired.
+
+    Silent failure was the D19 shape of this bug: paths pointing one directory
+    too high still read, wrote and reported — they just reported the wrong tree.
+    A command invoked without main() must raise instead.
+    """
+    if AI_DIR is None:
+        raise RuntimeError(
+            "install paths not initialised: main() runs resolve_roots() and "
+            "_set_paths() before any command; call it instead of cmd_* directly")
 
 
 def now_dt():
@@ -103,6 +140,7 @@ def lock_state():
 
 
 def cmd_status(args):
+    _require_paths()
     status = read_json(RUNTIME_DIR / "STATUS.json")
     if not status:
         print("No active session found (runtime/STATUS.json missing or empty)")
@@ -144,6 +182,7 @@ def cmd_status(args):
 
 
 def cmd_checkpoint(args):
+    _require_paths()
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
     status = read_json(RUNTIME_DIR / "STATUS.json")
     status["last_checkpoint"] = now_iso()
@@ -165,6 +204,7 @@ def cmd_prime(args):
     If .ai/PRIME.md exists, print it INSTEAD of the generated default —
     the project owner curates the override, like Beads' .beads/PRIME.md.
     """
+    _require_paths()
     override = AI_DIR / "PRIME.md"
     if override.exists():
         print(override.read_text(encoding="utf-8").strip())
@@ -203,6 +243,7 @@ def cmd_prime(args):
 
 
 def cmd_handoff(args):
+    _require_paths()
     latest = HANDOFF_DIR / "LATEST.md"
     if latest.exists():
         ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
@@ -231,6 +272,7 @@ def cmd_handoff(args):
 
 
 def cmd_validate(args):
+    _require_paths()
     required_files = [
         STATE_DIR / "CURRENT.md",
         STATE_DIR / "TASK.md",
@@ -257,6 +299,7 @@ def cmd_validate(args):
 
 
 def cmd_lock(args):
+    _require_paths()
     if not args.agent:
         print("--lock requires --agent <harness-name>")
         sys.exit(2)
@@ -286,6 +329,7 @@ def cmd_lock(args):
 
 
 def cmd_unlock(args):
+    _require_paths()
     lock, holder, expired = lock_state()
     if not lock:
         print("No lock file found — nothing to release.")
@@ -299,6 +343,14 @@ def cmd_unlock(args):
 
 
 def main():
+    protect_stdio()
+    try:
+        ai_dir, _root = resolve_roots(__file__)
+    except RepoError as exc:
+        print(f"[FAIL] install layout: {exc}")
+        return 2
+    _set_paths(ai_dir)
+
     parser = argparse.ArgumentParser(
         description="Cross-harness continuity checkpoint tool")
     parser.add_argument("--agent", type=str, default=None,
@@ -341,7 +393,8 @@ def main():
         cmd_unlock(args)
     else:
         cmd_checkpoint(args)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

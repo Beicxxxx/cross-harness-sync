@@ -194,9 +194,15 @@ def test_modules_using_pep604_unions_defer_annotation_evaluation():
     when the def/class body runs, so on 3.9 `import helpers` raises TypeError
     and every collected test errors — a whole-suite fail-open. Checked as a test
     so deleting the future import breaks the suite for the right reason.
+
+    `scripts/*.py` are in scope for the same reason, one level up: a shipped
+    module that fails to import is a broken install on every 3.9 machine, and
+    Task 1's `ai_common.py` is exactly that shape (PEP 604 unions in both
+    function signatures and module-level path globals).
     """
     offenders, deferred = [], []
-    for path in sorted(Path(__file__).parent.glob("*.py")):
+    paths = sorted(Path(__file__).parent.glob("*.py")) + sorted(SCRIPTS.glob("*.py"))
+    for path in paths:
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         unions = [n for a in _annotations(tree)
                   for n in ast.walk(a)

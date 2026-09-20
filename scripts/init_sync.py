@@ -8,7 +8,7 @@ Creates (never overwrites unless --force):
     .ai/state/{CURRENT,TASK,BLOCKERS,ROLE_POLICY,DECISIONS,DECISIONS_INDEX}.md
     .ai/handoff/{LATEST,NEXT_PROMPT}.md + archive/
     .ai/protocol/VERSION
-    .ai/scripts/{checkpoint.py,sync_verify.py}
+    .ai/scripts/{ai_common.py,checkpoint.py,sync_verify.py}
     .ai/sync_config.json
     .ai/SYNC_PROMPT.md            (onboarding prompt for newly joined agents)
     .ai/templates/AUTHORIZATION.md (per-stage authorization template)
@@ -65,6 +65,7 @@ FILE_MAP = [
 ]
 
 SCRIPT_MAP = [
+    ("ai_common.py", ".ai/scripts/ai_common.py"),
     ("checkpoint.py", ".ai/scripts/checkpoint.py"),
     ("sync_verify.py", ".ai/scripts/sync_verify.py"),
 ]

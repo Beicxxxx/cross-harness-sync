@@ -22,13 +22,27 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 import sys
 from pathlib import Path
 
-AI_DIR = Path(__file__).resolve().parent.parent
-ROOT = AI_DIR.parent
-CONFIG_PATH = AI_DIR / "sync_config.json"
+# One shared copy of the subprocess / encoding / root-resolution plumbing
+# (scripts/ai_common.py), installed next to this file. There is deliberately no
+# inline fallback: a second copy of that logic is a second copy of the fail-open
+# path it exists to remove, so a layout without it is reported and fatal.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    from ai_common import RepoError, decode, protect_stdio, resolve_roots, \
+        run_argv, run_git
+except ImportError:
+    print("[FAIL] install layout: ai_common.py is missing from .ai/scripts/ — "
+          "re-run init_sync.py so the shared primitives are copied in")
+    sys.exit(2)
+
+# Assigned by main() from resolve_roots(), never by arithmetic on __file__: D19
+# was this pair of paths silently pointing one level too high.
+AI_DIR: Path | None = None
+ROOT: Path | None = None
+CONFIG_PATH: Path | None = None
 
 RESULTS: list[tuple[str, bool, str]] = []
 
@@ -74,10 +88,6 @@ def load_config() -> dict:
     return merged
 
 
-def run(cmd: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True, timeout=600)
-
-
 def check_required_files() -> None:
     for rel in REQUIRED_FILES:
         p = ROOT / rel
@@ -110,9 +120,9 @@ def check_token_budgets(cfg: dict) -> None:
 
 def check_secrets_ignored(cfg: dict) -> None:
     for target in cfg["secret_files"]:
-        proc = run(["git", "check-ignore", "-v", target])
-        record(f"secret ignored: {target}", proc.returncode == 0,
-               proc.stdout.strip() or f"git check-ignore rc={proc.returncode}")
+        res = run_git(ROOT, ["check-ignore", "-v", target], timeout=600)
+        record(f"secret ignored: {target}", res.ok,
+               decode(res.stdout).strip() or f"git check-ignore rc={res.rc}")
 
 
 def check_secret_mirrors(cfg: dict) -> None:
@@ -134,17 +144,21 @@ def check_secret_mirrors(cfg: dict) -> None:
 def check_extra(cfg: dict) -> None:
     for chk in cfg["extra_checks"]:
         name, cmd = chk["name"], chk["cmd"]
-        try:
-            proc = run(cmd)
-        except (OSError, subprocess.TimeoutExpired) as e:
-            record(name, False, f"could not run {cmd}: {e}")
-            continue
-        tail = (proc.stdout + proc.stderr).strip().splitlines()
+        res = run_argv(ROOT, cmd, timeout=600)
+        tail = (decode(res.stdout) + decode(res.stderr)).strip().splitlines()
         evidence = tail[-1][:160] if tail else "(no output)"
-        record(name, proc.returncode == 0, f"rc={proc.returncode}; {evidence}")
+        record(name, res.ok, f"rc={res.rc}; {evidence}")
 
 
 def main() -> int:
+    global AI_DIR, ROOT, CONFIG_PATH
+    protect_stdio()
+    try:
+        AI_DIR, ROOT = resolve_roots(__file__)
+        CONFIG_PATH = AI_DIR / "sync_config.json"
+    except RepoError as exc:
+        print(f"[FAIL] install layout: {exc}")
+        return 2
     print(f"== sync_verify: project root {ROOT} ==")
     cfg = load_config()
     check_required_files()
