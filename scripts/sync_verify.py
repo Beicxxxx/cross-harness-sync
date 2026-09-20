@@ -19,8 +19,9 @@ not hardcoded here. Checks, in order:
   5. Secret files are git-ignored (config "secret_files")
   6. Secret mirror key sets match (config "secret_mirrors": pairs of files
      whose KEY NAMES must be identical, e.g. [".env", ".claude/.env"])
-  7. Extra project checks (config "extra_checks": [{"name", "cmd"}];
-     PASS iff the command exits 0 — e.g. a freeze verifier)
+  7. Extra project checks (config "extra_checks": [{"name", "cmd"}]; PASS iff
+     the command exits 0 AND wrote something — an exit 0 that produced zero
+     bytes on both streams is a SKIP, never a pass; e.g. a freeze verifier)
 
 Exit 0 = every check that ran passed, 1 = at least one FAIL. Every check prints
 PASS/FAIL/SKIP plus its evidence line, and the summary prints the passed count,
@@ -525,6 +526,20 @@ def check_extra(cfg: dict) -> None:
                                 f"{timeout}s; {evidence}")
         elif res.rc == -1:
             record(name, False, f"cmd `{label}` could not run: {evidence}")
+        elif res.rc == 0 and not res.stdout and not res.stderr:
+            # Review finding A.2, and the last surviving instance of the class
+            # this wave exists to end. Task 1 closed D5's DECODE path (bytes,
+            # never `text=True`) but not `ok`: an exit 0 that wrote zero bytes
+            # on BOTH streams was `[PASS] <name> rc=0; (no output)`, counted in
+            # `== N/N checks passed ==`. rc == 0 is never sufficient, and a
+            # check that observed nothing verifies nothing, so this is the
+            # tri-state SKIP — named, with the command and the rc still in the
+            # evidence, and kept out of the passed fraction by `_summarise()`.
+            # A SILENT NONZERO exit stays a FAIL above: muteness is not a claim
+            # of success, and softening it would turn a broken governance check
+            # into a green run.
+            record(name, None, f"cmd `{label}` rc=0; SKIP(child exited 0 but "
+                               f"wrote nothing; nothing observed)")
         else:
             record(name, res.ok, f"cmd `{label}` rc={res.rc}; {evidence}")
 

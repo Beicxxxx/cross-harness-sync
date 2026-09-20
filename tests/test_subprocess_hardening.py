@@ -293,6 +293,62 @@ def test_a_non_ascii_verdict_reaches_an_ascii_console(ai_repo, sv):
 
 
 # --------------------------------------------------------------------------
+# Step 3 (review finding A.2): rc == 0 with NOTHING observed is not a pass.
+
+
+def test_a_silent_extra_check_is_a_named_skip_not_a_pass(ai_repo, sv):
+    """The last surviving instance of the class this wave exists to end.
+
+    Task 1 closed D5's DECODE path (bytes, never `text=True`) but not `ok`
+    semantics: a child that exits 0 having written zero bytes on both streams
+    was reported `[PASS] <name> rc=0; (no output)` and COUNTED in
+    `== N/N checks passed ==`. Nothing was observed, so nothing was verified;
+    spec 4 allows that shape only as a named WARN or SKIP. The command and its
+    rc stay in the evidence, because "which check went mute" is the question an
+    operator on the other side of a handoff actually has to answer.
+    """
+    cfg_path = ai_repo / ".ai" / "sync_config.json"
+    cfg = json.loads(cfg_path.read_text("utf-8"))
+    cfg["extra_checks"] = [{"name": "silent check",
+                            "cmd": [sys.executable, "-c", "pass"]}]
+    cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+    res = run_python(sv, cwd=ai_repo)
+    assert res.rc == 0, res.stdout + res.stderr
+    assert not any(ln.startswith("[PASS] silent check") for ln in res.lines), \
+        res.lines
+    skips = [ln for ln in res.lines if ln.startswith("[SKIP] silent check:")]
+    assert len(skips) == 1, res.lines
+    line = skips[0]
+    assert "wrote nothing" in line, line
+    assert "nothing observed" in line, line
+    assert "rc=0" in line, line
+    summary = [ln for ln in res.lines if "checks passed" in ln]
+    assert len(summary) == 1, res.lines
+    match = SUMMARY_RE.fullmatch(summary[0])
+    assert match, summary[0]
+    passed, total, skipped = match.groups()
+    assert skipped == "1", summary[0]
+    assert int(passed) == int(total) - 1, summary[0]
+
+
+def test_a_silent_failing_child_is_still_a_fail(ai_repo, sv):
+    """The SKIP is for a child that CLAIMS success without evidence; a nonzero
+    exit that wrote nothing is a FAIL, and must never be softened into a skip
+    that leaves the run green."""
+    cfg_path = ai_repo / ".ai" / "sync_config.json"
+    cfg = json.loads(cfg_path.read_text("utf-8"))
+    cfg["extra_checks"] = [{"name": "mute failure",
+                            "cmd": [sys.executable, "-c", "raise SystemExit(3)"]}]
+    cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+    res = run_python(sv, cwd=ai_repo)
+    assert res.rc == 1, res.stdout
+    assert any(ln.startswith("[FAIL] mute failure:") and "rc=3" in ln
+               for ln in res.lines), res.lines
+    assert not any(ln.startswith("[SKIP] mute failure") for ln in res.lines)
+    assert "FAILED: mute failure" in res.lines, res.lines
+
+
+# --------------------------------------------------------------------------
 # D5 regression pins, verbatim from d5-repro.md §6.2 via batch-B3.md Step 1.
 
 WEN_PY = "文.py"        # U+6587 -> UTF-8 E6 96 87; 0x87 + '.' (2E) is no cp936 pair
