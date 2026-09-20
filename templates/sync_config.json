@@ -1,4 +1,14 @@
 {
+  "required_files": [
+    ".ai/state/CURRENT.md",
+    ".ai/state/TASK.md",
+    ".ai/state/BLOCKERS.md",
+    ".ai/state/ROLE_POLICY.md",
+    ".ai/state/DECISIONS.md",
+    ".ai/state/DECISIONS_INDEX.md",
+    ".ai/handoff/LATEST.md",
+    ".ai/protocol/VERSION"
+  ],
   "budgets": {
     "AGENTS.md": 65,
     ".ai/state/CURRENT.md": 60,

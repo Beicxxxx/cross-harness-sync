@@ -30,6 +30,31 @@ from pathlib import Path
 
 AI_DIR_NAME = ".ai"
 
+# The files an install must have, in the order the verifier reports them: the
+# three L0 startup reads, the governance and decision records, the handoff, and
+# the protocol stamp.
+#
+# D23 was that THREE copies of this list had drifted apart — sync_verify's
+# `REQUIRED_FILES`, checkpoint's `--validate`, and checkpoint's `--status` — and
+# none of them required ROLE_POLICY.md, so the file that decides who may write
+# state could simply be absent. It lives here, next to the other protocol
+# constants, so every script imports the same object instead of copying it, and
+# the shipped `.ai/sync_config.json` carries the identical list.
+#
+# Deliberately absent: `.ai/state/authorizations/INDEX.md`. Wave 1b's `--migrate`
+# creates and populates it; requiring a file that nothing writes in 1a would make
+# every fresh install red for a 1b reason.
+DEFAULT_REQUIRED_FILES = [
+    ".ai/state/CURRENT.md",
+    ".ai/state/TASK.md",
+    ".ai/state/BLOCKERS.md",
+    ".ai/state/ROLE_POLICY.md",
+    ".ai/state/DECISIONS.md",
+    ".ai/state/DECISIONS_INDEX.md",
+    ".ai/handoff/LATEST.md",
+    ".ai/protocol/VERSION",
+]
+
 # git's own "which repository am I working on" variables. A git hook exports
 # them, and any child git process that inherits one answers about the OUTER
 # repository no matter which directory it was started in — the same

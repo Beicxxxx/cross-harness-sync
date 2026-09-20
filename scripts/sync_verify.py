@@ -7,7 +7,8 @@ not hardcoded here. Checks, in order:
   0. The config itself is readable, parses, and holds a JSON object. Reading it
      is the precondition of every other line, so failing here stops the run
      instead of falling back to defaults (D4).
-  1. Required state files exist and are non-empty
+  1. Required state files exist and are non-empty (config "required_files",
+     default `ai_common.DEFAULT_REQUIRED_FILES`)
   2. Token budgets (per-file line caps from config "budgets")
   3. Decision log cap (config "decisions_max_active_entries")
   4. Secret files are git-ignored (config "secret_files")
@@ -38,8 +39,8 @@ from pathlib import Path
 # UnicodeEncodeError and rc 1 instead of the rc 2 named below.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
-    from ai_common import RepoError, decode, protect_stdio, resolve_roots, \
-        run_argv, run_git
+    from ai_common import (DEFAULT_REQUIRED_FILES, RepoError, decode,
+                           protect_stdio, resolve_roots, run_argv, run_git)
 except ImportError:
     print("[FAIL] install layout: ai_common.py is missing from .ai/scripts/ -- "
           "re-run init_sync.py so the shared primitives are copied in")
@@ -54,6 +55,10 @@ CONFIG_PATH: Path | None = None
 RESULTS: list[tuple[str, bool, str]] = []
 
 DEFAULT_CONFIG = {
+    # The one required-file list, imported rather than restated (D23). The
+    # shipped template carries the same entries; `test_required_files.py` fails
+    # if the two ever disagree.
+    "required_files": list(DEFAULT_REQUIRED_FILES),
     # The four protocol files every install creates. `AGENTS.md` is deliberately
     # NOT here even though `templates/sync_config.json` sets it: its cap is
     # installer-owned (D18 prunes the entry when `--no-agents-block` created no
@@ -73,15 +78,9 @@ DEFAULT_CONFIG = {
     "extra_checks": [],
 }
 
-REQUIRED_FILES = [
-    ".ai/state/CURRENT.md",
-    ".ai/state/TASK.md",
-    ".ai/state/BLOCKERS.md",
-    ".ai/state/DECISIONS.md",
-    ".ai/state/DECISIONS_INDEX.md",
-    ".ai/handoff/LATEST.md",
-    ".ai/protocol/VERSION",
-]
+# No `REQUIRED_FILES` here: D23 was this constant disagreeing with two private
+# copies in checkpoint.py, so the list lives in config with
+# `ai_common.DEFAULT_REQUIRED_FILES` as its single default.
 
 # One extra check may legitimately take minutes (a freeze verifier over a large
 # tree); it may not hang forever. Task 6 makes the timeout config-driven.
@@ -218,8 +217,8 @@ def load_config() -> dict:
     return merge_config(DEFAULT_CONFIG, cfg)
 
 
-def check_required_files() -> None:
-    for rel in REQUIRED_FILES:
+def check_required_files(required_files: list) -> None:
+    for rel in required_files:
         p = ROOT / rel
         if not p.exists():
             record(f"required {rel}", False, "missing")
@@ -324,7 +323,7 @@ def main() -> int:
         # than looking like a run that checked something.
         record("config readable", False, str(exc))
         return _summarise()
-    check_required_files()
+    check_required_files(cfg["required_files"])
     check_token_budgets(cfg)
     check_secrets_ignored(cfg)
     check_secret_mirrors(cfg)
