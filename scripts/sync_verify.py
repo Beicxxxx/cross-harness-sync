@@ -22,8 +22,11 @@ not hardcoded here. Checks, in order:
   7. Extra project checks (config "extra_checks": [{"name", "cmd"}];
      PASS iff the command exits 0 — e.g. a freeze verifier)
 
-Exit 0 = all green, 1 = at least one FAIL. Every check prints PASS/FAIL plus
-its evidence line. Add new checks to the config, not to chat memory.
+Exit 0 = every check that ran passed, 1 = at least one FAIL. Every check prints
+PASS/FAIL/SKIP plus its evidence line, and the summary prints the passed count,
+the total and the skip count on ONE line: a check that could not run is named
+and kept out of the passed fraction, never folded into it (spec 4). Add new
+checks to the config, not to chat memory.
 
 Usage:  python .ai/scripts/sync_verify.py
 """
@@ -59,7 +62,14 @@ AI_DIR: Path | None = None
 ROOT: Path | None = None
 CONFIG_PATH: Path | None = None
 
-RESULTS: list[tuple[str, bool, str]] = []
+# `ok` is TRI-STATE: True passed, False failed, None skipped. The third value
+# exists because spec 4 allows a degradation to be named as a WARN or a SKIP
+# and never as a PASS, and a SKIP squeezed into a two-valued `record()` becomes
+# either a false red (a legal install held at FAIL, which is what lane S1
+# documented twice) or a false green (a skip pushed through with `ok=True`,
+# landing in the passed numerator). `_summarise()` keeps None out of that
+# fraction; see `record()`.
+RESULTS: list[tuple[str, "bool | None", str]] = []
 
 DEFAULT_CONFIG = {
     # The one required-file list, imported rather than restated (D23). The
@@ -185,9 +195,20 @@ class ConfigError(Exception):
     """
 
 
-def record(name: str, ok: bool, evidence: str) -> None:
-    RESULTS.append((name, ok, evidence))
-    print(f"[{'PASS' if ok else 'FAIL'}] {name}: {evidence}")
+def record(name: str, ok, evidence: str) -> None:
+    """Append and print one verdict: PASS, FAIL, or SKIP.
+
+    `ok` must be True / False / None. Anything else (an int a caller forgot to
+    compare, a future `res.ok` wearing a new type) is recorded as FAIL rather
+    than trusted: the old `{'PASS' if ok else 'FAIL'}` printed
+    `[PASS] … : …` for `ok=1`, which is the fail-open spec 4 exists to end, and
+    a bare dict lookup on the value would have raised KeyError out of the
+    reporting path itself.
+    """
+    verdict = ok if ok is None or isinstance(ok, bool) else False
+    RESULTS.append((name, verdict, evidence))
+    tag = {True: "PASS", False: "FAIL", None: "SKIP"}[verdict]
+    print(f"[{tag}] {name}: {evidence}")
 
 
 def _is_path_str(val) -> bool:
@@ -317,13 +338,11 @@ def load_config(path: Path | None = None) -> tuple[dict, set]:
 
 
 def check_required_files(required_files: list) -> None:
-    # TODO-1a/1b boundary: an empty required-file list is reported FAIL here,
-    # not SKIP, because `record()` speaks only PASS/FAIL and a SKIP pushed
-    # through it with ok=True lands in the `N/N passed` numerator — a SKIP that
-    # reads as a PASS, the exact spec 4 violation. Task 7's tri-state `record()`
-    # (a line kept out of the passed/total fraction, `== 9/10 passed, 1 skipped
-    # ==`) is what turns this line and the decisions-file line into real named
-    # SKIPs; until then a degradation costs the run its green.
+    # Ruling (lane B3a, on lane S1's finding 1): this one STAYS a FAIL now that
+    # `record()` can skip. A config declaring zero required files has removed a
+    # check, which is not the same thing as a machine not having a file — the
+    # tri-state channel is for the second case. The floor below still runs, so
+    # the line is the name of the act, not the only evidence of it.
     declared = list(required_files)
     floor_only = [rel for rel in REQUIRED_FILE_FLOOR if rel not in declared]
     if not declared:
@@ -380,14 +399,29 @@ def check_token_budgets(cfg: dict, nulled: set | None = None) -> None:
     dec = ROOT / dec_rel
     cap = cfg["decisions_max_active_entries"]
     name = "budget DECISIONS active entries"
-    # TODO-1a/1b boundary (see check_required_files): the absent-decisions-file
-    # branch below is a named FAIL today where spec 4 wants a named SKIP, for
-    # the same `record()` reason. A repo with no decision log declines it by
-    # dropping DECISIONS.md from the optional tail of `required_files` and is
-    # still red here until Task 7 lands.
+    # Lane S1's second `# TODO-1a/1b boundary`, now converted (B3a step 1).
+    # The SKIP is allowed only because necessity is answered elsewhere for the
+    # DEFAULT path: `.ai/state/DECISIONS.md` is in
+    # `ai_common.DEFAULT_REQUIRED_FILES` (= `DEFAULT_CONFIG["required_files"]`)
+    # and is deliberately outside `REQUIRED_FILE_FLOOR`, so either the install
+    # requires it and a missing file is already a named
+    # `[FAIL] required .ai/state/DECISIONS.md`, or the config dropped the entry
+    # and the install has declared in the one key that owns the question that
+    # it keeps no decision log. A RETARGETED path is neither of those: no
+    # requirement covers it, so `if dec.exists():` with no else would let one
+    # config line un-check the decision cap while every other line stayed
+    # green. That shape stays a FAIL (spec 4: silence is the failure, and a
+    # skip nobody had to answer for is silence with better manners).
+    default_dec = DEFAULT_CONFIG["decisions_file"]
     if not dec.is_file():
-        record(name, False, f"decisions file not present at {dec_rel} "
-                            f"(cap {cap} has nothing to measure)")
+        if dec_rel == default_dec:
+            record(name, None, f"SKIP(this install declares no decision log at "
+                               f"{dec_rel}; the cap of {cap} has nothing to "
+                               f"measure, and required_files is where its "
+                               f"absence would be named)")
+        else:
+            record(name, False, f"decisions file not present at {dec_rel} "
+                                f"(cap {cap} has nothing to measure)")
         return
     try:
         text = dec.read_text(encoding="utf-8")
@@ -451,8 +485,18 @@ def check_extra(cfg: dict) -> None:
 
 
 def _summarise() -> int:
-    failed = [n for n, ok, _ in RESULTS if not ok]
-    print(f"== {len(RESULTS) - len(failed)}/{len(RESULTS)} checks passed ==")
+    """One line that says what was PASSED, out of what ran, and what skipped.
+
+    A SKIP is in the denominator and nowhere else: `== 14/15 checks passed ==`
+    may never become `== 15/15 ==` because one check could not run, so the
+    passed count is `ok is True` alone and the skip count shares the line —
+    a number on its own line is a number that gets scrolled past.
+    """
+    passed = sum(1 for _, ok, _ in RESULTS if ok is True)
+    skipped = sum(1 for _, ok, _ in RESULTS if ok is None)
+    failed = [n for n, ok, _ in RESULTS if ok is False]
+    tail = f", {skipped} skipped" if skipped else ""
+    print(f"== {passed}/{len(RESULTS)} checks passed{tail} ==")
     if failed:
         print("FAILED: " + ", ".join(failed))
         return 1
