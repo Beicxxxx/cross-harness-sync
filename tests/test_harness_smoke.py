@@ -219,7 +219,12 @@ def test_modules_using_pep604_unions_defer_annotation_evaluation():
             continue
         offenders.append(f"{path.name}: {len(unions)} evaluated PEP 604 union(s)")
 
-    assert {"helpers.py"} <= set(deferred), f"guard went vacuous: {deferred}"
+    # The anchor is the point: an empty `deferred` or one reduced to a single
+    # file would let the rest of them leave this guard's scope in silence
+    # (finding J). `checkpoint.py` belongs in this set too, and is held back
+    # only while another lane owns that file — see task-1-report.md.
+    assert {"helpers.py", "ai_common.py"} <= set(deferred), \
+        f"guard went vacuous: {deferred}"
     assert not offenders, offenders
 
 
