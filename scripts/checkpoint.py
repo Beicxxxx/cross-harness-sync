@@ -250,7 +250,7 @@ def _write_json_if_unchanged(path, data, raw, label):
     current, err = _read_raw_or_error(path)
     if err or current != raw:
         print(f"{label} ABORTED: {path.name} "
-              f"{err or 'changed since it was read'} — the file on disk is not "
+              f"{err or 'changed since it was read'} - the file on disk is not "
               "the one this command validated, so nothing was written.")
         return False
     write_json(path, data)
@@ -363,7 +363,7 @@ def lock_state():
     expires = parse_ts(lock.get("expires_at"))
     if expires is None:
         return LockStatus("held", holder,
-                          "no expiry (malformed or absent expires_at) — do not "
+                          "no expiry (malformed or absent expires_at) - do not "
                           "rely on the TTL; release with --unlock --force")
     if now_dt() > expires:
         return LockStatus("expired", holder, f"expired {lock['expires_at']}")
@@ -386,7 +386,7 @@ def cmd_status(args):
     status, status_err = read_json_or_error(RUNTIME_DIR / "STATUS.json")
     if status_err:
         print(f"WARN: session state not read: runtime/STATUS.json "
-              f"{status_err} — unknown, not empty.")
+              f"{status_err} - unknown, not empty.")
     elif not status:
         print("No active session found (runtime/STATUS.json missing or empty)")
     else:
@@ -406,7 +406,7 @@ def cmd_status(args):
     lock_status = lock_state()
     if lock_status.state == "error":
         print(f"Writer Lock      : CONFLICT/ERROR ({lock_status.detail})"
-              " — do NOT write state files; resolve the conflict first")
+              " - do NOT write state files; resolve the conflict first")
     elif lock_status.state == "held":
         lock, _err = read_json_or_error(LOCK_PATH)
         print(f"Writer Lock      : HELD by {lock_status.holder} "
@@ -440,7 +440,7 @@ def cmd_checkpoint(args):
     # degradation. Refuse the write and leave the file alone.
     status, err = read_json_or_error(status_path)
     if err:
-        print(f"CHECKPOINT ABORTED: runtime/STATUS.json {err} — the existing "
+        print(f"CHECKPOINT ABORTED: runtime/STATUS.json {err} - the existing "
               "checkpoint count is unknown, so it is not reset to 0 and no state "
               "file is written.")
         sys.exit(2)
@@ -454,7 +454,7 @@ def cmd_checkpoint(args):
         status["current_task"] = args.task
     version, version_err = get_protocol_version()
     if version_err:
-        print(f"WARN: protocol version not read ({version_err}) — the key is "
+        print(f"WARN: protocol version not read ({version_err}) - the key is "
               'omitted from runtime/STATUS.json rather than recorded as "unknown".')
     else:
         status["protocol_version"] = version
@@ -476,19 +476,19 @@ def cmd_prime(args):
 
     lock_status = lock_state()
     if lock_status.state == "error":
-        lock_line = (f"CONFLICT/ERROR — {lock_status.detail} — do NOT write state "
+        lock_line = (f"CONFLICT/ERROR - {lock_status.detail} - do NOT write state "
                      "files; resolve the conflict first.")
     elif lock_status.state == "held":
         # `HELD by <h> {detail}` with no separator: with detail "until <ts>" this
         # reproduces the pre-fix line byte for byte, so anything reading --prime
         # output keeps matching. The no-expiry detail reads awkwardly there — it
         # is a warning line, not prose.
-        lock_line = (f"HELD by {lock_status.holder} {lock_status.detail} — "
+        lock_line = (f"HELD by {lock_status.holder} {lock_status.detail} - "
                      "if that is not you, do NOT write state files.")
     elif lock_status.state == "expired":
-        lock_line = f"expired (was {lock_status.holder}) — free to acquire."
+        lock_line = f"expired (was {lock_status.holder}) - free to acquire."
     else:
-        lock_line = "none — free to acquire."
+        lock_line = "none - free to acquire."
 
     status, status_err = read_json_or_error(RUNTIME_DIR / "STATUS.json")
     version, version_err = get_protocol_version()
@@ -499,10 +499,10 @@ def cmd_prime(args):
 
     print(f"== SESSION PRIME (cross-harness-sync v{version or 'not read'}) ==")
     if version_err:
-        print(f"WARN: protocol version not read ({version_err}) — the protocol in "
+        print(f"WARN: protocol version not read ({version_err}) - the protocol in "
               "use is not confirmed.")
     if status_err:
-        print(f"WARN: session state not read: runtime/STATUS.json {status_err} — "
+        print(f"WARN: session state not read: runtime/STATUS.json {status_err} - "
               "the last checkpoint is not confirmed, and 'never' would be a lie.")
     print(f"Writer lock: {lock_line}")
     print(f"Last checkpoint: {last} by {agent}")
@@ -531,7 +531,7 @@ def cmd_handoff(args):
     # abort before archiving, so a refusal leaves no trace at all.
     status, err = read_json_or_error(status_path)
     if err:
-        print(f"HANDOFF ABORTED: runtime/STATUS.json {err} — the state on disk is "
+        print(f"HANDOFF ABORTED: runtime/STATUS.json {err} - the state on disk is "
               "unknown, so it is not rewritten and no handoff is prepared.")
         sys.exit(2)
 
@@ -553,10 +553,10 @@ def cmd_handoff(args):
     print(f"Handoff prepared at {now_display()}")
     print()
     print("The coding agent must still update these files manually:")
-    print(f"  1. {STATE_DIR / 'CURRENT.md'} — final state snapshot (<= budget lines)")
-    print(f"  2. {HANDOFF_DIR / 'LATEST.md'} — 6 sections: Done / Not done /")
+    print(f"  1. {STATE_DIR / 'CURRENT.md'} - final state snapshot (<= budget lines)")
+    print(f"  2. {HANDOFF_DIR / 'LATEST.md'} - 6 sections: Done / Not done /")
     print("     Evidence pointers / Warnings / Next step / Must-read list")
-    print(f"  3. {HANDOFF_DIR / 'NEXT_PROMPT.md'} — next agent's starting prompt")
+    print(f"  3. {HANDOFF_DIR / 'NEXT_PROMPT.md'} - next agent's starting prompt")
     print()
     print("Then run sync_verify.py, release the lock "
           "(--unlock --agent <name>), commit, and push.")
@@ -708,7 +708,7 @@ def cmd_lock(args):
                   "has to be recorded alongside the reason.")
         print("--force takes a lock OVER: the displaced record stays in the "
               "tree and in git history. It does not RESOLVE a conflicted record "
-              "— that needs --discard-lock here, or a git resolve.")
+              "- that needs --discard-lock here, or a git resolve.")
         sys.exit(1)
     forced_layout = False
     if kind != "normal":
@@ -716,7 +716,7 @@ def cmd_lock(args):
             _layout_refusal(kind, detail)
             sys.exit(1)
         forced_layout = True
-        print(f"WARN {kind}: --force with --reason {force_reason!r} — the "
+        print(f"WARN {kind}: --force with --reason {force_reason!r} - the "
               f"layout is recorded in WRITER_LOCK.json as forced_layout. "
               f"{detail}")
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
@@ -729,7 +729,7 @@ def cmd_lock(args):
         # D1: an unreadable record is contention, not an empty pen. It is most
         # often the merge this file is designed to hit, and the other machine's
         # acquisition may be sitting inside the unparseable half.
-        print("LOCK UNREADABLE: cannot parse the writer lock record — it is "
+        print("LOCK UNREADABLE: cannot parse the writer lock record - it is "
               "treated as HELD, not as free.")
         print(f"  detail: {status.detail}")
         print("Resolve the git conflict (or repair the JSON) and re-run. If the "
@@ -744,7 +744,7 @@ def cmd_lock(args):
         print(f"LOCK CONFLICT: held by {holder} {status.detail} "
               f"(reason: {lock.get('reason', '-')})")
         print("Advisory lock: you may wait for expiry, coordinate, or re-run "
-              'with --force --reason "<why>" — that takes the pen over and '
+              'with --force --reason "<why>" - that takes the pen over and '
               "records the takeover (and the reason) in the lock itself.")
         sys.exit(1)
     acquired = now_dt()
@@ -763,7 +763,7 @@ def cmd_lock(args):
         "released_at": None,
     }
     if epoch is None:
-        print(f"WARN: the epoch is not recorded — the previous lock record was "
+        print(f"WARN: the epoch is not recorded - the previous lock record was "
               f"not read ({prev_err}); restarting the count at 1 would claim a "
               "history this command cannot see.")
     else:
@@ -799,7 +799,7 @@ def cmd_unlock(args):
         # Nothing to release: no record, or one already released — the record is
         # the audit trail, so it is kept, never deleted.
         print("Writer lock: none" + ("" if status.detail == "no lock file"
-                                     else f" — {status.detail}"))
+                                     else f" - {status.detail}"))
         return
     # D2: the holder check used to run only when --agent happened to be passed,
     # which is exactly the command --prime told users to run. An expired record
@@ -870,7 +870,7 @@ def _guard_state_writes(command, args):
                   "git history, so the hold remains auditable.")
             return
         print(f"{command.upper()} REFUSED: the writer lock record is unreadable "
-              f"({status.detail}), which is HELD, not free — no state file is "
+              f"({status.detail}), which is HELD, not free - no state file is "
               "written. Resolve the git conflict and re-run, or re-run with "
               "--force --discard-lock to write anyway; --force alone does not "
               "resolve the conflict, so it is not accepted here either.")

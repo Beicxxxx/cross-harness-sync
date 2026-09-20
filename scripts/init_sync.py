@@ -48,6 +48,12 @@ import shutil
 import sys
 from pathlib import Path
 
+try:
+    from ai_common import protect_stdio
+except ImportError:  # imported by path (a test, or a caller off PATH)
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from ai_common import protect_stdio
+
 SKILL_DIR = Path(__file__).resolve().parent.parent
 TEMPLATES = SKILL_DIR / "templates"
 
@@ -284,10 +290,10 @@ def copy_file(src: Path, dst: Path, force: bool,
         if protected:
             existing = _read_text(dst)
             if existing is None:
-                return (f"KEEP (unreadable): {dst} — not text we can compare; "
+                return (f"KEEP (unreadable): {dst} - not text we can compare; "
                         "pass --clobber to overwrite")
             if not is_template_shaped(existing):
-                return f"KEEP (edited): {dst} — pass --clobber to overwrite"
+                return f"KEEP (edited): {dst} - pass --clobber to overwrite"
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(str(src), str(dst))
     return f"wrote: {dst}"
@@ -532,7 +538,7 @@ def warn_agents_over_budget(root: Path) -> list[str]:
         return []
     return [f"WARNING: AGENTS.md is over budget: {n} lines vs cap {cap}. "
             f"sync_verify.py reports [FAIL] budget AGENTS.md until the file is "
-            f"{cap} lines or fewer — trim {n - cap} line(s) of your own rules "
+            f"{cap} lines or fewer - trim {n - cap} line(s) of your own rules "
             f"(the managed block accounts for {BLOCK_APPEND_SPAN} of them) or "
             f"raise the cap in .ai/sync_config.json"]
 
@@ -553,7 +559,7 @@ def update_agents_md(root: Path, force: bool) -> str:
     # and named nothing.
     text, why_not = _read_raw_text(agents)
     if text is None:
-        return (f"AGENTS.md: ERROR ({why_not}) — left untouched and the managed "
+        return (f"AGENTS.md: ERROR ({why_not}) - left untouched and the managed "
                 "block was not added; everything else in this run stands, so "
                 "save the file as UTF-8 and re-run")
     if "Canonical instructions for ALL harnesses" in text:
@@ -563,7 +569,7 @@ def update_agents_md(root: Path, force: bool) -> str:
     lines = text.splitlines(keepends=True)
     spans, orphans = _block_spans(lines)
     if orphans:
-        return (f"AGENTS.md: ERROR ({orphans} BEGIN marker with no END marker) — "
+        return (f"AGENTS.md: ERROR ({orphans} BEGIN marker with no END marker) - "
                 "left the file untouched; repair the marker and re-run. Appending "
                 "here would put a second managed block in the same file.")
     block = [ln + term for ln in MANAGED_BLOCK.split("\n")]
@@ -577,7 +583,7 @@ def update_agents_md(root: Path, force: bool) -> str:
         _write_bytes_text(agents, "".join(rebuilt))
         message = "AGENTS.md: replaced managed block in place"
         if lines[spans[0][0]:spans[0][1] + 1] != block:
-            message += (" — drifted markers and any text inside them were "
+            message += (" - drifted markers and any text inside them were "
                         "normalised to the shipped block")
         extra = len(spans) - 1
         if extra:
@@ -601,6 +607,11 @@ def write_claude_pointer(root: Path) -> str:
 
 
 def main() -> int:
+    # First, before anything is printed: a cp936 console turns the UTF-8 bytes
+    # of any non-ASCII text left in them into mojibake, and the install output
+    # is the first thing a new user reads (checkpoint.py and sync_verify.py
+    # have always done this; init_sync.py was the one entry script that did not).
+    protect_stdio()
     parser = argparse.ArgumentParser(
         description="Scaffold cross-harness-sync into a repository")
     parser.add_argument("repo_root", nargs="?", default=".",
@@ -696,7 +707,7 @@ def main() -> int:
     print("     and the .ai/state/*.md files.")
     print("  2. Declare project-specific checks in .ai/sync_config.json")
     print("     (extra_checks, secret_mirrors).")
-    print("  3. python .ai/scripts/sync_verify.py  → should be all green.")
+    print("  3. python .ai/scripts/sync_verify.py  -> should be all green.")
     print("  4. Commit and push.")
     return rc
 

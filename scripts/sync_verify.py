@@ -366,7 +366,7 @@ def check_required_files(required_files: list) -> None:
     if floor_only:
         record("required-file floor", True,
                f"config listed {len(declared)} entries; floor restored "
-               f"{floor_only} — these have no necessity check elsewhere, so "
+               f"{floor_only} - these have no necessity check elsewhere, so "
                f"the key's replace policy does not reach them")
     for rel in declared + floor_only:
         p = ROOT / rel
@@ -407,7 +407,7 @@ def check_token_budgets(cfg: dict, nulled: set | None = None) -> None:
                    f"null in config (considered act, not D3's accident)")
         else:
             record(f"budget {rel}", False,
-                   "file present, no cap in config and no explicit null — "
+                   "file present, no cap in config and no explicit null - "
                    "name the cap or decline it with null")
     dec_rel = cfg["decisions_file"]
     dec = ROOT / dec_rel
@@ -606,7 +606,7 @@ def main() -> int:
         # `kind == "symlinked"`: the other two kinds falling through would let a
         # wrong-tree run print PASS.
         record("install layout", False,
-               f"{kind}: {layout_detail} — every check below would be about a "
+               f"{kind}: {layout_detail} - every check below would be about a "
                f"tree that is not this checkout (coverage limit: a symlinked "
                f"`.ai` this script was invoked THROUGH is invisible here, "
                f"because resolve_roots() resolved past it)")
