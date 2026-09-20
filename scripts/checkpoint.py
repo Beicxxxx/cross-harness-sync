@@ -132,10 +132,22 @@ def read_json_or_error(path):
     D1: for the writer lock an empty dict is not "no lock", it is "unknown", so
     the caller must be able to tell the two apart. A tracked file plus a merge
     is a guaranteed conflict marker in the record.
+
+    F1: "absent" and "cannot stat / cannot read" are different answers, and the
+    old `path.exists()` guard confused them — exists() returns False when the
+    stat behind it raises PermissionError, which this host does routinely
+    (Errno 13). A live, conflicted lock therefore came back as {} with NO error,
+    which lock_state() reported as free and both machines wrote. The file is now
+    opened directly and only a genuine FileNotFoundError means absent; anything
+    else the OS refuses becomes an error, the same way an unparseable record
+    already does.
     """
-    if not path.exists():
+    try:
+        raw = _retry_sharing(path.read_bytes)
+    except FileNotFoundError:
         return {}, None
-    raw = _retry_sharing(path.read_bytes)
+    except OSError as exc:
+        return {}, f"cannot read: {exc}"
     if b"<<<<<<<" in raw or b">>>>>>>" in raw:
         return {}, "merge conflict markers"
     try:

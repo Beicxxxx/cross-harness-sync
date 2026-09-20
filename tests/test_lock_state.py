@@ -9,7 +9,9 @@ free. An unparseable or absent `expires_at` used to mean "never expires" for
 Each assertion below is positive (it names the text it expects); the one
 negative assertion rides alongside a positive one in the same test.
 """
+import importlib.util
 import json
+from pathlib import Path
 
 from helpers import run_python, write_lock
 
@@ -92,3 +94,49 @@ def test_force_with_discard_lock_replaces_the_unreadable_record(ai_repo, cp):
     record = json.loads((ai_repo / ".ai" / "runtime" / "WRITER_LOCK.json")
                         .read_text("utf-8-sig"))
     assert record["agent"] == "claude-code", record
+
+
+def load(cp_path):
+    """Import the checkpoint.py that was copied INTO this fixture repo.
+
+    B6/F1: the reader has to be denied a syscall, and a subprocess cannot be told
+    to do that portably — `chmod 0o000` leaves the file readable on Windows,
+    which is the only host this wave runs on. So the predicate is pinned at the
+    function boundary against the real install layout instead of with a
+    permission test that would pass vacuously.
+    """
+    spec = importlib.util.spec_from_file_location("cp_under_test", str(cp_path))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_denied_lock_read_is_error_and_not_free(ai_repo, cp, monkeypatch):
+    """F1: `Path.exists()` returns False when the stat behind it raises
+    PermissionError, so a live, unreadable lock became {} with no error.
+
+    The three states are asserted in order, all positively: absent is still
+    absent (so the fix cannot collapse everything into "error"), a readable
+    record is still HELD, and a DENIED read of that same record is "error", not
+    "free".
+    """
+    mod = load(cp)
+    mod._set_paths(ai_repo / ".ai")
+
+    absent = mod.lock_state()
+    assert (absent.state, absent.detail) == ("free", "no lock file"), absent
+
+    lock = write_lock(ai_repo, live())
+    assert mod.lock_state().state == "held", mod.lock_state()
+
+    def deny(self):
+        raise PermissionError(13, "Permission denied", str(self))
+
+    monkeypatch.setattr(Path, "read_bytes", deny)
+    data, err = mod.read_json_or_error(lock)
+    assert data == {}, data
+    assert err and "cannot read" in err, err
+    assert "denied" in err.lower(), err
+    status = mod.lock_state()
+    assert status.state == "error", status
+    assert status.detail == err, status
