@@ -225,8 +225,8 @@ def test_duplicated_blocks_collapse_into_one_without_losing_user_text(repo):
     fix has to fold them back and keep the caller's own lines around them.
 
     Text *between* two blocks is preserved — it may be the caller's — so the
-    collapse is pinned as "the 14 duplicated protocol lines are gone and exactly
-    one block remains", not as an exact byte size.
+    collapse is pinned as "one block remains and the file is back to the size a
+    single install produces", not as a byte-for-byte rewrite.
     """
     write_agents(repo, 8)
     assert scaffold(repo).rc == 0
@@ -240,7 +240,7 @@ def test_duplicated_blocks_collapse_into_one_without_losing_user_text(repo):
                     encoding="utf-8")
     assert marker_count(path, "BEGIN CROSS-HARNESS-SYNC") == 2
     grown = line_count(path)
-    assert grown == 8 + BLOCK_SPAN + 1 + 14, grown
+    assert grown == 8 + BLOCK_SPAN + 14, grown
 
     res = scaffold(repo)
     assert res.rc == 0, res.stdout + res.stderr
@@ -250,7 +250,7 @@ def test_duplicated_blocks_collapse_into_one_without_losing_user_text(repo):
     assert sum("Cross-Harness Continuity (managed block" in ln
                for ln in after) == 1, after
     assert after[:8] == agents_lines(8), after
-    assert 8 + BLOCK_SPAN <= len(after) <= 8 + BLOCK_SPAN + 1, len(after)
+    assert len(after) == 8 + BLOCK_SPAN, after
     assert any("collaps" in ln.lower() for ln in res.lines), res.lines
     out = verify(repo)
     assert out.rc == 0, out.stdout + out.stderr

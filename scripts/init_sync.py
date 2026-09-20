@@ -70,6 +70,15 @@ MANAGED_BLOCK = f"""{MANAGED_BEGIN}
   commit + push. Never force-push, never commit secrets.
 {MANAGED_END}"""
 
+# N2: the markers are recognised as a FAMILY, not as the two literals above.
+# Matching `MANAGED_BEGIN in text` meant that retyping one character of the HTML
+# comment — a `v:1` -> `v:2` upgrade, a formatter, one side of a merge conflict —
+# sent the next install down the append branch, duplicating the whole protocol
+# block at +16 lines per run with no bound, in the file every harness auto-loads.
+MANAGED_BEGIN_RE = re.compile(
+    r"^\s*<!--\s*BEGIN CROSS-HARNESS-SYNC\b.*?-->\s*$", re.I)
+MANAGED_END_RE = re.compile(r"^\s*<!--\s*END CROSS-HARNESS-SYNC\s*-->\s*$", re.I)
+
 # N1/D27: the block is not free. As the append branch writes it it contributes
 # its own lines plus two blank separators, and `sync_verify.py` counts the whole
 # file against `.ai/sync_config.json`'s `"AGENTS.md"` cap. A constant cap that
@@ -359,7 +368,29 @@ def _own_agents_budget() -> int:
 def managed_block_present(root: Path) -> bool:
     agents = root / "AGENTS.md"
     text = _read_text(agents) if agents.is_file() else None
-    return bool(text) and MANAGED_BEGIN in text
+    return bool(text) and bool(_block_spans(text.split("\n"))[0])
+
+
+def _block_spans(lines: list[str]) -> tuple[list[tuple[int, int]], int]:
+    """`([ (begin, end) inclusive ], unmatched BEGIN count)` for `lines`.
+
+    N2: spans come from the marker family, so a drifted `v:` tag, extra internal
+    whitespace or trailing spaces still resolve to the same block. Each BEGIN
+    takes the first unused END after it; a BEGIN with no END after it is
+    unmatched and reported, because appending beside it would add a second live
+    copy of the protocol text to a file that already has one.
+    """
+    begins = [i for i, ln in enumerate(lines) if MANAGED_BEGIN_RE.match(ln)]
+    ends = [i for i, ln in enumerate(lines) if MANAGED_END_RE.match(ln)]
+    spans: list[tuple[int, int]] = []
+    taken: set[int] = set()
+    for b in begins:
+        e = next((x for x in ends if x > b and x not in taken), None)
+        if e is None:
+            continue
+        taken.add(e)
+        spans.append((b, e))
+    return spans, len(begins) - len(spans)
 
 
 def raise_agents_budget_for_block(root: Path) -> list[str]:
@@ -457,11 +488,29 @@ def update_agents_md(root: Path, force: bool) -> str:
     if "Canonical instructions for ALL harnesses" in text:
         # Already the full template — the whole protocol is inline, no block needed
         return "AGENTS.md: already the full template, no managed block added"
-    if MANAGED_BEGIN in text and MANAGED_END in text:
-        pre = text.split(MANAGED_BEGIN)[0]
-        post = text.split(MANAGED_END, 1)[1]
-        agents.write_text(pre + MANAGED_BLOCK + post, encoding="utf-8")
-        return "AGENTS.md: replaced managed block in place"
+    lines = text.split("\n")
+    spans, orphans = _block_spans(lines)
+    if orphans:
+        return (f"AGENTS.md: ERROR ({orphans} BEGIN marker with no END marker) — "
+                "left the file untouched; repair the marker and re-run. Appending "
+                "here would put a second managed block in the same file.")
+    if spans:
+        block = MANAGED_BLOCK.split("\n")
+        rebuilt = lines[:spans[0][0]] + block
+        cursor = spans[0][1] + 1
+        for begin, end in spans[1:]:
+            rebuilt.extend(lines[cursor:begin])
+            cursor = end + 1
+        rebuilt.extend(lines[cursor:])
+        agents.write_text("\n".join(rebuilt), encoding="utf-8")
+        message = "AGENTS.md: replaced managed block in place"
+        if lines[spans[0][0]:spans[0][1] + 1] != block:
+            message += (" — drifted markers and any text inside them were "
+                        "normalised to the shipped block")
+        extra = len(spans) - 1
+        if extra:
+            message += f" ({extra} duplicate block(s) collapsed)"
+        return message
     with open(agents, "a", encoding="utf-8") as f:
         f.write("\n\n" + MANAGED_BLOCK + "\n")
     return "AGENTS.md: appended managed block"
@@ -558,7 +607,10 @@ def main() -> int:
                 rc = 1
             print("CLAUDE.md: not written (--no-agents-block)")
         else:
-            print(update_agents_md(root, force))
+            line = update_agents_md(root, force)
+            print(line)
+            if line.startswith("AGENTS.md: ERROR"):
+                rc = 1
             for line in raise_agents_budget_for_block(root):
                 print(line)
                 if line.startswith("ERROR"):
