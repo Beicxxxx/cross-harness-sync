@@ -216,6 +216,47 @@ def _read_text(path: Path) -> str | None:
         return None
 
 
+def _read_raw_text(path: Path) -> tuple[str | None, str | None]:
+    """`(text, why-not)` for a file that belongs to the caller.
+
+    N3: the text keeps the file's OWN line terminators. `read_text` folds CRLF to
+    LF and the matching `write_text` then emits `os.linesep`, so an install run
+    on Windows reformatted the caller's whole file while it was only asked to add
+    a block to it. A file that cannot be decoded comes back as a name, not an
+    exception.
+    """
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        return None, f"cannot be read ({exc.__class__.__name__})"
+    try:
+        return raw.decode("utf-8"), None
+    except UnicodeDecodeError as exc:
+        return None, f"is not UTF-8 text ({exc})"
+
+
+def _dominant_newline(text: str) -> str:
+    """The terminator this text mostly uses; LF when it has none or ties."""
+    crlf = text.count("\r\n")
+    return "\r\n" if crlf > text.count("\n") - crlf else "\n"
+
+
+def _write_bytes_text(path: Path, body: str) -> None:
+    """Write exact bytes — no newline translation anywhere (N3)."""
+    path.write_bytes(body.encode("utf-8"))
+
+
+def _write_text(path: Path, text: str, term: str = "\n") -> None:
+    """Write LF-separated `text` with `term`, never with the platform default.
+
+    Every write in this module used to go through `write_text` or an append-mode
+    handle with no `newline=`, i.e. "translate \\n to os.linesep": `CLAUDE.md`,
+    `.ai/protocol/VERSION` and the pruned config came out CRLF on Windows while
+    every template copied with `copy2` is LF.
+    """
+    _write_bytes_text(path, text if term == "\n" else text.replace("\n", term))
+
+
 def copy_file(src: Path, dst: Path, force: bool,
               protected: bool = False) -> str:
     """Install one file. The return value is a printed line, never an exception.
@@ -251,18 +292,23 @@ def update_gitignore(root: Path, wanted: list[str] | None = None) -> str:
     """
     lines = GITIGNORE_LINES if wanted is None else list(wanted)
     gi = root / ".gitignore"
-    existing = _read_text(gi) if gi.exists() else ""
-    if existing is None:
-        return (f"WARNING: {gi} is not readable UTF-8 text; nothing was "
-                "appended, declare the entries yourself")
-    have = set(existing.splitlines())
+    body = ""
+    if gi.exists():
+        text, _ = _read_raw_text(gi)
+        if text is None:
+            return (f"WARNING: {gi} is not readable UTF-8 text; nothing was "
+                    "appended, declare the entries yourself")
+        body = text
+    term = _dominant_newline(body)
+    # A BOM is content to preserve, not part of the first pattern; utf-8-sig
+    # used to hide it here while the append left it on disk.
+    have = set(body.lstrip("\ufeff").splitlines())
     missing = [ln for ln in lines if ln not in have]
     if not missing:
         return ".gitignore: already up to date"
-    with open(gi, "a", encoding="utf-8") as handle:
-        if existing and not existing.endswith("\n"):
-            handle.write("\n")
-        handle.write("\n".join(missing) + "\n")
+    if body and not body.endswith("\n"):
+        body += term
+    _write_bytes_text(gi, body + term.join(missing) + term)
     return f".gitignore: appended {len(missing)} entries"
 
 
@@ -341,7 +387,7 @@ def drop_agents_md_budget(root: Path) -> str:
     if spliced is None:
         budgets.pop("AGENTS.md")
         spliced = json.dumps(cfg, indent=2) + "\n"
-    cfg_path.write_text(spliced, encoding="utf-8")
+    _write_text(cfg_path, spliced)
     return (f"sync_config.json: dropped AGENTS.md budget (was {removed}) because "
             "--no-agents-block did not create the file")
 
@@ -443,7 +489,7 @@ def raise_agents_budget_for_block(root: Path) -> list[str]:
                     f"{needed} yourself"]
         cfg["budgets"][AGENTS_BUDGET_KEY] = needed
         spliced = json.dumps(cfg, indent=2) + "\n"
-    cfg_path.write_text(spliced, encoding="utf-8")
+    _write_text(cfg_path, spliced)
     return [f"sync_config.json: AGENTS.md budget {current} -> {needed} lines "
             f"(+{BLOCK_APPEND_SPAN}: the managed block this install added, so your "
             f"own content keeps the {own}-line cap)"]
@@ -484,25 +530,31 @@ def update_agents_md(root: Path, force: bool) -> str:
     agents = root / "AGENTS.md"
     if not agents.exists():
         return copy_file(TEMPLATES / "AGENTS.md", agents, force)
-    text = agents.read_text(encoding="utf-8")
+    # N3: read and write the file's OWN bytes. `read_text` folds every
+    # terminator to LF and `write_text` then emits os.linesep, so an installer
+    # run on Windows re-emitted the caller's whole file as CRLF (measured: an
+    # 8-line LF file came back with 24 CRLF terminators) while every template
+    # this tool copies is LF.
+    text = agents.read_bytes().decode("utf-8")
     if "Canonical instructions for ALL harnesses" in text:
         # Already the full template — the whole protocol is inline, no block needed
         return "AGENTS.md: already the full template, no managed block added"
-    lines = text.split("\n")
+    term = _dominant_newline(text)
+    lines = text.splitlines(keepends=True)
     spans, orphans = _block_spans(lines)
     if orphans:
         return (f"AGENTS.md: ERROR ({orphans} BEGIN marker with no END marker) — "
                 "left the file untouched; repair the marker and re-run. Appending "
                 "here would put a second managed block in the same file.")
+    block = [ln + term for ln in MANAGED_BLOCK.split("\n")]
     if spans:
-        block = MANAGED_BLOCK.split("\n")
         rebuilt = lines[:spans[0][0]] + block
         cursor = spans[0][1] + 1
         for begin, end in spans[1:]:
             rebuilt.extend(lines[cursor:begin])
             cursor = end + 1
         rebuilt.extend(lines[cursor:])
-        agents.write_text("\n".join(rebuilt), encoding="utf-8")
+        _write_bytes_text(agents, "".join(rebuilt))
         message = "AGENTS.md: replaced managed block in place"
         if lines[spans[0][0]:spans[0][1] + 1] != block:
             message += (" — drifted markers and any text inside them were "
@@ -511,8 +563,9 @@ def update_agents_md(root: Path, force: bool) -> str:
         if extra:
             message += f" ({extra} duplicate block(s) collapsed)"
         return message
-    with open(agents, "a", encoding="utf-8") as f:
-        f.write("\n\n" + MANAGED_BLOCK + "\n")
+    tail = "" if not text or text.endswith(("\n", "\r\n")) else term
+    _write_bytes_text(agents,
+                      text + tail + term + term + "".join(block))
     return "AGENTS.md: appended managed block"
 
 
@@ -520,11 +573,10 @@ def write_claude_pointer(root: Path) -> str:
     claude = root / "CLAUDE.md"
     if claude.exists():
         return "CLAUDE.md: exists, untouched (add a pointer to AGENTS.md yourself)"
-    claude.write_text(
-        "# Claude Code\n\nRead `AGENTS.md` at the project root — it is the "
-        "canonical instruction file for ALL harnesses. This file is only a "
-        "pointer so Claude Code auto-loads it.\n",
-        encoding="utf-8")
+    claude_text = ("# Claude Code\n\nRead `AGENTS.md` at the project root — it is "
+                   "the canonical instruction file for ALL harnesses. This file is "
+                   "only a pointer so Claude Code auto-loads it.\n")
+    _write_text(claude, claude_text)
     return "CLAUDE.md: wrote pointer to AGENTS.md"
 
 
@@ -589,7 +641,7 @@ def main() -> int:
     version = root / ".ai/protocol/VERSION"
     if force or not version.exists():
         version.parent.mkdir(parents=True, exist_ok=True)
-        version.write_text(PROTOCOL_VERSION + "\n", encoding="utf-8")
+        _write_text(version, PROTOCOL_VERSION + "\n")
         print(f"wrote: {version}")
     (root / ".ai/handoff/archive").mkdir(parents=True, exist_ok=True)
     (root / ".ai/state/archive").mkdir(parents=True, exist_ok=True)
