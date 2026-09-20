@@ -245,12 +245,13 @@ migration.
 
 ## 9. How this design was produced
 
-Seven single-domain read-only reviewers, all on a different model family than the
-executor (Qwen3.8-Max via `general-purpose`), dispatched in parallel from a shared
-written brief so they could not drift: blind defect audit; adversarial verification of
-the executor's own 9 claimed defects; git-plumbing feasibility (live measurements on git
-2.55 / Windows / cp936); hostile design critique; prior-art check; migration and
-back-compat audit; parse-contract design.
+Seven single-domain read-only reviewers, all dispatched on a different model family
+than the executor (no subagent segment on this host reported a Claude model; the exact
+tier could not be confirmed from session logs, so this does not claim which one),
+dispatched in parallel from a shared written brief so they could not drift: blind defect
+audit; adversarial verification of the executor's own 9 claimed defects; git-plumbing
+feasibility (live measurements on git 2.55 / Windows / cp936); hostile design critique;
+prior-art check; migration and back-compat audit; parse-contract design.
 
 This satisfies the repo's own R2 and R5 — the author's self-check is corroborating
 evidence, not the review. Material changes it forced: the enforcement-first framing was
