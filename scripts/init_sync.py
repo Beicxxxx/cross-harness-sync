@@ -70,6 +70,20 @@ MANAGED_BLOCK = f"""{MANAGED_BEGIN}
   commit + push. Never force-push, never commit secrets.
 {MANAGED_END}"""
 
+# N1/D27: the block is not free. As the append branch writes it it contributes
+# its own lines plus two blank separators, and `sync_verify.py` counts the whole
+# file against `.ai/sync_config.json`'s `"AGENTS.md"` cap. A constant cap that
+# installing this tool is guaranteed to violate is a broken cap, so the budget is
+# raised at install time by exactly this number.
+MANAGED_BLOCK_LINES = len(MANAGED_BLOCK.splitlines())
+BLOCK_APPEND_SPAN = MANAGED_BLOCK_LINES + 2  # "\n\n" + block + "\n"
+
+# Mirrors `"AGENTS.md": 65` in templates/sync_config.json (and the built-in
+# default in scripts/sync_verify.py): the cap on the caller's OWN instructions,
+# which the raise below deliberately does not touch.
+AGENTS_BUDGET_KEY = "AGENTS.md"
+AGENTS_OWN_BUDGET = 65
+
 # (source under templates/, destination under repo root)
 FILE_MAP = [
     ("CURRENT.md", ".ai/state/CURRENT.md"),
@@ -244,39 +258,48 @@ def update_gitignore(root: Path, wanted: list[str] | None = None) -> str:
 
 
 def _splice_out_budget_line(text: str) -> str | None:
-    """Return `text` with the `"AGENTS.md": <n>,` budget line deleted, or None.
+    """D18: drop the `"AGENTS.md"` budget line, keeping the file's byte shape."""
+    return _splice_budget_line(text, AGENTS_BUDGET_KEY, None)
+
+
+def _splice_budget_line(text: str, key: str, value: int | None) -> str | None:
+    """Return `text` with `"key": <n>` set to `value`, or deleted when `value` is
+    None; None if that cannot be done safely.
 
     The point is the byte shape: a JSON round-trip reflows every array in the
     file, which turns a config nobody touched into text no template contains,
-    and `--force` then reports it KEEP (edited) and never restores the budget it
-    pruned here. Splicing the one line leaves the rest of the file as the
-    template shipped it, and the result is re-parsed before it is trusted.
+    and `--force` then reports it KEEP (edited) and never restores what this
+    function pruned or raised. Splicing the one line leaves the rest of the file
+    as the template shipped it, and the result is re-parsed before it is trusted.
     """
+    pattern = re.compile(r'^\s*"' + re.escape(key) + r'"\s*:\s*\d+\s*,?\s*$')
     lines = text.split("\n")
-    idx = None
-    for i, line in enumerate(lines):
-        if re.match(r'^\s*"AGENTS\.md"\s*:\s*\d+\s*,?\s*$', line):
-            idx = i
-            break
+    idx = next((i for i, line in enumerate(lines) if pattern.match(line)), None)
     if idx is None:
         return None
     had_comma = lines[idx].rstrip().endswith(",")
-    del lines[idx]
-    if not had_comma:
-        for j in range(idx - 1, -1, -1):
-            if not lines[j].strip():
-                continue
-            if lines[j].rstrip().endswith(","):
-                lines[j] = lines[j].rstrip()[:-1]
-            break
+    if value is None:
+        del lines[idx]
+        if not had_comma:
+            for j in range(idx - 1, -1, -1):
+                if not lines[j].strip():
+                    continue
+                if lines[j].rstrip().endswith(","):
+                    lines[j] = lines[j].rstrip()[:-1]
+                break
+    else:
+        indent = lines[idx][:len(lines[idx]) - len(lines[idx].lstrip())]
+        lines[idx] = f'{indent}"{key}": {value}' + ("," if had_comma else "")
     spliced = "\n".join(lines)
     try:
         parsed = json.loads(spliced)
     except json.JSONDecodeError:
         return None
-    if "AGENTS.md" in parsed.get("budgets", {}):
-        return None
-    return spliced
+    budgets = parsed.get("budgets")
+    budgets = budgets if isinstance(budgets, dict) else {}
+    if value is None:
+        return None if key in budgets else spliced
+    return spliced if budgets.get(key) == value else None
 
 
 def drop_agents_md_budget(root: Path) -> str:
@@ -312,6 +335,118 @@ def drop_agents_md_budget(root: Path) -> str:
     cfg_path.write_text(spliced, encoding="utf-8")
     return (f"sync_config.json: dropped AGENTS.md budget (was {removed}) because "
             "--no-agents-block did not create the file")
+
+
+def _own_agents_budget() -> int:
+    """The cap the SHIPPED config sets for the caller's own AGENTS.md text.
+
+    Read from the template rather than from the installed file, so the raise
+    below is a derived number that cannot drift when this tool is run twice: the
+    alternative — incrementing whatever cap is on disk — walks the budget upwards
+    once per install, which is the same unbounded-growth defect N1 is about.
+    """
+    text = _read_text(TEMPLATES / "sync_config.json")
+    if text is None:
+        return AGENTS_OWN_BUDGET
+    try:
+        cap = json.loads(text).get("budgets", {}).get(AGENTS_BUDGET_KEY)
+    except (json.JSONDecodeError, AttributeError):
+        return AGENTS_OWN_BUDGET
+    return cap if isinstance(cap, int) and not isinstance(cap, bool) \
+        else AGENTS_OWN_BUDGET
+
+
+def managed_block_present(root: Path) -> bool:
+    agents = root / "AGENTS.md"
+    text = _read_text(agents) if agents.is_file() else None
+    return bool(text) and MANAGED_BEGIN in text
+
+
+def raise_agents_budget_for_block(root: Path) -> list[str]:
+    """N1/D27: make the configured cap cover the block this install wrote.
+
+    `sync_verify.py` counts the whole `AGENTS.md`, including the managed block
+    the protocol itself appends, against `"AGENTS.md"` in `.ai/sync_config.json`.
+    With a constant 65 that meant any pre-existing AGENTS.md of 50+ lines went
+    permanently red *because of the install* (58 -> 74 lines), while init's own
+    closing line promised green. The cap therefore becomes
+    `own-budget + block span` — 81 — which keeps the caller's own 65 lines under
+    exactly the same limit and charges the 16 lines to the tool that added them.
+
+    Returns the lines to print; an `ERROR` prefix means the install could not fix
+    the config and must not claim success.
+    """
+    if not managed_block_present(root):
+        return []
+    own = _own_agents_budget()
+    needed = own + BLOCK_APPEND_SPAN
+    cfg_path = root / ".ai" / "sync_config.json"
+    if not cfg_path.is_file():
+        return [f"ERROR (cannot account for the managed block): "
+                f".ai/sync_config.json is not installed, so the verifier keeps "
+                f"the {own}-line AGENTS.md cap this {BLOCK_APPEND_SPAN}-line "
+                "block overruns"]
+    text = _read_text(cfg_path)
+    if text is None:
+        return [f"ERROR (unreadable config, cannot raise the budget): {cfg_path}"]
+    try:
+        cfg = json.loads(text)
+    except json.JSONDecodeError as exc:
+        return [f"ERROR (unparseable config, cannot raise the budget): "
+                f"{cfg_path}: {exc}"]
+    budgets = cfg.get("budgets")
+    if not isinstance(budgets, dict) or AGENTS_BUDGET_KEY not in budgets:
+        return [f'ERROR (no AGENTS.md budget in .ai/sync_config.json): add '
+                f'"{AGENTS_BUDGET_KEY}": {needed} so the managed block fits']
+    current = budgets[AGENTS_BUDGET_KEY]
+    if isinstance(current, int) and current >= needed:
+        return [f"sync_config.json: AGENTS.md budget {current} already covers the "
+                f"{BLOCK_APPEND_SPAN}-line managed block ({own}-line cap on your "
+                "own content)"]
+    spliced = _splice_budget_line(text, AGENTS_BUDGET_KEY, needed)
+    if spliced is None:
+        if not is_template_shaped(text):
+            return [f'ERROR (cannot raise the AGENTS.md budget): '
+                    f'.ai/sync_config.json has no line-shaped "{AGENTS_BUDGET_KEY}" '
+                    f"entry to edit and is not an untouched template; set it to "
+                    f"{needed} yourself"]
+        cfg["budgets"][AGENTS_BUDGET_KEY] = needed
+        spliced = json.dumps(cfg, indent=2) + "\n"
+    cfg_path.write_text(spliced, encoding="utf-8")
+    return [f"sync_config.json: AGENTS.md budget {current} -> {needed} lines "
+            f"(+{BLOCK_APPEND_SPAN}: the managed block this install added, so your "
+            f"own content keeps the {own}-line cap)"]
+
+
+def warn_agents_over_budget(root: Path) -> list[str]:
+    """Name an overrun the raise cannot fix, instead of promising green.
+
+    The budget raise pays for the block, not for the caller's text: an
+    `AGENTS.md` already past its own cap still has to verify red. Saying so here
+    is what keeps init's `should be all green` line from being a lie.
+    """
+    agents = root / "AGENTS.md"
+    cfg_path = root / ".ai" / "sync_config.json"
+    if not agents.is_file() or not cfg_path.is_file():
+        return []
+    text = _read_text(agents)
+    cfg_text = _read_text(cfg_path)
+    if text is None or cfg_text is None:
+        return []
+    try:
+        cap = json.loads(cfg_text).get("budgets", {}).get(AGENTS_BUDGET_KEY)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(cap, int):
+        return []
+    n = len(text.splitlines())
+    if n <= cap:
+        return []
+    return [f"WARNING: AGENTS.md is over budget: {n} lines vs cap {cap}. "
+            f"sync_verify.py reports [FAIL] budget AGENTS.md until the file is "
+            f"{cap} lines or fewer — trim {n - cap} line(s) of your own rules "
+            f"(the managed block accounts for {BLOCK_APPEND_SPAN} of them) or "
+            f"raise the cap in .ai/sync_config.json"]
 
 
 def update_agents_md(root: Path, force: bool) -> str:
@@ -424,6 +559,12 @@ def main() -> int:
             print("CLAUDE.md: not written (--no-agents-block)")
         else:
             print(update_agents_md(root, force))
+            for line in raise_agents_budget_for_block(root):
+                print(line)
+                if line.startswith("ERROR"):
+                    rc = 1
+            for line in warn_agents_over_budget(root):
+                print(line)
             print(write_claude_pointer(root))
 
     print("\nNext steps:")
