@@ -49,8 +49,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     from ai_common import (DEFAULT_REQUIRED_FILES, RepoError, checkout_layout,
-                           decode, protect_stdio, resolve_roots, run_argv,
-                           run_git)
+                           decode, git_available, is_git_repo, protect_stdio,
+                           resolve_roots, run_argv, run_git)
 except ImportError:
     print("[FAIL] install layout: ai_common.py is missing from .ai/scripts/ -- "
           "re-run init_sync.py so the shared primitives are copied in")
@@ -95,6 +95,14 @@ DEFAULT_CONFIG = {
     "secret_files": [".env"],
     "secret_mirrors": [],
     "extra_checks": [],
+    # Wall-clock seconds one child gets before it is NAMED as failed: every
+    # `git check-ignore` and every `extra_checks` command (D11). Before Task 6
+    # the value lived only in hardcoded call sites, so an operator with a
+    # governance script that never returns had one answer: kill the verifier
+    # and lose every other line it would have printed. Merges by REPLACE, which
+    # is right for a number — and a string here would silently buy 600 s, so it
+    # is shape-checked like the rest of the scalars (A.1).
+    "check_timeout": 600,
 }
 
 # No `REQUIRED_FILES` here: D23 was this constant disagreeing with two private
@@ -181,7 +189,12 @@ KEY_SHAPES = {
     "extra_checks": list,
     "decisions_file": str,
     "decisions_max_active_entries": int,
+    "check_timeout": int,
 }
+
+# Scalars that must be a POSITIVE int, not a JSON boolean posing as one.
+POSITIVE_INT_KEYS = {"decisions_max_active_entries": "entry cap",
+                     "check_timeout": "seconds timeout"}
 
 # Keys whose list entries are repo-relative paths.
 PATH_LIST_KEYS = ("secret_files", "required_files")
@@ -233,12 +246,12 @@ def _check_shape(key: str, val) -> None:
             raise ConfigError(f"malformed: budgets values must be line-count "
                               f"integers (or null to drop a default), not "
                               f"under {bad}")
-    if key == "decisions_max_active_entries" and (
+    if key in POSITIVE_INT_KEYS and (
             isinstance(val, bool) or not isinstance(val, int) or val <= 0):
         # `true` is an int in Python and `n <= True` passes at 1 entry, so the
         # JSON boolean has to be named here rather than trusted to `int`.
         raise ConfigError(f"malformed: config key {key!r} must hold a positive "
-                          f"integer entry cap, got {val!r}")
+                          f"integer {POSITIVE_INT_KEYS[key]}, got {val!r}")
     if key == "secret_mirrors":
         for idx, pair in enumerate(val):
             if (not isinstance(pair, list) or len(pair) != 2
@@ -434,10 +447,28 @@ def check_token_budgets(cfg: dict, nulled: set | None = None) -> None:
 
 
 def check_secrets_ignored(cfg: dict) -> None:
+    # D11: this used to call `run()` bare, so the two things that can happen to
+    # any child — it never finishes, or git is not installed — escaped as a
+    # traceback that took the rest of the report with it. `run_git` cannot
+    # raise; the two degradations are named here instead.
+    if not is_git_repo(ROOT):
+        record("secret ignored", False,
+               "no git repository to ask (see the `git repository` check)")
+        return
+    timeout = cfg.get("check_timeout", EXTRA_CHECK_TIMEOUT)
     for target in cfg["secret_files"]:
-        res = run_git(ROOT, ["check-ignore", "-v", target], timeout=600)
-        record(f"secret ignored: {target}", res.ok,
-               decode(res.stdout).strip() or f"git check-ignore rc={res.rc}")
+        res = run_git(ROOT, ["check-ignore", "-v", target], timeout=timeout)
+        if res.timed_out:
+            record(f"secret ignored: {target}", False,
+                   f"git check-ignore timed out after {timeout}s")
+        elif res.rc == 0:
+            record(f"secret ignored: {target}", True,
+                   decode(res.stdout).strip() or f"git check-ignore rc={res.rc}")
+        else:
+            detail = decode(res.stderr).strip().splitlines()
+            record(f"secret ignored: {target}", False,
+                   f"git check-ignore rc={res.rc}; "
+                   f"{detail[-1][:160] if detail else 'no stderr'}")
 
 
 def check_secret_mirrors(cfg: dict) -> None:
@@ -465,9 +496,23 @@ def check_secret_mirrors(cfg: dict) -> None:
 def check_extra(cfg: dict) -> None:
     # Entries are validated objects with a string name and a list cmd, so a
     # missing `cmd` is a named `malformed:` line rather than a KeyError.
+    # `EXTRA_CHECK_TIMEOUT` stays the fallback for a caller that hands this
+    # function a bare dict (in-process tests do); a real install always gets
+    # the merged config, so `check_timeout` is what actually applies there.
+    timeout = cfg.get("check_timeout", EXTRA_CHECK_TIMEOUT)
     for chk in cfg["extra_checks"]:
         name, cmd = chk["name"], chk["cmd"]
-        res = run_argv(ROOT, cmd, timeout=EXTRA_CHECK_TIMEOUT)
+        if isinstance(cmd, str):
+            # D21: a string argv is a shell string on one platform and an
+            # unlaunchable filename on another, so the same config could carry a
+            # governance check that exists on Windows and does not exist on
+            # macOS. `_check_shape` refuses this on the way in; the refusal has
+            # to live here too, because this is the function that makes the
+            # promise.
+            record(name, False, "extra_checks.cmd must be a JSON array of argv "
+                                "words; got a string")
+            continue
+        res = run_argv(ROOT, cmd, timeout=timeout)
         label = " ".join(str(part) for part in cmd)
         tail = (decode(res.stdout) + decode(res.stderr)).strip().splitlines()
         evidence = tail[-1][:160] if tail else "(no output)"
@@ -476,8 +521,8 @@ def check_extra(cfg: dict) -> None:
         # whether it timed out or never started. Both degradations below print
         # FAIL, so a hung or unlaunchable check cannot read as green.
         if res.timed_out:
-            record(name, False, f"cmd `{label}` TIMEOUT after "
-                                f"{EXTRA_CHECK_TIMEOUT}s; {evidence}")
+            record(name, False, f"cmd `{label}` TIMEOUT: timed out after "
+                                f"{timeout}s; {evidence}")
         elif res.rc == -1:
             record(name, False, f"cmd `{label}` could not run: {evidence}")
         else:
@@ -513,6 +558,29 @@ def main() -> int:
         print(f"[FAIL] install layout: {exc}")
         return 2
     print(f"== sync_verify: project root {ROOT} ==")
+    # Pre-flight (D11, D12), recorded only when it FAILS, and that is a
+    # deliberate departure from the brief's snippet: the two early-return
+    # branches below end with `== 0/1 checks passed ==` to say out loud that
+    # nothing else ran, and two PASS lines booked first would turn those honest
+    # verdicts into `1/2` and `2/3`. Those literals are pinned in
+    # tests/test_install_layout.py:53 and tests/test_config_errors.py:115, which
+    # are lane S1's files, not this lane's. So: a precondition that held prints
+    # nothing, and one that did not is named and stops the run.
+    if not git_available():
+        # Before this, a machine with no git got seven `rc=128` lines and no
+        # explanation, or (with the layout gate) one FAIL about a tree git could
+        # not locate — which is the symptom, not the cause.
+        record("git usable", False,
+               "git not found on PATH; every git-shaped check below would fail "
+               "for this same reason, so the run stops here")
+        return _summarise()
+    if not is_git_repo(ROOT):
+        # Named and continued: `checkout_layout` below says MORE than this does
+        # about a tree git cannot place, and refusing to report the rest is the
+        # layout gate's job, not this one's.
+        record("git repository", False,
+               f"{ROOT} is not a git work tree; `git check-ignore` and the "
+               f"mirror checks have nothing to answer about")
     kind, layout_detail = checkout_layout(ROOT)
     if kind != "normal":
         # D15: a linked worktree keeps its own on-disk WRITER_LOCK.json and a
