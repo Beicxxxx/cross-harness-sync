@@ -907,7 +907,7 @@ def _guard_state_writes(command, args):
                   f"({status.detail}); --force --discard-lock writes state over "
                   "it anyway. That does NOT resolve the conflict: the tracked "
                   "record stays in the tree until --lock --force --discard-lock "
-                  "--reason \"<why>\" or a git resolve replaces it, and the "
+                  "--reason \"<why>\" or a git resolve replaces it, and the "
                   "abandoned "
                   "bytes stay in "
                   "git history, so the hold remains auditable.")
