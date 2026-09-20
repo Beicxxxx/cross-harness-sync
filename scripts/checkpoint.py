@@ -10,6 +10,9 @@ Usage:
     python .ai/scripts/checkpoint.py --validate         # Required files exist & non-empty
     python .ai/scripts/checkpoint.py --lock --agent X   # Acquire advisory writer lock
     python .ai/scripts/checkpoint.py --unlock --agent X # Release the writer lock
+    python .ai/scripts/checkpoint.py --lock --agent X --force --discard-lock
+                                        # abandon an UNREADABLE lock record: the
+                                        # only override for a merged/corrupt one
 
 This script handles the MECHANICAL parts of checkpointing:
 - runtime/STATUS.json timestamps and counters
@@ -29,6 +32,7 @@ import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import NamedTuple
 
 # Shared primitives, installed next to this file by init_sync.py. There is
 # deliberately no inline fallback: a second copy of that plumbing would be a
@@ -98,19 +102,35 @@ def now_display():
     return f"{local:%Y-%m-%d %H:%M:%S} ({zone}, UTC{offset})"
 
 
-def parse_iso(s):
+def read_json_or_error(path):
+    """Read a JSON object, reporting WHY it could not be read.
+
+    D1: for the writer lock an empty dict is not "no lock", it is "unknown", so
+    the caller must be able to tell the two apart. A tracked file plus a merge
+    is a guaranteed conflict marker in the record.
+    """
+    if not path.exists():
+        return {}, None
+    raw = path.read_bytes()
+    if b"<<<<<<<" in raw or b">>>>>>>" in raw:
+        return {}, "merge conflict markers"
     try:
-        return datetime.fromisoformat(s)
-    except (TypeError, ValueError):
-        return None
+        data = json.loads(raw.decode("utf-8-sig"))
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        return {}, f"cannot parse: {exc}"
+    if not isinstance(data, dict):
+        return {}, "cannot parse: expected a JSON object"
+    return data, None
 
 
 def read_json(path):
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
+    """Best-effort read for the untracked runtime files: {} means "no data".
+
+    Lock consumers must NOT use this — they need the error, which is the whole
+    of D1. See read_json_or_error.
+    """
+    data, _err = read_json_or_error(path)
+    return data
 
 
 def write_json(path, data):
@@ -128,15 +148,56 @@ def get_protocol_version():
     return "unknown"
 
 
+def parse_ts(raw):
+    """Tolerant of Z suffixes (pre-3.11 fromisoformat is not) and naive stamps.
+
+    Returns an aware datetime or None; None means "no usable expiry", which the
+    state machine reports rather than treats as never-expiring (D10).
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    text = raw.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        stamp = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if stamp.tzinfo is None:
+        # D10: a naive stamp is local time, not UTC midnight and not a crash —
+        # comparing it against now_dt() used to raise TypeError.
+        stamp = stamp.astimezone()
+    return stamp
+
+
+class LockStatus(NamedTuple):
+    state: str           # free | held | expired | error
+    holder: str | None
+    detail: str
+
+
 def lock_state():
-    """Return (lock_dict, holder, expired) — holder None when no active lock."""
-    lock = read_json(LOCK_PATH)
-    if not lock or lock.get("released_at"):
-        return lock, None, False
-    expires = parse_iso(lock.get("expires_at"))
-    if expires and now_dt() > expires:
-        return lock, None, True
-    return lock, lock.get("agent"), False
+    """The lock parser, whose error state is HELD and never free.
+
+    Replaces the old (lock, holder, expired) triple, which could not express
+    "unreadable" and therefore expressed it as "no lock" (D1).
+    """
+    lock, err = read_json_or_error(LOCK_PATH)
+    if err:
+        return LockStatus("error", None, err)
+    if not lock:
+        return LockStatus("free", None, "no lock file")
+    if lock.get("released_at"):
+        return LockStatus("free", None, f"released {lock['released_at']}")
+    holder = lock.get("agent") or "?"
+    expires = parse_ts(lock.get("expires_at"))
+    if expires is None:
+        return LockStatus("held", holder,
+                          "no expiry (malformed or absent expires_at) — do not "
+                          "rely on the TTL; release with --unlock --force")
+    if now_dt() > expires:
+        return LockStatus("expired", holder, f"expired {lock['expires_at']}")
+    return LockStatus("held", holder, f"until {lock['expires_at']}")
 
 
 def cmd_status(args):
@@ -152,13 +213,17 @@ def cmd_status(args):
         print(f"Current Task     : {status.get('current_task', '?')}")
         print(f"Checkpoints      : {status.get('checkpoint_count', 0)}")
 
-    lock, holder, expired = lock_state()
-    if holder:
-        print(f"Writer Lock      : HELD by {holder} until {lock.get('expires_at')}"
-              f" (reason: {lock.get('reason', '-')})")
-    elif lock and expired:
-        print(f"Writer Lock      : expired (was {lock.get('agent')}, "
-              f"expired {lock.get('expires_at')})")
+    lock_status = lock_state()
+    if lock_status.state == "error":
+        print(f"Writer Lock      : CONFLICT/ERROR ({lock_status.detail})"
+              " — do NOT write state files; resolve the conflict first")
+    elif lock_status.state == "held":
+        lock, _err = read_json_or_error(LOCK_PATH)
+        print(f"Writer Lock      : HELD by {lock_status.holder} "
+              f"{lock_status.detail} (reason: {lock.get('reason', '-')})")
+    elif lock_status.state == "expired":
+        print(f"Writer Lock      : expired (was {lock_status.holder}, "
+              f"{lock_status.detail})")
     else:
         print("Writer Lock      : none")
 
@@ -210,12 +275,19 @@ def cmd_prime(args):
         print(override.read_text(encoding="utf-8").strip())
         return
 
-    lock, holder, expired = lock_state()
-    if holder:
-        lock_line = (f"HELD by {holder} until {lock.get('expires_at')} — "
-                     f"if that is not you, do NOT write state files.")
-    elif expired:
-        lock_line = f"expired (was {lock.get('agent')}) — free to acquire."
+    lock_status = lock_state()
+    if lock_status.state == "error":
+        lock_line = (f"CONFLICT/ERROR — {lock_status.detail} — do NOT write state "
+                     "files; resolve the conflict first.")
+    elif lock_status.state == "held":
+        # `HELD by <h> {detail}` with no separator: with detail "until <ts>" this
+        # reproduces the pre-fix line byte for byte, so anything reading --prime
+        # output keeps matching. The no-expiry detail reads awkwardly there — it
+        # is a warning line, not prose.
+        lock_line = (f"HELD by {lock_status.holder} {lock_status.detail} — "
+                     "if that is not you, do NOT write state files.")
+    elif lock_status.state == "expired":
+        lock_line = f"expired (was {lock_status.holder}) — free to acquire."
     else:
         lock_line = "none — free to acquire."
 
@@ -304,9 +376,27 @@ def cmd_lock(args):
         print("--lock requires --agent <harness-name>")
         sys.exit(2)
     RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
-    lock, holder, expired = lock_state()
-    if holder and holder != args.agent and not args.force:
-        print(f"LOCK CONFLICT: held by {holder} until {lock.get('expires_at')} "
+    # `getattr`: the guard tests build a Namespace by hand, so a new flag must
+    # not be the reason an unwired command stops raising RuntimeError.
+    discard = getattr(args, "discard_lock", False)
+    status = lock_state()
+    holder = status.holder
+    if status.state == "error":
+        # D1: an unreadable record is contention, not an empty pen. It is most
+        # often the merge this file is designed to hit, and the other machine's
+        # acquisition may be sitting inside the unparseable half.
+        print("LOCK UNREADABLE: cannot parse the writer lock record — it is "
+              "treated as HELD, not as free.")
+        print(f"  detail: {status.detail}")
+        print("Resolve the git conflict (or repair the JSON) and re-run. If the "
+              "record is unrecoverable, --force --discard-lock abandons it.")
+        if not (args.force and discard):
+            sys.exit(1)
+        print("  Discarding the unreadable record: the old bytes stay in git "
+              "history, so the abandoned hold remains auditable.")
+    elif status.state == "held" and holder != args.agent and not args.force:
+        lock, _err = read_json_or_error(LOCK_PATH)
+        print(f"LOCK CONFLICT: held by {holder} {status.detail} "
               f"(reason: {lock.get('reason', '-')})")
         print("Advisory lock: you may wait for expiry, coordinate, or re-run "
               "with --force (record why in the handoff).")
@@ -330,10 +420,22 @@ def cmd_lock(args):
 
 def cmd_unlock(args):
     _require_paths()
-    lock, holder, expired = lock_state()
+    status = lock_state()
+    if status.state == "error":
+        # D1 on the release path: a record that cannot be read cannot be
+        # "released" — releasing it would erase the other machine's evidence.
+        print(f"Lock record cannot be parsed ({status.detail}); it is treated as "
+              "HELD, so there is nothing to release here. Resolve the git "
+              "conflict first.")
+        sys.exit(1)
+    lock, _err = read_json_or_error(LOCK_PATH)
     if not lock:
         print("No lock file found — nothing to release.")
         return
+    # Only an unexpired hold blocks a release here: `expired` keeps its old
+    # meaning (the TTL ended the hold), so no holder is reported. Who may
+    # release whose pen is Task 5.
+    holder = status.holder if status.state == "held" else None
     if holder and args.agent and holder != args.agent and not args.force:
         print(f"Lock is held by {holder}, not {args.agent}. Use --force to override.")
         sys.exit(1)
@@ -363,6 +465,9 @@ def main():
                         help="Task/issue ID or reason recorded on the lock")
     parser.add_argument("--force", action="store_true",
                         help="Override a conflicting lock")
+    parser.add_argument("--discard-lock", action="store_true",
+                        help="With --force, abandon a lock record that cannot be "
+                             "parsed; the discarded bytes stay in git history")
 
     group = parser.add_mutually_exclusive_group()
     group.add_argument("--status", action="store_true", help="Show current status")
