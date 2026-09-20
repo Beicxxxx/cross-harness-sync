@@ -79,10 +79,13 @@ failure, and from measuring a premise that was assumed rather than tested:
   Bounding is therefore done by **pathspec**, with `timeout=` as the only guardrail.
 - Every convenience escape hatch in a fail-closed tool becomes the vulnerability.
 
-## 5. Wave 1a — defect fixes (26 items)
+## 5. Wave 1a — defect fixes (27 items)
 
 Severity: C = critical, M = major, m = minor. "Conv" = independently confirmed by more
-than one reviewer.
+than one reviewer. **Canonical count, to be used verbatim in CHANGELOG, README and any
+application text: 27 found; 25 fixed in wave 1a; D14 deferred to 1b because the
+glob-matching code it applies to does not exist yet; D27 added by the `init_sync.py`
+blind audit after this section was first written.**
 
 | # | Sev | Defect | Fix | Regression test |
 |---|---|---|---|---|
