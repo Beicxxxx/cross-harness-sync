@@ -120,6 +120,13 @@ GITIGNORE_LINES = [
     ".ai/runtime/*",
     "!.ai/runtime/WRITER_LOCK.json",
     ".env",
+    # N5: the protocol's own scripts generate bytecode inside the target, and
+    # the installed instructions tell every agent to `git add -A && git commit
+    # && git push` at each close-out — so an unignored __pycache__ is committed
+    # AND delivered to the other machine. This repo had to add the same two
+    # entries during Task 0; the shipped install list never learned.
+    "__pycache__/",
+    "*.pyc",
 ]
 
 # Destinations that hold the caller's work rather than the skill's own files:
