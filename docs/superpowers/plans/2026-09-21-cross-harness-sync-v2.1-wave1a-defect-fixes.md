@@ -38,7 +38,7 @@ The repo has no tests, no `tests/`, no `pytest.ini`. Nothing below can be TDD'd 
 - Create: `tests/test_harness_smoke.py`
 
 **Interfaces:**
-- Produces: `helpers.Result(rc, stdout, stderr, stdout_raw)`; `helpers.run_python(script: Path, args: Sequence[str], cwd: Path, env: dict | None = None) -> Result`; `helpers.git(cwd: Path, *args: str) -> str`; `helpers.make_repo(tmp_path: Path) -> Path`; `helpers.scaffold(repo: Path, *flags: str) -> Result`; `helpers.write_lock(repo: Path, raw: str) -> Path`; pytest fixtures `repo`, `SCRIPTS` (Path to `scripts/`), `TEMPLATES_DIR` (Path to `templates/`).
+- Produces: `helpers.Result(rc, stdout, stderr, stdout_raw)`; `helpers.run_python(script: Path, args: Sequence[str], cwd: Path, env: dict | None = None) -> Result`; `helpers.git(cwd: Path, *args: str) -> str`; `helpers.make_repo(tmp_path: Path) -> Path`; `helpers.scaffold(repo: Path, *flags: str) -> Result`; `helpers.write_lock(repo: Path, raw: str) -> Path`; helper-module **constants** `SCRIPTS` and `TEMPLATES_DIR` (imported, not fixtures); pytest fixtures `repo`, `ai_repo`, `cp`, `sv`.
 
 - [ ] **Step 1: Add dev requirements and pytest config**
 
