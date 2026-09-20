@@ -1,3 +1,5 @@
+import os
+
 import pytest
 from helpers import make_repo, scaffold
 
@@ -12,6 +14,36 @@ INSTALL_SENTINELS = (
     ".ai/scripts/checkpoint.py",
     ".ai/scripts/sync_verify.py",
 )
+
+
+def _current_platform() -> str:
+    """The one place the collection hook asks where it is running.
+
+    A seam so `tests/test_harness_guards.py` can exercise both directions
+    without lying to `os` for the whole interpreter.
+    """
+    return os.name
+
+
+def platform_skip_marker(name: str) -> str:
+    """The marker whose tests must be SKIPPED on `os.name == name`.
+
+    This is what makes the `posix` / `windows` markers declared in `pytest.ini`
+    mean something. Before this hook they were documentation only: a
+    `@pytest.mark.posix` test ran on Windows anyway and "passed" by asserting
+    about a platform it was not on.
+    """
+    return "posix" if name == "nt" else "windows"
+
+
+def pytest_collection_modifyitems(config, items) -> None:
+    """Turn the platform markers into real skips (see `platform_skip_marker`)."""
+    marker = platform_skip_marker(_current_platform())
+    for item in items:
+        if item.get_closest_marker(marker):
+            item.add_marker(pytest.mark.skip(
+                reason=f"{marker}-only test, running on {_current_platform()}"))
+
 
 
 @pytest.fixture

@@ -33,6 +33,17 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
 TEMPLATES_DIR = REPO_ROOT / "templates"
 
+
+def is_inside_repo(path: Path | str) -> bool:
+    """True if `path` is this checkout or anything below it.
+
+    Compares resolved path PARTS rather than a string prefix, so a sibling
+    directory named `<repo>-sibling` is not "inside" the repository.
+    """
+    resolved = Path(path).resolve()
+    return resolved == REPO_ROOT or REPO_ROOT in resolved.parents
+
+
 # Fixed identity for every child git process (see `hermetic_env`). The address is
 # on `.invalid`, which RFC 2606 reserves so it can never route to a real person,
 # and it deliberately matches the repo-local identity `make_repo` writes so a
@@ -105,9 +116,15 @@ class Result:
         return [ln for ln in self.stdout.splitlines() if ln.strip()]
 
 
-def run_python(script: Path, args: Sequence[str] = (), cwd: Path = REPO_ROOT,
-               env: dict | None = None) -> Result:
+def run_python(script: Path, args: Sequence[str] = (), *,
+               cwd: Path | str, env: dict | None = None) -> Result:
     """Run a python script with stdout/stderr as RAW BYTES (never `text=`).
+
+    `cwd` is a REQUIRED keyword argument. It used to default to `REPO_ROOT`, so
+    a call that simply forgot it ran a shipped script with this live checkout as
+    its working directory — the same class of accident this file exists to
+    prevent, one argument wide. Passing `REPO_ROOT` explicitly is still allowed
+    (a `--help` smoke test does exactly that); silently landing there is not.
 
     rc 0 with empty output is a test failure, not a pass: callers assert on
     `stdout_raw`/`lines`, and `Result` is built from the bytes the child wrote.
@@ -125,6 +142,18 @@ def run_python(script: Path, args: Sequence[str] = (), cwd: Path = REPO_ROOT,
 
 
 def git(cwd: Path, *args: str) -> str:
+    """Run git in `cwd` and assert it succeeded.
+
+    Refuses any target inside this checkout (`is_inside_repo`). Every helper
+    here is meant to operate on a throwaway repository; a `git add` / `commit`
+    aimed at the repository under test does not just pollute a fixture, it
+    rewrites the branch the whole wave is working on.
+    """
+    if is_inside_repo(cwd):
+        raise RuntimeError(
+            f"refusing to run git inside the repository under test: {cwd} "
+            f"(cross-harness-sync checkout, REPO_ROOT={REPO_ROOT}); "
+            "use make_repo(tmp_path) for a git target")
     proc = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True,
                           text=True, encoding="utf-8", errors="surrogateescape",
                           env=hermetic_env(cwd))
@@ -132,7 +161,15 @@ def git(cwd: Path, *args: str) -> str:
     return proc.stdout.strip()
 
 
+
 def make_repo(tmp_path: Path) -> Path:
+    """A throwaway git repo with one commit, under `tmp_path`."""
+    if is_inside_repo(tmp_path):
+        # Checked before anything is created: `git init` inside this checkout
+        # would nest a repository the caller's `git add` can pick up.
+        raise RuntimeError(
+            f"refusing to build a fixture repo inside the repository under "
+            f"test: {tmp_path} (cross-harness-sync checkout)")
     repo = tmp_path / "project"
     repo.mkdir(parents=True, exist_ok=True)
     git(repo, "init", "-q", "-b", "main")
