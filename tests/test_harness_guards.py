@@ -94,12 +94,22 @@ def test_the_collection_hook_skips_only_the_foreign_platform_tests(monkeypatch):
 
 @pytest.mark.posix
 def test_posix_marker_probe_does_not_execute_on_windows():
-    """Reaching the body on Windows means the markers are still decorative."""
-    raise AssertionError(f"posix-marked test executed on os.name={os.name!r}")
+    """Reaching the body on Windows means the markers are still decorative.
+
+    The body must therefore assert what is TRUE on the host that selected it,
+    never fail on purpose: an unconditional `raise` here was selected on
+    Linux/macOS and made the whole suite red on every non-Windows host, leaving
+    the filter with Windows-only evidence. Now this probe and its
+    `@pytest.mark.windows` twin below each run on their own host and each fail
+    on the wrong one, so whichever machine executes the suite sees one real
+    pass and one skip rather than two skips.
+    """
+    assert os.name != "nt", os.name        # reaching this line on Windows is the bug
 
 
 @pytest.mark.windows
 def test_windows_marker_probe_executes_here():
+    """Twin of the probe above: runs on Windows, is skipped off it."""
     assert os.name == "nt", os.name
 
 
