@@ -14,8 +14,17 @@ Two properties the list has to keep, both pinned here:
     `.ai/state/authorizations/INDEX.md` is NOT in the 1a list: nothing populates
     it until wave 1b, so requiring it now would make every fresh install red for
     a reason no 1a file can answer.
-  * it is overridable by replace, so a repo with no decision log can say so —
-    the mirror of `secret_files`, which is a floor and unions.
+  * config may add entries and may drop the OPTIONAL TAIL (a repo with no
+    decision log can say so), but it cannot un-check the five files nothing else
+    covers: `sync_verify.REQUIRED_FILE_FLOOR` is unioned back in after the
+    merge and is not configurable.
+
+The floor is lane S1's correction of finding 2, and it corrected a test in this
+file rather than only adding one: `test_required_files_is_config_overridable_by_
+replace` used to assert that `{"required_files": [".ai/state/CURRENT.md"]}` with
+`protocol/VERSION` deleted exits 0 — i.e. it *demonstrated* the one-line
+un-check as intended behaviour. See
+`test_required_files_override_replaces_only_the_optional_tail`.
 
 The cross-view agreement test the wave-1a brief sketched
 (`sv` vs `checkpoint --validate` vs `--status`) is deliberately not here: it
@@ -61,6 +70,13 @@ def required_names(res) -> list[str]:
             if ln.startswith(("[PASS] required ", "[FAIL] required "))]
 
 
+def budget_names(res) -> set[str]:
+    """The files whose line cap this run monitored, read off its own lines."""
+    return {ln.split("] budget ", 1)[1].split(":")[0]
+            for ln in res.lines
+            if ln.startswith(("[PASS] budget ", "[FAIL] budget "))}
+
+
 def set_cfg(repo: Path, key: str, value) -> None:
     path = repo / _CONFIG_REL
     cfg = json.loads(path.read_text("utf-8"))
@@ -92,6 +108,22 @@ def test_the_list_names_the_governance_files_and_nothing_unwritten():
     assert not any("authorizations" in rel
                    for rel in ai_common.DEFAULT_REQUIRED_FILES), \
         ai_common.DEFAULT_REQUIRED_FILES
+
+
+def test_the_floor_is_a_named_subset_of_the_shared_list():
+    """The floor cannot ask for a file the shared default does not carry, or a
+    fresh install would report lines the config never listed; and it must hold
+    the two files the review found nothing else checking."""
+    floor = sync_verify.REQUIRED_FILE_FLOOR
+    assert set(floor) <= set(ai_common.DEFAULT_REQUIRED_FILES), floor
+    assert ".ai/state/ROLE_POLICY.md" in floor, floor
+    assert ".ai/protocol/VERSION" in floor, floor
+    assert ".ai/state/CURRENT.md" in floor and ".ai/state/TASK.md" in floor \
+        and ".ai/state/BLOCKERS.md" in floor, floor
+    # the optional tail stays optional: a repo with no decision log may say so
+    assert ".ai/state/DECISIONS.md" not in floor, floor
+    assert ".ai/state/DECISIONS_INDEX.md" not in floor, floor
+    assert ".ai/handoff/LATEST.md" not in floor, floor
 
 
 def test_every_required_file_is_one_a_fresh_install_has(ai_repo):
@@ -137,16 +169,64 @@ def test_a_fresh_install_reports_exactly_the_shared_list(ai_repo, sv):
     assert required_names(res) == list(ai_common.DEFAULT_REQUIRED_FILES), res.lines
 
 
-def test_required_files_is_config_overridable_by_replace(ai_repo, sv):
-    """A repo that keeps no decision log must be able to say so — and the
-    override must really REPLACE, not add to the floor it was merged over.
+def test_a_fresh_install_monitors_agents_md(ai_repo, sv):
+    """Finding 5's missing pin: AGENTS.md is the most-loaded auto-loaded
+    instruction file, its cap is installer-owned (D18/D27) and it is in no
+    required-file list, so the budget line is the ONLY thing watching it.
+    Nothing used to assert that a plain run monitored it at all."""
+    res = run_python(sv, cwd=ai_repo)
+    assert res.rc == 0, res.stdout
+    assert "AGENTS.md" in budget_names(res), res.lines
+    assert any(ln.startswith("[PASS] budget AGENTS.md") for ln in res.lines), res.lines
 
-    VERSION is the file to drop with: no budget and no mirror check mentions
-    it, so the only way it can go red is the required-file list itself. A union
-    merge would still report `[FAIL] required .ai/protocol/VERSION: missing`.
+
+def test_required_files_override_replaces_only_the_optional_tail(ai_repo, sv):
+    """The override must really REPLACE — the optional tail only.
+
+    This replaces `test_required_files_is_config_overridable_by_replace`, which
+    asserted `rc == 0` here and so pinned finding 2 as intended behaviour: one
+    config line dropped the only check on ROLE_POLICY.md and protocol/VERSION.
+    A correction of a pin, not a regression — VERSION has no budget, no mirror
+    and no other necessity check anywhere in the install, so a union merge is
+    the only thing that can still see it go missing.
     """
     set_cfg(ai_repo, "required_files", [".ai/state/CURRENT.md"])
     (ai_repo / ".ai" / "protocol" / "VERSION").unlink()
     res = run_python(sv, cwd=ai_repo)
+    assert res.rc == 1, res.stdout
+    assert "[FAIL] required .ai/protocol/VERSION: missing" in res.lines, res.lines
+    assert any(ln.startswith("[PASS] required-file floor:")
+               and ".ai/protocol/VERSION" in ln
+               and "config listed 1 entries" in ln for ln in res.lines), res.lines
+    # the tail the repo legitimately has no use for really did go
+    assert required_names(res) == [".ai/state/CURRENT.md", ".ai/state/TASK.md",
+                                   ".ai/state/BLOCKERS.md",
+                                   ".ai/state/ROLE_POLICY.md",
+                                   ".ai/protocol/VERSION"], res.lines
+
+
+def test_a_config_declaring_zero_required_files_is_named_not_green(ai_repo, sv):
+    """Finding 1: an empty list used to record nothing and print `8/8 passed`.
+    Interim answer is a FAIL with an evidence line naming the emptiness, not a
+    SKIP, because `record()` speaks only PASS/FAIL — see the boundary comment in
+    `check_required_files`. The floor is checked either way."""
+    set_cfg(ai_repo, "required_files", [])
+    res = run_python(sv, cwd=ai_repo)
+    assert res.rc == 1, res.stdout
+    assert any(ln.startswith("[FAIL] required-file list:")
+               and "zero required_files" in ln for ln in res.lines), res.lines
+    assert "FAILED: required-file list" in res.lines, res.lines
+    assert required_names(res) == list(sync_verify.REQUIRED_FILE_FLOOR), res.lines
+
+
+def test_config_may_still_add_requirements(ai_repo, sv):
+    """The floor is a floor, not a ceiling: a project can name its own files."""
+    (ai_repo / ".freeze").write_text("pinned\n", encoding="utf-8")
+    set_cfg(ai_repo, "required_files",
+            list(ai_common.DEFAULT_REQUIRED_FILES) + [".freeze"])
+    res = run_python(sv, cwd=ai_repo)
     assert res.rc == 0, res.stdout
-    assert required_names(res) == [".ai/state/CURRENT.md"], res.lines
+    assert any(ln.startswith("[PASS] required .freeze:") for ln in res.lines), res.lines
+    assert "FAILED:" not in " ".join(res.lines), res.lines
+    assert not any(ln.startswith("[PASS] required-file floor:")
+                   for ln in res.lines), res.lines

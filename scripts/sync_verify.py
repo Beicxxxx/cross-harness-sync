@@ -4,17 +4,22 @@
 Config-driven; project-specific checks are declared in `.ai/sync_config.json`,
 not hardcoded here. Checks, in order:
 
-  0. The config itself is readable, parses, and holds a JSON object. Reading it
+  0. The install layout is one git can describe (linked worktrees and symlinked
+     payloads leave a `WRITER_LOCK.json` the other writer never sees, so every
+     check below would be about the wrong tree). `ai_common.checkout_layout`.
+  1. The config itself is readable, parses, and holds a JSON object. Reading it
      is the precondition of every other line, so failing here stops the run
      instead of falling back to defaults (D4).
-  1. Required state files exist and are non-empty (config "required_files",
-     default `ai_common.DEFAULT_REQUIRED_FILES`)
-  2. Token budgets (per-file line caps from config "budgets")
-  3. Decision log cap (config "decisions_max_active_entries")
-  4. Secret files are git-ignored (config "secret_files")
-  5. Secret mirror key sets match (config "secret_mirrors": pairs of files
+  2. Required state files exist and are non-empty (config "required_files",
+     default `ai_common.DEFAULT_REQUIRED_FILES`, with `REQUIRED_FILE_FLOOR`
+     unioned back in after the merge).
+  3. Token budgets (per-file line caps from config "budgets", with
+     `BUDGET_FLOOR` naming the files that must carry a cap when present)
+  4. Decision log cap (config "decisions_max_active_entries")
+  5. Secret files are git-ignored (config "secret_files")
+  6. Secret mirror key sets match (config "secret_mirrors": pairs of files
      whose KEY NAMES must be identical, e.g. [".env", ".claude/.env"])
-  6. Extra project checks (config "extra_checks": [{"name", "cmd"}];
+  7. Extra project checks (config "extra_checks": [{"name", "cmd"}];
      PASS iff the command exits 0 — e.g. a freeze verifier)
 
 Exit 0 = all green, 1 = at least one FAIL. Every check prints PASS/FAIL plus
@@ -24,6 +29,7 @@ Usage:  python .ai/scripts/sync_verify.py
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
 import sys
@@ -39,8 +45,9 @@ from pathlib import Path
 # UnicodeEncodeError and rc 1 instead of the rc 2 named below.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
-    from ai_common import (DEFAULT_REQUIRED_FILES, RepoError, decode,
-                           protect_stdio, resolve_roots, run_argv, run_git)
+    from ai_common import (DEFAULT_REQUIRED_FILES, RepoError, checkout_layout,
+                           decode, protect_stdio, resolve_roots, run_argv,
+                           run_git)
 except ImportError:
     print("[FAIL] install layout: ai_common.py is missing from .ai/scripts/ -- "
           "re-run init_sync.py so the shared primitives are copied in")
@@ -64,7 +71,9 @@ DEFAULT_CONFIG = {
     # installer-owned (D18 prunes the entry when `--no-agents-block` created no
     # file, D27 raises it by the managed block's line count when it did), so a
     # hardcoded default here would resurrect a budget for a file this install
-    # says it does not have — which is D18 again, wearing D3's fix.
+    # says it does not have — which is D18 again, wearing D3's fix. The
+    # installer-owned exception is `BUDGET_FLOOR` below, which asks only that a
+    # PRESENT AGENTS.md carry a cap or an explicit null.
     "budgets": {
         ".ai/state/CURRENT.md": 60,
         ".ai/handoff/LATEST.md": 80,
@@ -81,6 +90,35 @@ DEFAULT_CONFIG = {
 # No `REQUIRED_FILES` here: D23 was this constant disagreeing with two private
 # copies in checkpoint.py, so the list lives in config with
 # `ai_common.DEFAULT_REQUIRED_FILES` as its single default.
+
+# The governance floor under the required-file list. `required_files` merges by
+# REPLACE, which is what lets a repo with no decision log say so — and a replace
+# is also one key away from dropping the files nothing else checks. Spec 4 lets a
+# check be skipped only after proving necessity elsewhere, and at this HEAD
+# nothing else covers these five: `checkpoint.py --validate` omits
+# `ROLE_POLICY.md`, and `protocol/VERSION` is in no other list at all. So the
+# floor is unioned back in after the merge, and unlike the rest of the key it is
+# NOT configurable: config may add requirements and may drop the optional tail
+# (DECISIONS, DECISIONS_INDEX, LATEST), nothing more.
+REQUIRED_FILE_FLOOR = (
+    ".ai/state/CURRENT.md",
+    ".ai/state/TASK.md",
+    ".ai/state/BLOCKERS.md",
+    ".ai/state/ROLE_POLICY.md",
+    ".ai/protocol/VERSION",
+)
+
+# The name the installer owns (D18 prunes it, D27 raises it), so it can never be
+# a code DEFAULT budget — but when the file is PRESENT it must carry a cap or an
+# explicit null, which is what `BUDGET_FLOOR` below enforces.
+AGENTS_MD_BUDGET_NAME = "AGENTS.md"
+
+# Files whose line cap the protocol always wants enforced while the file is
+# there. Derived from the one built-in budget table plus the installer-owned
+# name, so a template line deleted by accident (`sync_config.json` is copied,
+# not generated) or an upgrade that `--force`-skipped the config cannot leave the
+# most-loaded auto-loaded instruction file uncapped and silent.
+BUDGET_FLOOR = tuple(DEFAULT_CONFIG["budgets"]) + (AGENTS_MD_BUDGET_NAME,)
 
 # One extra check may legitimately take minutes (a freeze verifier over a large
 # tree); it may not hang forever. Task 6 makes the timeout config-driven.
@@ -131,6 +169,8 @@ KEY_SHAPES = {
     "required_files": list,
     "secret_mirrors": list,
     "extra_checks": list,
+    "decisions_file": str,
+    "decisions_max_active_entries": int,
 }
 
 # Keys whose list entries are repo-relative paths.
@@ -148,6 +188,10 @@ class ConfigError(Exception):
 def record(name: str, ok: bool, evidence: str) -> None:
     RESULTS.append((name, ok, evidence))
     print(f"[{'PASS' if ok else 'FAIL'}] {name}: {evidence}")
+
+
+def _is_path_str(val) -> bool:
+    return isinstance(val, str) and val.strip() != ""
 
 
 def _check_shape(key: str, val) -> None:
@@ -168,57 +212,130 @@ def _check_shape(key: str, val) -> None:
             raise ConfigError(f"malformed: budgets values must be line-count "
                               f"integers (or null to drop a default), not "
                               f"under {bad}")
+    if key == "decisions_max_active_entries" and (
+            isinstance(val, bool) or not isinstance(val, int) or val <= 0):
+        # `true` is an int in Python and `n <= True` passes at 1 entry, so the
+        # JSON boolean has to be named here rather than trusted to `int`.
+        raise ConfigError(f"malformed: config key {key!r} must hold a positive "
+                          f"integer entry cap, got {val!r}")
+    if key == "secret_mirrors":
+        for idx, pair in enumerate(val):
+            if (not isinstance(pair, list) or len(pair) != 2
+                    or not all(_is_path_str(p) for p in pair)):
+                raise ConfigError(
+                    f"malformed: config key {key!r} entries must be 2-item "
+                    f"lists of repo-relative path strings, got {pair!r} at "
+                    f"index {idx}")
+    if key == "extra_checks":
+        for idx, chk in enumerate(val):
+            if not isinstance(chk, dict):
+                raise ConfigError(
+                    f"malformed: config key {key!r} entries must be "
+                    f"{{name, cmd}} objects, got {type(chk).__name__} at "
+                    f"index {idx}")
+            missing = [k for k in ("name", "cmd") if k not in chk]
+            if missing:
+                raise ConfigError(f"malformed: config key {key!r} entry "
+                                  f"{idx} is missing {missing}")
+            if not _is_path_str(chk["name"]):
+                raise ConfigError(f"malformed: config key {key!r} entry {idx} "
+                                  f"'name' must be a non-empty string, got "
+                                  f"{chk['name']!r}")
+            if (not isinstance(chk["cmd"], list)
+                    or not chk["cmd"]
+                    or not all(isinstance(p, str) for p in chk["cmd"])):
+                raise ConfigError(f"malformed: config key {key!r} entry {idx} "
+                                  f"'cmd' must be a non-empty list of strings, "
+                                  f"got {chk['cmd']!r}")
 
 
-def merge_config(defaults: dict, user: dict) -> dict:
+def merge_config(defaults: dict, user: dict) -> tuple[dict, set]:
     """Merge a user config over the defaults, one key at a time.
 
     Policy comes from `MERGE_POLICY`; anything unlisted replaces, which is the
     behaviour a project needs for its own install shape.
+
+    Returns `(merged, nulled)`. `nulled` is the set of budget names the user
+    dropped with an explicit JSON `null` — the record of a considered act. It
+    has to travel out of the merge because the merged dict cannot tell "no cap"
+    from "cap declined" once the key is gone, and every check downstream reads
+    only the merged dict (finding: the AGENTS.md opt-out left no trace).
+
+    `defaults` is DEEP-copied, not shallow-copied: an unnamed key used to hand
+    back `DEFAULT_CONFIG`'s own containers, so one in-process `.pop()` poisoned
+    the module default for every later `load_config()` in the same interpreter.
     """
-    merged = dict(defaults)
+    merged = copy.deepcopy(defaults)
+    nulled: set = set()
     for key, val in user.items():
         _check_shape(key, val)
         policy = MERGE_POLICY.get(key, MERGE_REPLACE)
         if policy == MERGE_DEEP and isinstance(val, dict):
-            inner = dict(defaults.get(key, {}))
+            inner = copy.deepcopy(defaults.get(key, {}))
             for sub_key, sub_val in val.items():
                 if sub_val is None:
                     inner.pop(sub_key, None)
+                    nulled.add(str(sub_key))
                 else:
                     inner[sub_key] = sub_val
             merged[key] = inner
         elif policy == MERGE_UNION and isinstance(val, list):
-            base = list(defaults.get(key, []))
+            base = copy.deepcopy(defaults.get(key, []))
             merged[key] = base + [item for item in val if item not in base]
         else:
             merged[key] = val
-    return merged
+    return merged, nulled
 
 
-def load_config() -> dict:
+def load_config(path: Path | None = None) -> tuple[dict, set]:
     """Read `.ai/sync_config.json`, or raise — defaults are never a fallback.
 
     Falling back to the built-in config while still exiting 0 is how the
     checker certified a repository it had stopped reading (D4).
+
+    `path` defaults to the module's `CONFIG_PATH` (set by `main()`); callers
+    that already know which file they mean pass it, so a test no longer has to
+    monkey-assign a global and a stale `None` cannot escape as AttributeError.
     """
+    cfg_path = Path(path) if path is not None else CONFIG_PATH
+    if cfg_path is None:
+        raise ConfigError("unreadable: no config path given and CONFIG_PATH is "
+                          "unset (call main() or pass the path)")
     try:
-        raw = CONFIG_PATH.read_bytes()
+        raw = cfg_path.read_bytes()
     except FileNotFoundError:
-        raise ConfigError(f"unreadable: {CONFIG_PATH} is missing")
+        raise ConfigError(f"unreadable: {cfg_path} is missing")
     except OSError as exc:
-        raise ConfigError(f"unreadable: {CONFIG_PATH}: {exc}")
+        raise ConfigError(f"unreadable: {cfg_path}: {exc}")
     try:
         cfg = json.loads(raw.decode("utf-8-sig"))
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ConfigError(f"malformed: {CONFIG_PATH}: {exc}")
+        raise ConfigError(f"malformed: {cfg_path}: {exc}")
     if not isinstance(cfg, dict):
-        raise ConfigError(f"not-object: {CONFIG_PATH} must hold a JSON object")
+        raise ConfigError(f"not-object: {cfg_path} must hold a JSON object")
     return merge_config(DEFAULT_CONFIG, cfg)
 
 
 def check_required_files(required_files: list) -> None:
-    for rel in required_files:
+    # TODO-1a/1b boundary: an empty required-file list is reported FAIL here,
+    # not SKIP, because `record()` speaks only PASS/FAIL and a SKIP pushed
+    # through it with ok=True lands in the `N/N passed` numerator — a SKIP that
+    # reads as a PASS, the exact spec 4 violation. Task 7's tri-state `record()`
+    # (a line kept out of the passed/total fraction, `== 9/10 passed, 1 skipped
+    # ==`) is what turns this line and the decisions-file line into real named
+    # SKIPs; until then a degradation costs the run its green.
+    declared = list(required_files)
+    floor_only = [rel for rel in REQUIRED_FILE_FLOOR if rel not in declared]
+    if not declared:
+        record("required-file list", False,
+               "config declares zero required_files; refusing to certify an "
+               "unchecked install (the floor entries were checked anyway)")
+    if floor_only:
+        record("required-file floor", True,
+               f"config listed {len(declared)} entries; floor restored "
+               f"{floor_only} — these have no necessity check elsewhere, so "
+               f"the key's replace policy does not reach them")
+    for rel in declared + floor_only:
         p = ROOT / rel
         if not p.exists():
             record(f"required {rel}", False, "missing")
@@ -232,19 +349,54 @@ def line_count(path: Path) -> int:
     return len(path.read_text(encoding="utf-8").splitlines())
 
 
-def check_token_budgets(cfg: dict) -> None:
-    for rel, cap in cfg["budgets"].items():
+def check_token_budgets(cfg: dict, nulled: set | None = None) -> None:
+    nulled = nulled or set()
+    budgets = cfg["budgets"]
+    for rel, cap in budgets.items():
         p = ROOT / rel
         if not p.exists():
             record(f"budget {rel}", False, f"missing (cap {cap})")
             continue
         n = line_count(p)
         record(f"budget {rel}", n <= cap, f"{n} lines (cap {cap})")
-    dec = ROOT / cfg["decisions_file"]
-    if dec.exists():
-        n = len(re.findall(r"^## ", dec.read_text(encoding="utf-8"), re.M))
-        cap = cfg["decisions_max_active_entries"]
-        record("budget DECISIONS active entries", n <= cap, f"{n} entries (cap {cap})")
+    # The floor half: a present file with no cap and no explicit null is a
+    # silently unchecked file, and `absent so unchecked` is not a shape spec 4
+    # allows. An explicit null IS allowed, and gets its own line so the opt-out
+    # leaves a trace instead of vanishing from the evidence.
+    for rel in BUDGET_FLOOR:
+        if rel in budgets:
+            continue
+        if not (ROOT / rel).exists():
+            continue
+        if rel in nulled:
+            record(f"cap opt-out {rel}", True,
+                   f"{rel} is present and its cap was dropped by an explicit "
+                   f"null in config (considered act, not D3's accident)")
+        else:
+            record(f"budget {rel}", False,
+                   "file present, no cap in config and no explicit null — "
+                   "name the cap or decline it with null")
+    dec_rel = cfg["decisions_file"]
+    dec = ROOT / dec_rel
+    cap = cfg["decisions_max_active_entries"]
+    name = "budget DECISIONS active entries"
+    # TODO-1a/1b boundary (see check_required_files): the absent-decisions-file
+    # branch below is a named FAIL today where spec 4 wants a named SKIP, for
+    # the same `record()` reason. A repo with no decision log declines it by
+    # dropping DECISIONS.md from the optional tail of `required_files` and is
+    # still red here until Task 7 lands.
+    if not dec.is_file():
+        record(name, False, f"decisions file not present at {dec_rel} "
+                            f"(cap {cap} has nothing to measure)")
+        return
+    try:
+        text = dec.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        record(name, False, f"decisions file {dec_rel} could not be read: "
+                            f"{type(exc).__name__}: {exc}")
+        return
+    n = len(re.findall(r"^## ", text, re.M))
+    record(name, n <= cap, f"{n} entries (cap {cap})")
 
 
 def check_secrets_ignored(cfg: dict) -> None:
@@ -263,6 +415,9 @@ def check_secret_mirrors(cfg: dict) -> None:
                 for ln in p.read_text(encoding="utf-8-sig").splitlines()
                 if "=" in ln and not ln.lstrip().startswith("#")}
 
+    # Every entry is a validated 2-item list of path strings by now: a flat
+    # list used to make `pair[0]` index the CHARACTERS of a path and report a
+    # mirror check that could PASS on nonsense (D19's class, one key over).
     for pair in cfg["secret_mirrors"]:
         a, b = ROOT / pair[0], ROOT / pair[1]
         if not (a.exists() and b.exists()):
@@ -274,6 +429,8 @@ def check_secret_mirrors(cfg: dict) -> None:
 
 
 def check_extra(cfg: dict) -> None:
+    # Entries are validated objects with a string name and a list cmd, so a
+    # missing `cmd` is a named `malformed:` line rather than a KeyError.
     for chk in cfg["extra_checks"]:
         name, cmd = chk["name"], chk["cmd"]
         res = run_argv(ROOT, cmd, timeout=EXTRA_CHECK_TIMEOUT)
@@ -312,8 +469,23 @@ def main() -> int:
         print(f"[FAIL] install layout: {exc}")
         return 2
     print(f"== sync_verify: project root {ROOT} ==")
+    kind, layout_detail = checkout_layout(ROOT)
+    if kind != "normal":
+        # D15: a linked worktree keeps its own on-disk WRITER_LOCK.json and a
+        # symlinked payload is not versioned in this tree, so the single-writer
+        # rule this install claims may already be broken locally. "normal" is
+        # only returned when git answered BOTH probes, so `outside-repo` means
+        # "could not determine" — which is a FAIL, not a skip (spec 4). Not
+        # `kind == "symlinked"`: the other two kinds falling through would let a
+        # wrong-tree run print PASS.
+        record("install layout", False,
+               f"{kind}: {layout_detail} — every check below would be about a "
+               f"tree that is not this checkout (coverage limit: a symlinked "
+               f"`.ai` this script was invoked THROUGH is invisible here, "
+               f"because resolve_roots() resolved past it)")
+        return _summarise()
     try:
-        cfg = load_config()
+        cfg, nulled = load_config()
         # as_posix(): the evidence line is read by agents on the other machines
         # too, and `.ai\sync_config.json` is not the path they wrote in config.
         record("config readable", True, CONFIG_PATH.relative_to(ROOT).as_posix())
@@ -324,7 +496,7 @@ def main() -> int:
         record("config readable", False, str(exc))
         return _summarise()
     check_required_files(cfg["required_files"])
-    check_token_budgets(cfg)
+    check_token_budgets(cfg, nulled)
     check_secrets_ignored(cfg)
     check_secret_mirrors(cfg)
     check_extra(cfg)

@@ -17,6 +17,14 @@ clothes:
     reached them (finding E, this script's half; `checkpoint.py`'s twin is
     pinned by an xfail in `tests/test_ai_common.py`).
 
+Lane S1 added the fourth and fifth members of the same family: a config key
+whose ELEMENT shape was never checked (`secret_mirrors`, `extra_checks`,
+`decisions_file`, `decisions_max_active_entries`) escaped as an
+IndexError/KeyError/TypeError traceback rather than a `malformed:` line, and a
+cap that disappeared while its file stayed present produced no line at all.
+Every case below therefore asserts both halves: the named line AND the absence
+of a traceback.
+
 No assertion below is satisfied by empty output: each one names a line.
 """
 from __future__ import annotations
@@ -54,6 +62,14 @@ sync_verify = _load_sync_verify()
 
 def write_raw(repo: Path, text: str, encoding: str = "utf-8") -> None:
     (repo / _CONFIG_REL).write_text(text, encoding=encoding)
+
+
+def patch_cfg(repo: Path, **key_value) -> None:
+    """Change named keys of the SHIPPED config, leaving the rest alone."""
+    path = repo / _CONFIG_REL
+    cfg = json.loads(path.read_text("utf-8"))
+    cfg.update(key_value)
+    path.write_text(json.dumps(cfg), encoding="utf-8")
 
 
 def readable_failures(res) -> list[str]:
@@ -122,56 +138,158 @@ def test_a_bom_before_the_brace_is_still_our_config(ai_repo, sv):
     ('{"required_files": ".ai/state/CURRENT.md"}', "required_files"),
     ('{"budgets": {"AGENTS.md": "65"}}', "budgets"),
     ('{"secret_files": [".env", 7]}', "secret_files"),
+    # lane S1 finding 3: two scalar keys reached the checks unvalidated
+    ('{"decisions_file": null}', "decisions_file"),
+    ('{"decisions_file": ["a.md"]}', "decisions_file"),
+    ('{"decisions_max_active_entries": "20"}', "decisions_max_active_entries"),
+    ('{"decisions_max_active_entries": true}', "decisions_max_active_entries"),
+    ('{"decisions_max_active_entries": 0}', "decisions_max_active_entries"),
+    # lane S1 finding 4: the element shapes one key over from D19's fix
+    ('{"secret_mirrors": [".env", ".claude/.env"]}', "secret_mirrors"),
+    ('{"secret_mirrors": [["a"]]}', "secret_mirrors"),
+    ('{"secret_mirrors": [[".env", 7]]}', "secret_mirrors"),
+    ('{"extra_checks": [{"name": "x"}]}', "extra_checks"),
+    ('{"extra_checks": ["x"]}', "extra_checks"),
+    ('{"extra_checks": [{"name": "x", "cmd": "git status"}]}', "extra_checks"),
+    ('{"extra_checks": [{"name": "x", "cmd": []}]}', "extra_checks"),
 ])
 def test_a_governed_key_of_the_wrong_shape_is_named_not_guessed(
         ai_repo, sv, bad, expected_key):
     """`{"secret_files": ".env"}` used to iterate the four CHARACTERS of a
-    string: the floor was silently gone and the run printed nonsense instead."""
+    string: the floor was silently gone and the run printed nonsense instead.
+    The cases lane S1 added were worse than nonsense — they left the run as a
+    traceback (`IndexError: list index out of range`, `KeyError: 'cmd'`,
+    `TypeError: string indices must be integers`, `TypeError: unsupported
+    operand type(s) for /: 'WindowsPath' and 'NoneType'`)."""
     write_raw(ai_repo, bad)
     res = run_python(sv, cwd=ai_repo)
     assert res.rc == 1, res.stdout
     assert readable_failures(res), res.lines
     assert "malformed:" in readable_failures(res)[0], res.lines
     assert expected_key in readable_failures(res)[0], res.lines
+    assert "Traceback" not in res.stderr, res.stderr + res.stdout
+
+
+def test_a_flat_secret_mirrors_list_cannot_report_on_characters(ai_repo, sv):
+    """The specific nonsense this closed: `[[".env", 7]]`-shaped mistakes aside,
+    `[.env, .claude/.env]` used to run and print `secret mirror . vs e`."""
+    write_raw(ai_repo, '{"secret_mirrors": [".env", ".claude/.env"], '
+                       '"budgets": {"AGENTS.md": 65}}')
+    res = run_python(sv, cwd=ai_repo)
+    assert not any(" vs " in ln for ln in res.lines), res.lines
+    assert readable_failures(res), res.lines
 
 
 def test_load_config_raises_a_typed_error_for_each_reason(tmp_path):
     """The three prefixes are the contract later lanes parse; they must come
-    from `load_config()`, not only from the printed line."""
+    from `load_config()`, not only from the printed line. The path is an
+    argument now (finding 7), so no test has to monkey-assign a module global
+    and leave a stale `None` behind for the next one."""
     missing = tmp_path / ".ai"
     (missing / "sub").mkdir(parents=True)
-    sync_verify.CONFIG_PATH = missing / "sync_config.json"
+    cfg_path = missing / "sync_config.json"
     cases = [(None, "unreadable:"), ('{"budgets": ', "malformed:"),
              ("[]", "not-object:"), ('{"budgets": []}', "malformed:"),
              ('{"secret_files": ".env"}', "malformed:"),
              ('{"budgets": {"a": "60"}}', "malformed:")]
+    for text, prefix in cases:
+        if text is None:
+            cfg_path.unlink(missing_ok=True)
+        else:
+            cfg_path.write_text(text, encoding="utf-8")
+        with pytest.raises(sync_verify.ConfigError) as excinfo:
+            sync_verify.load_config(cfg_path)
+        assert str(excinfo.value).startswith(prefix), (prefix, excinfo.value)
+
+
+def test_a_config_path_that_was_never_given_is_a_named_error():
+    """The stale-`None` half of finding 7 used to escape as
+    `AttributeError: 'NoneType' object has no attribute 'read_bytes'`."""
+    saved = sync_verify.CONFIG_PATH
+    sync_verify.CONFIG_PATH = None
     try:
-        for text, prefix in cases:
-            if text is None:
-                sync_verify.CONFIG_PATH.unlink(missing_ok=True)
-            else:
-                sync_verify.CONFIG_PATH.write_text(text, encoding="utf-8")
-            with pytest.raises(sync_verify.ConfigError) as excinfo:
-                sync_verify.load_config()
-            assert str(excinfo.value).startswith(prefix), (prefix, excinfo.value)
+        with pytest.raises(sync_verify.ConfigError) as excinfo:
+            sync_verify.load_config()
+        assert str(excinfo.value).startswith("unreadable:"), excinfo.value
     finally:
-        sync_verify.CONFIG_PATH = None
+        sync_verify.CONFIG_PATH = saved
 
 
 def test_load_config_merges_instead_of_replacing_defaults(tmp_path):
     ai = tmp_path / ".ai"
     ai.mkdir()
     (ai / "sync_config.json").write_text(
-        json.dumps({"budgets": {".ai/state/CURRENT.md": 10}}), encoding="utf-8")
-    sync_verify.CONFIG_PATH = ai / "sync_config.json"
-    try:
-        cfg = sync_verify.load_config()
-    finally:
-        sync_verify.CONFIG_PATH = None
+        json.dumps({"budgets": {".ai/state/CURRENT.md": 10,
+                                ".ai/handoff/NEXT_PROMPT.md": None}}),
+        encoding="utf-8")
+    cfg, nulled = sync_verify.load_config(ai / "sync_config.json")
     assert cfg["budgets"][".ai/handoff/LATEST.md"] == 80, cfg["budgets"]
     assert cfg["budgets"][".ai/state/CURRENT.md"] == 10, cfg["budgets"]
     assert "AGENTS.md" not in cfg["budgets"], cfg["budgets"]
+    assert ".ai/handoff/NEXT_PROMPT.md" not in cfg["budgets"], cfg["budgets"]
+    # the declined default travels out as a name, not as a missing key
+    assert nulled == {".ai/handoff/NEXT_PROMPT.md"}, nulled
     assert cfg["secret_files"] == [".env"], cfg
+
+
+# --------------------------------------------------------------------------
+# lane S1 finding 3: the decision cap cannot be retargeted into silence
+
+
+def test_a_retargeted_decisions_file_is_a_named_failure(ai_repo, sv):
+    """`if dec.exists():` with no else used to mean one config line removed the
+    decision-cap check while `required …DECISIONS.md` still PASSed. The answer
+    is a FAIL today and a named SKIP once Task 7's tri-state `record()` lands."""
+    patch_cfg(ai_repo, decisions_file=".ai/state/NOTHERE.md")
+    res = run_python(sv, cwd=ai_repo)
+    assert res.rc == 1, res.stdout
+    assert any(ln.startswith("[FAIL] budget DECISIONS active entries")
+               and "not present at .ai/state/NOTHERE.md" in ln
+               for ln in res.lines), res.lines
+    assert not any(ln.startswith("[PASS] budget DECISIONS") for ln in res.lines)
+    assert "Traceback" not in res.stderr, res.stderr
+
+
+def test_a_directory_or_unreadable_decisions_file_does_not_crash_the_run(
+        ai_repo, sv):
+    """`{"decisions_file": ""}` names ROOT itself, which EXISTS and is not a
+    file: the reader must call that out rather than die on read_text."""
+    patch_cfg(ai_repo, decisions_file=".ai/state")
+    res = run_python(sv, cwd=ai_repo)
+    assert res.rc == 1, res.stdout
+    assert any(ln.startswith("[FAIL] budget DECISIONS active entries")
+               for ln in res.lines), res.lines
+    assert "Traceback" not in res.stderr, res.stderr
+
+
+# --------------------------------------------------------------------------
+# lane S1 finding 5: a budget that vanishes cannot leave the run green
+
+
+def test_a_present_file_with_no_cap_and_no_explicit_null_is_named(ai_repo, sv):
+    """Delete one line from `templates/sync_config.json`, or `--force`-skip the
+    config on an upgrade, and AGENTS.md used to end up uncapped, unrequired and
+    green. This is the shape the D18/D27 ownership argument was always about."""
+    write_raw(ai_repo, '{"budgets": {".ai/state/CURRENT.md": 60}}')
+    res = run_python(sv, cwd=ai_repo)
+    assert res.rc == 1, res.stdout
+    assert any(ln.startswith("[FAIL] budget AGENTS.md")
+               and "file present, no cap in config" in ln
+               and "no explicit null" in ln for ln in res.lines), res.lines
+
+
+def test_an_explicit_null_cap_leaves_a_trace(ai_repo, sv):
+    """The considered act stays allowed — and now says so, instead of being
+    indistinguishable from a deleted line."""
+    cfg = json.loads((ai_repo / _CONFIG_REL).read_text("utf-8"))
+    cfg["budgets"]["AGENTS.md"] = None
+    (ai_repo / _CONFIG_REL).write_text(json.dumps(cfg), "utf-8")
+    res = run_python(sv, cwd=ai_repo)
+    assert res.rc == 0, res.stdout
+    assert any(ln.startswith("[PASS] cap opt-out AGENTS.md")
+               and "explicit null" in ln for ln in res.lines), res.lines
+    assert not any(ln.startswith("[FAIL] budget AGENTS.md")
+                   for ln in res.lines), res.lines
 
 
 # --------------------------------------------------------------------------
@@ -216,6 +334,7 @@ def test_a_timed_out_extra_check_names_its_command(tmp_path, monkeypatch, capfd)
     name, ok, evidence = _run_extra(monkeypatch, tmp_path, sleeper, timeout=1)
     assert name == "freeze"
     assert ok is False, evidence
+    assert evidence.startswith("cmd "), evidence
     assert "TIMEOUT" in evidence, evidence
     assert "after 1s" in evidence, evidence
     assert "time.sleep" in evidence, evidence
@@ -228,6 +347,7 @@ def test_an_unlaunchable_extra_check_names_its_command(tmp_path, monkeypatch, ca
     name, ok, evidence = _run_extra(monkeypatch, tmp_path, bogus)
     assert name == "freeze"
     assert ok is False, evidence
+    assert evidence.startswith("cmd "), evidence
     assert "could not run" in evidence, evidence
     assert "definitely-not-an-executable-here" in evidence, evidence
     printed = _evidence_lines(capfd)
@@ -236,10 +356,15 @@ def test_an_unlaunchable_extra_check_names_its_command(tmp_path, monkeypatch, ca
 
 def test_a_green_extra_check_still_reports_its_command_and_rc(
         tmp_path, monkeypatch, capfd):
+    """Finding 6: every assertion this test used to make was also satisfied by
+    the PRE-FIX single line `rc=0; freeze verified`, so it stayed green when its
+    own fix was reverted. The `cmd ` prefix is the one thing that cannot be."""
     name, ok, evidence = _run_extra(
         monkeypatch, tmp_path, [sys.executable, "-c", "print('freeze verified')"])
     assert name == "freeze"
     assert ok is True, evidence
+    assert evidence.startswith("cmd "), evidence
+    assert sys.executable in evidence, evidence
     assert "freeze verified" in evidence, evidence
     assert "rc=0" in evidence, evidence
     printed = _evidence_lines(capfd)
