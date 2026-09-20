@@ -33,10 +33,16 @@ Flags:
     --scripts-only   refresh `.ai/scripts/` and `.ai/protocol/VERSION` and
                      nothing else: no state, config, template, AGENTS.md,
                      CLAUDE.md or .gitignore is read, written or created.
+    --no-agents-block  do not touch AGENTS.md — and, because that file then
+                     does not exist, write no CLAUDE.md pointer to it and drop
+                     its line budget from sync_config.json, so
+                     `sync_verify.py` stays green instead of failing forever
+                     (D18). A repo that already has AGENTS.md keeps the budget.
 """
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import shutil
 import sys
@@ -212,16 +218,100 @@ def copy_file(src: Path, dst: Path, force: bool,
     return f"wrote: {dst}"
 
 
-def update_gitignore(root: Path) -> str:
+def update_gitignore(root: Path, wanted: list[str] | None = None) -> str:
+    """Append only the lines that are genuinely absent, and say how many.
+
+    D17: the old version decided *whether* to write by looking for one missing
+    line and then appended the whole block, so a repo that already listed
+    `.env` got a second `.env` and a second marker — while being told
+    `appended 4 entries` about five lines it had just written.
+    """
+    lines = GITIGNORE_LINES if wanted is None else list(wanted)
     gi = root / ".gitignore"
-    existing = gi.read_text(encoding="utf-8") if gi.exists() else ""
-    missing = [ln for ln in GITIGNORE_LINES
-               if ln and ln not in existing.splitlines()]
+    existing = _read_text(gi) if gi.exists() else ""
+    if existing is None:
+        return (f"WARNING: {gi} is not readable UTF-8 text; nothing was "
+                "appended, declare the entries yourself")
+    have = set(existing.splitlines())
+    missing = [ln for ln in lines if ln not in have]
     if not missing:
         return ".gitignore: already up to date"
-    with open(gi, "a", encoding="utf-8") as f:
-        f.write("\n".join(GITIGNORE_LINES) + "\n")
+    with open(gi, "a", encoding="utf-8") as handle:
+        if existing and not existing.endswith("\n"):
+            handle.write("\n")
+        handle.write("\n".join(missing) + "\n")
     return f".gitignore: appended {len(missing)} entries"
+
+
+def _splice_out_budget_line(text: str) -> str | None:
+    """Return `text` with the `"AGENTS.md": <n>,` budget line deleted, or None.
+
+    The point is the byte shape: a JSON round-trip reflows every array in the
+    file, which turns a config nobody touched into text no template contains,
+    and `--force` then reports it KEEP (edited) and never restores the budget it
+    pruned here. Splicing the one line leaves the rest of the file as the
+    template shipped it, and the result is re-parsed before it is trusted.
+    """
+    lines = text.split("\n")
+    idx = None
+    for i, line in enumerate(lines):
+        if re.match(r'^\s*"AGENTS\.md"\s*:\s*\d+\s*,?\s*$', line):
+            idx = i
+            break
+    if idx is None:
+        return None
+    had_comma = lines[idx].rstrip().endswith(",")
+    del lines[idx]
+    if not had_comma:
+        for j in range(idx - 1, -1, -1):
+            if not lines[j].strip():
+                continue
+            if lines[j].rstrip().endswith(","):
+                lines[j] = lines[j].rstrip()[:-1]
+            break
+    spliced = "\n".join(lines)
+    try:
+        parsed = json.loads(spliced)
+    except json.JSONDecodeError:
+        return None
+    if "AGENTS.md" in parsed.get("budgets", {}):
+        return None
+    return spliced
+
+
+def drop_agents_md_budget(root: Path) -> str:
+    """D18: do not leave a budget for a file `--no-agents-block` never created.
+
+    `AGENTS.md` is in no required-file list, so its line budget is the only
+    thing that watches it; turning "missing budget file" into a WARN instead of
+    pruning here would leave the file monitored by nothing. A repo that already
+    has its own AGENTS.md keeps the budget — the flag means "do not touch
+    AGENTS.md", not "stop checking it".
+    """
+    cfg_path = root / ".ai" / "sync_config.json"
+    if not cfg_path.is_file():
+        return "sync_config.json: not installed, nothing to prune"
+    if (root / "AGENTS.md").exists():
+        return ("sync_config.json: kept AGENTS.md budget (the repo already has "
+                "AGENTS.md, so the budget still applies)")
+    text = _read_text(cfg_path)
+    if text is None:
+        return f"ERROR (unreadable config, cannot prune): {cfg_path}"
+    try:
+        cfg = json.loads(text)
+    except json.JSONDecodeError as exc:
+        return f"ERROR (unparseable config, cannot prune): {cfg_path}: {exc}"
+    budgets = cfg.get("budgets")
+    if not isinstance(budgets, dict) or "AGENTS.md" not in budgets:
+        return "sync_config.json: no AGENTS.md budget to drop"
+    removed = budgets.get("AGENTS.md")
+    spliced = _splice_out_budget_line(text)
+    if spliced is None:
+        budgets.pop("AGENTS.md")
+        spliced = json.dumps(cfg, indent=2) + "\n"
+    cfg_path.write_text(spliced, encoding="utf-8")
+    return (f"sync_config.json: dropped AGENTS.md budget (was {removed}) because "
+            "--no-agents-block did not create the file")
 
 
 def update_agents_md(root: Path, force: bool) -> str:
@@ -322,10 +412,19 @@ def main() -> int:
     (root / ".ai/runtime").mkdir(parents=True, exist_ok=True)
 
     if not args.scripts_only:
-        print(update_gitignore(root))
-        if not args.no_agents_block:
+        line = update_gitignore(root)
+        print(line)
+        if line.startswith("ERROR"):
+            rc = 1
+        if args.no_agents_block:
+            line = drop_agents_md_budget(root)
+            print(line)
+            if line.startswith("ERROR"):
+                rc = 1
+            print("CLAUDE.md: not written (--no-agents-block)")
+        else:
             print(update_agents_md(root, force))
-        print(write_claude_pointer(root))
+            print(write_claude_pointer(root))
 
     print("\nNext steps:")
     print("  1. Fill in every <placeholder> in AGENTS.md, .ai/SYNC_PROMPT.md,")
