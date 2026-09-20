@@ -195,7 +195,11 @@ def test_required_files_override_replaces_only_the_optional_tail(ai_repo, sv):
     res = run_python(sv, cwd=ai_repo)
     assert res.rc == 1, res.stdout
     assert "[FAIL] required .ai/protocol/VERSION: missing" in res.lines, res.lines
-    assert any(ln.startswith("[PASS] required-file floor:")
+    # Lane S2 finding 8: the floor line is a TRACE, not a check -- a PASS booked
+    # the config "attempted to narrow coverage". The restored files are counted
+    # by their own `required ...` lines below it, which is why the SKIP stays
+    # evidence-bearing.
+    assert any(ln.startswith("[SKIP] required-file floor:")
                and ".ai/protocol/VERSION" in ln
                and "config listed 1 entries" in ln for ln in res.lines), res.lines
     # the tail the repo legitimately has no use for really did go

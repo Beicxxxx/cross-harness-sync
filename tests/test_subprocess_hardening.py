@@ -139,7 +139,10 @@ def test_an_install_that_declares_no_decision_log_is_a_skip_not_a_red(
     match = SUMMARY_RE.fullmatch(summary[0])
     assert match, summary[0]
     passed, total, skipped = match.groups()
-    assert skipped == "1", summary[0]
+    # Two SKIPs, both named: the absent decision log (B3a) and lane S2 finding
+    # 2's `registered project checks`, a SKIP because the shipped template
+    # registers no `extra_checks` and no `secret_mirrors`.
+    assert skipped == "2", summary[0]
     assert int(passed) < int(total), summary[0]
     assert "FAILED:" not in res.lines, res.lines
 
@@ -222,8 +225,10 @@ def test_a_string_extra_check_cmd_is_a_named_failure(tmp_path, monkeypatch,
     rejects it on the way in — the check is where the promise lives."""
     mod = _load_sync_verify()
     monkeypatch.setattr(mod, "ROOT", tmp_path)
-    monkeypatch.setattr(mod, "EXTRA_CHECK_TIMEOUT", 1)
-    mod.check_extra({"extra_checks": [{"name": "freeze", "cmd": "git status"}]})
+    # lane S2 finding 7: the timeout arrives as config, never as a patched
+    # constant, because a constant is a second source of truth.
+    mod.check_extra({"extra_checks": [{"name": "freeze", "cmd": "git status"}],
+                     "check_timeout": mod.DEFAULT_CONFIG["check_timeout"]})
     printed = [ln for ln in capsys.readouterr().out.splitlines() if ln]
     name, ok, evidence = mod.RESULTS[-1]
     assert name == "freeze"
@@ -232,18 +237,24 @@ def test_a_string_extra_check_cmd_is_a_named_failure(tmp_path, monkeypatch,
     assert printed[-1].startswith("[FAIL] freeze:"), printed
 
 
-def test_the_timeout_default_is_the_config_key_falls_back_to_the_constant(
-        tmp_path, monkeypatch, capsys):
-    """`_run_extra` in tests/test_config_errors.py passes a config with no
-    `check_timeout` and monkeypatches the module constant: a `.get()` fallback
-    is what lets a config-driven timeout coexist with that pin instead of
-    raising KeyError out of the check."""
+def test_the_timeout_knobs_are_two_and_not_one_anymore(tmp_path, monkeypatch,
+                                                       capsys):
+    """Lane S2 finding 7, replacing `test_the_timeout_default_is_the_config_key_
+    falls_back_to_the_constant`. That pin ASSERTED the drift
+    (`DEFAULT_CONFIG["check_timeout"] == EXTRA_CHECK_TIMEOUT`), which locked in a
+    single 600 s knob shared by `git check-ignore` (milliseconds) and
+    user-registered scientific verifiers (minutes), and kept the constant alive
+    only so in-process callers could skip the config. One key per workload now,
+    each pinned on its own, and the git half gets its own short allowance."""
     mod = _load_sync_verify()
-    assert mod.DEFAULT_CONFIG["check_timeout"] == mod.EXTRA_CHECK_TIMEOUT
+    assert mod.DEFAULT_CONFIG["git_check_timeout"] == 15, mod.DEFAULT_CONFIG
+    assert mod.DEFAULT_CONFIG["check_timeout"] == 600, mod.DEFAULT_CONFIG
+    assert not hasattr(mod, "EXTRA_CHECK_TIMEOUT"), \
+        "the constant is back, and with it the second source of truth"
     monkeypatch.setattr(mod, "ROOT", tmp_path)
-    monkeypatch.setattr(mod, "EXTRA_CHECK_TIMEOUT", 2)
     sleeper = [sys.executable, "-c", "import time; time.sleep(30)"]
-    mod.check_extra({"extra_checks": [{"name": "freeze", "cmd": sleeper}]})
+    mod.check_extra({"extra_checks": [{"name": "freeze", "cmd": sleeper}],
+                     "check_timeout": 2})
     _, ok, evidence = mod.RESULTS[-1]
     assert ok is False, evidence
     assert "timed out" in evidence and "TIMEOUT" in evidence, evidence

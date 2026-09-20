@@ -10,23 +10,28 @@ not hardcoded here. Checks, in order:
   1. The config itself is readable, parses, and holds a JSON object. Reading it
      is the precondition of every other line, so failing here stops the run
      instead of falling back to defaults (D4).
-  2. Required state files exist and are non-empty (config "required_files",
+  2. What the config REGISTERS for the project's own checks — one always-
+     recorded line counting `extra_checks` and `secret_mirrors`, so emptying
+     either (or deleting the key) is a named SKIP rather than silence.
+  3. Required state files exist and are non-empty (config "required_files",
      default `ai_common.DEFAULT_REQUIRED_FILES`, with `REQUIRED_FILE_FLOOR`
      unioned back in after the merge).
-  3. Token budgets (per-file line caps from config "budgets", with
+  4. Token budgets (per-file line caps from config "budgets", with
      `BUDGET_FLOOR` naming the files that must carry a cap when present)
-  4. Decision log cap (config "decisions_max_active_entries")
-  5. Secret files are git-ignored (config "secret_files")
-  6. Secret mirror key sets match (config "secret_mirrors": pairs of files
+  5. Decision log cap (config "decisions_max_active_entries")
+  6. Secret files are git-ignored (config "secret_files")
+  7. Secret mirror key sets match (config "secret_mirrors": pairs of files
      whose KEY NAMES must be identical, e.g. [".env", ".claude/.env"])
-  7. Extra project checks (config "extra_checks": [{"name", "cmd"}]; PASS iff
+  8. Extra project checks (config "extra_checks": [{"name", "cmd"}]; PASS iff
      the command exits 0 AND wrote something — an exit 0 that produced zero
      bytes on both streams is a SKIP, never a pass; e.g. a freeze verifier)
 
 Exit 0 = every check that ran passed, 1 = at least one FAIL. Every check prints
 PASS/FAIL/SKIP plus its evidence line, and the summary prints the passed count,
 the total and the skip count on ONE line: a check that could not run is named
-and kept out of the passed fraction, never folded into it (spec 4). Add new
+and kept out of the passed fraction, never folded into it (spec 4). A run whose
+records are ALL skips exits 1 — `returncode == 0` is never sufficient, and an
+empty `failed` list is not the same fact as "something was verified". Add new
 checks to the config, not to chat memory.
 
 Usage:  python .ai/scripts/sync_verify.py
@@ -96,14 +101,23 @@ DEFAULT_CONFIG = {
     "secret_files": [".env"],
     "secret_mirrors": [],
     "extra_checks": [],
-    # Wall-clock seconds one child gets before it is NAMED as failed: every
-    # `git check-ignore` and every `extra_checks` command (D11). Before Task 6
-    # the value lived only in hardcoded call sites, so an operator with a
-    # governance script that never returns had one answer: kill the verifier
-    # and lose every other line it would have printed. Merges by REPLACE, which
-    # is right for a number — and a string here would silently buy 600 s, so it
-    # is shape-checked like the rest of the scalars (A.1).
+    # Wall-clock seconds one CHILD gets before it is NAMED as failed (D11).
+    # Before Task 6 the value lived only in hardcoded call sites, so an operator
+    # with a governance script that never returns had one answer: kill the
+    # verifier and lose every other line it would have printed. Lane S2 finding 7
+    # then split the single knob, because one number was serving two workloads
+    # that have nothing in common: `check_timeout` covers `extra_checks` (user-
+    # registered scientific verifiers, legitimately minutes) and
+    # `git_check_timeout` covers `git check-ignore` (milliseconds, where a 600 s
+    # allowance is a hang nobody meant to buy). `EXTRA_CHECK_TIMEOUT` is gone
+    # with it: a module constant kept alive only so in-process callers could
+    # skip the config is a second source of truth (D23's class), and the drift
+    # pin that compared the two had locked the single-knob design in. Both keys
+    # merge by REPLACE, which is right for a number — and a string here would
+    # silently buy 600 s, so both are shape-checked like the rest of the scalars
+    # (A.1).
     "check_timeout": 600,
+    "git_check_timeout": 15,
 }
 
 # No `REQUIRED_FILES` here: D23 was this constant disagreeing with two private
@@ -138,10 +152,6 @@ AGENTS_MD_BUDGET_NAME = "AGENTS.md"
 # not generated) or an upgrade that `--force`-skipped the config cannot leave the
 # most-loaded auto-loaded instruction file uncapped and silent.
 BUDGET_FLOOR = tuple(DEFAULT_CONFIG["budgets"]) + (AGENTS_MD_BUDGET_NAME,)
-
-# One extra check may legitimately take minutes (a freeze verifier over a large
-# tree); it may not hang forever. Task 6 makes the timeout config-driven.
-EXTRA_CHECK_TIMEOUT = 600
 
 # Every user config key is merged with the built-in defaults under exactly one
 # of three policies, and which one applies is a judgement about the KEY, not
@@ -191,11 +201,13 @@ KEY_SHAPES = {
     "decisions_file": str,
     "decisions_max_active_entries": int,
     "check_timeout": int,
+    "git_check_timeout": int,
 }
 
 # Scalars that must be a POSITIVE int, not a JSON boolean posing as one.
 POSITIVE_INT_KEYS = {"decisions_max_active_entries": "entry cap",
-                     "check_timeout": "seconds timeout"}
+                     "check_timeout": "seconds timeout",
+                     "git_check_timeout": "seconds timeout"}
 
 # Keys whose list entries are repo-relative paths.
 PATH_LIST_KEYS = ("secret_files", "required_files")
@@ -229,6 +241,32 @@ def _is_path_str(val) -> bool:
     return isinstance(val, str) and val.strip() != ""
 
 
+def _is_repo_relative_path(val) -> bool:
+    """A path entry must stay inside the checkout the run is a report about.
+
+    Lane S2 finding 4 (MEDIUM): `PATH_LIST_KEYS` checked `isinstance(str)` and
+    nothing else, so `required_files: ["/etc/passwd"]` became `ROOT / p` ==
+    `/etc/passwd` and printed a COUNTED PASS about a file outside the tree. On
+    Windows `Path("/etc/passwd").is_absolute()` is False, so `root` and `drive`
+    are named separately as well; `..` is refused by component and again by
+    resolution. The resolution half needs `ROOT`, which a caller that never ran
+    `main()` does not have — the by-name refusals hold there alone.
+    """
+    if not _is_path_str(val):
+        return False
+    p = Path(val)
+    if p.is_absolute() or p.drive or p.root:
+        return False
+    if ".." in p.parts:
+        return False
+    if ROOT is not None:
+        try:
+            (ROOT / p).resolve().relative_to(ROOT.resolve())
+        except (OSError, ValueError):
+            return False
+    return True
+
+
 def _check_shape(key: str, val) -> None:
     expected = KEY_SHAPES.get(key)
     if expected is not None and not isinstance(val, expected):
@@ -239,6 +277,11 @@ def _check_shape(key: str, val) -> None:
         if bad:
             raise ConfigError(f"malformed: config key {key!r} must hold path "
                               f"strings, got {bad}")
+        escaping = [x for x in val if not _is_repo_relative_path(x)]
+        if escaping:
+            raise ConfigError(f"malformed: config key {key!r} entries must be "
+                              f"repo-relative paths inside the checkout, not "
+                              f"{escaping}")
     if key == "budgets":
         bad = sorted(str(k) for k, v in val.items()
                      if not (v is None or (isinstance(v, int)
@@ -256,7 +299,7 @@ def _check_shape(key: str, val) -> None:
     if key == "secret_mirrors":
         for idx, pair in enumerate(val):
             if (not isinstance(pair, list) or len(pair) != 2
-                    or not all(_is_path_str(p) for p in pair)):
+                    or not all(_is_repo_relative_path(p) for p in pair)):
                 raise ConfigError(
                     f"malformed: config key {key!r} entries must be 2-item "
                     f"lists of repo-relative path strings, got {pair!r} at "
@@ -364,10 +407,16 @@ def check_required_files(required_files: list) -> None:
                "config declares zero required_files; refusing to certify an "
                "unchecked install (the floor entries were checked anyway)")
     if floor_only:
-        record("required-file floor", True,
-               f"config listed {len(declared)} entries; floor restored "
+        # Lane S2 finding 8 (MEDIUM): this used to record `True`, booking a PASS
+        # for the config ATTEMPTING TO NARROW COVERAGE. It is a trace of the
+        # same act the FAIL above names, not a verification: the files the floor
+        # restored are counted by their own `required ...` lines below, so the
+        # SKIP loses no evidence and stops inflating the numerator.
+        record("required-file floor", None,
+               f"SKIP(config listed {len(declared)} entries; floor restored "
                f"{floor_only} - these have no necessity check elsewhere, so "
-               f"the key's replace policy does not reach them")
+               f"the key's replace policy does not reach them; each one is "
+               f"counted by its own `required ...` line below)")
     for rel in declared + floor_only:
         p = ROOT / rel
         if not p.exists():
@@ -402,9 +451,16 @@ def check_token_budgets(cfg: dict, nulled: set | None = None) -> None:
         if not (ROOT / rel).exists():
             continue
         if rel in nulled:
-            record(f"cap opt-out {rel}", True,
-                   f"{rel} is present and its cap was dropped by an explicit "
-                   f"null in config (considered act, not D3's accident)")
+            # Lane S2 finding 1 (HIGH), the same shape one edit deeper than the
+            # one F5 closed: this recorded `True`, so `{"budgets": {<every floor
+            # name>: null}}` measured ZERO token budgets and still printed five
+            # `[PASS]` lines with the line count of a healthy run at rc 0. The
+            # config edit stays legal — the verdict is the claim the line makes,
+            # and a decline claims nothing. Spec 4: WARN or SKIP, never PASS.
+            record(f"cap opt-out {rel}", None,
+                   f"SKIP({rel} is present and its cap was dropped by an "
+                   f"explicit null in config: a considered act, not D3's "
+                   f"accident, and nothing is measured here)")
         else:
             record(f"budget {rel}", False,
                    "file present, no cap in config and no explicit null - "
@@ -456,15 +512,24 @@ def check_secrets_ignored(cfg: dict) -> None:
         record("secret ignored", False,
                "no git repository to ask (see the `git repository` check)")
         return
-    timeout = cfg.get("check_timeout", EXTRA_CHECK_TIMEOUT)
+    # Lane S2 finding 7: its own knob. `git check-ignore` answers in
+    # milliseconds, so it must not inherit the 600 s an `extra_checks` verifier
+    # may legitimately need, and there is no constant to fall back to.
+    timeout = cfg["git_check_timeout"]
     for target in cfg["secret_files"]:
         res = run_git(ROOT, ["check-ignore", "-v", target], timeout=timeout)
         if res.timed_out:
             record(f"secret ignored: {target}", False,
                    f"git check-ignore timed out after {timeout}s")
         elif res.rc == 0:
-            record(f"secret ignored: {target}", True,
-                   decode(res.stdout).strip() or f"git check-ignore rc={res.rc}")
+            # Lane S2 finding 11 (LOW): rc 0 proves an ignore RULE matched, not
+            # that a secret is safely placed. With no file on disk this PASS is
+            # about one line of `.gitignore`, and the reader is told so.
+            rule = (decode(res.stdout).strip()
+                    or f"git check-ignore rc={res.rc}")
+            if not (ROOT / target).exists():
+                rule += " (file absent -- the ignore rule is all this saw)"
+            record(f"secret ignored: {target}", True, rule)
         else:
             detail = decode(res.stderr).strip().splitlines()
             record(f"secret ignored: {target}", False,
@@ -497,10 +562,10 @@ def check_secret_mirrors(cfg: dict) -> None:
 def check_extra(cfg: dict) -> None:
     # Entries are validated objects with a string name and a list cmd, so a
     # missing `cmd` is a named `malformed:` line rather than a KeyError.
-    # `EXTRA_CHECK_TIMEOUT` stays the fallback for a caller that hands this
-    # function a bare dict (in-process tests do); a real install always gets
-    # the merged config, so `check_timeout` is what actually applies there.
-    timeout = cfg.get("check_timeout", EXTRA_CHECK_TIMEOUT)
+    # Lane S2 finding 7: `check_timeout` is read, not defaulted. The merged
+    # config always carries it and the in-process callers pass it, so there is
+    # no second source of truth to keep in step with it.
+    timeout = cfg["check_timeout"]
     for chk in cfg["extra_checks"]:
         name, cmd = chk["name"], chk["cmd"]
         if isinstance(cmd, str):
@@ -559,6 +624,15 @@ def _summarise() -> int:
     print(f"== {passed}/{len(RESULTS)} checks passed{tail} ==")
     if failed:
         print("FAILED: " + ", ".join(failed))
+        return 1
+    # Lane S2 finding 6 (MEDIUM): an empty `failed` list used to be the whole
+    # test, so a run whose every record skipped printed `== 0/N checks passed, N
+    # skipped ==` and exited 0. Honest text, unusable code: `returncode == 0` is
+    # never sufficient, and findings 1, 2 and 8 add SKIP producers that make the
+    # shape reachable rather than merely latent.
+    if RESULTS and not passed:
+        print("NOT VERIFIED: no check in this run produced a PASS -- every one "
+              "of them skipped, so there is nothing behind an exit code of 0")
         return 1
     return 0
 
@@ -622,11 +696,42 @@ def main() -> int:
         # than looking like a run that checked something.
         record("config readable", False, str(exc))
         return _summarise()
-    check_required_files(cfg["required_files"])
-    check_token_budgets(cfg, nulled)
-    check_secrets_ignored(cfg)
-    check_secret_mirrors(cfg)
-    check_extra(cfg)
+    # Lane S2 finding 2 (HIGH): the run never recorded how many `extra_checks`
+    # and `secret_mirrors` it was ASKED to run, so `{"extra_checks": []}` — or
+    # deleting the key from a config that carried three governance verifiers —
+    # removed every project check with no line at all and `N/N` green. Both keys
+    # default to `[]`, so the merged dict cannot tell "never had" from "just
+    # removed"; that is the same act ruled a FAIL for `required_files: []`, and
+    # the same blindness `nulled` solved for budgets. Counted here on every run,
+    # and an empty governance set is a SKIP: it costs the run its clean
+    # `passed == total` without going red, because registering nothing is a
+    # choice a project may make and not a machine that failed to look.
+    registered = list(cfg["extra_checks"]) + list(cfg["secret_mirrors"])
+    evidence = (f"{len(cfg['extra_checks'])} extra_checks, "
+                f"{len(cfg['secret_mirrors'])} secret_mirrors registered")
+    if not registered:
+        evidence += " (nothing registered: no line in this report is evidence " \
+                    "about the project's own checks)"
+    record("registered project checks", True if registered else None, evidence)
+    # Lane S2 finding 3 (MEDIUM-HIGH): "the verifier reports failures instead of
+    # dying" covered CHILDREN only. Every check below reads user-shaped config
+    # against the filesystem — a budget naming a directory (`IsADirectoryError`
+    # out of `line_count`), a state file an editor saved as cp936
+    # (`UnicodeDecodeError`), a mirror whose entry is `.` — and any one of them
+    # raised out of `main()`: no summary printed, and every check after it gone.
+    # Contained and NAMED now, so one broken check cannot delete the report.
+    for label, run_check in (
+            ("required files",
+             lambda: check_required_files(cfg["required_files"])),
+            ("token budgets", lambda: check_token_budgets(cfg, nulled)),
+            ("secrets ignored", lambda: check_secrets_ignored(cfg)),
+            ("secret mirrors", lambda: check_secret_mirrors(cfg)),
+            ("extra checks", lambda: check_extra(cfg))):
+        try:
+            run_check()
+        except Exception as exc:  # noqa: BLE001 -- naming it IS the check
+            record(f"{label} check", False,
+                   f"check raised {type(exc).__name__}: {exc}")
     return _summarise()
 
 

@@ -35,17 +35,34 @@ def test_fresh_scaffold_verifies_all_green(ai_repo):
     `not any(startswith("[SKIP]"))` are both satisfied by a `[WARN]` line — and
     by no output at all — so the harness would have blessed exactly what the
     plan's design law forbids: a degradation reported as green.
+
+    Lane S2 (r1 finding 12): `all(ln.startswith("[PASS]"))` was the assertion a
+    legitimate fresh-install SKIP contradicts, so the accepted set is now "PASS,
+    or this ONE named SKIP". The shipped template registers no `extra_checks` and
+    no `secret_mirrors`, and finding 2 turns that emptiness into a named line:
+    the run may no longer book `N/N` for a governance set nobody registered.
+    FAIL, WARN, silence and a SECOND skip are still breaks, and the summary's own
+    skip tail is pinned against the SKIP lines actually printed.
     """
     res = run_python(ai_repo / ".ai" / "scripts" / "sync_verify.py", cwd=ai_repo)
     assert res.rc == 0, res.stdout
     assert res.stdout_raw, "verifier exited 0 without writing any output"
     checks = [ln for ln in res.lines if ln.startswith("[")]
     assert checks, res.lines
-    assert all(ln.startswith("[PASS]") for ln in checks), checks
+    allowed_skip = ("[SKIP] registered project checks:",)
+    not_green = [ln for ln in checks if not ln.startswith("[PASS]")
+                 and not ln.startswith(allowed_skip)]
+    assert not not_green, not_green
+    skips = [ln for ln in checks if ln.startswith(allowed_skip)]
+    assert len(skips) <= 1, checks
     unbracketed = [ln for ln in res.lines if not ln.startswith("[")]
     assert not [ln for ln in unbracketed if WARNISH.search(ln)], unbracketed
     summary = [ln for ln in res.lines if "checks passed" in ln]
     assert len(summary) == 1, res.lines
+    if skips:
+        assert ", 1 skipped" in summary[0], (summary[0], skips)
+    else:
+        assert "skipped" not in summary[0], summary[0]
 
 
 def test_scaffold_is_idempotent(ai_repo):

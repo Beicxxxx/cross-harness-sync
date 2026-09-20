@@ -279,17 +279,25 @@ def test_a_present_file_with_no_cap_and_no_explicit_null_is_named(ai_repo, sv):
 
 
 def test_an_explicit_null_cap_leaves_a_trace(ai_repo, sv):
-    """The considered act stays allowed — and now says so, instead of being
-    indistinguishable from a deleted line."""
+    """The considered act stays allowed -- and it says so as a SKIP.
+
+    Lane S2 finding 1: this line used to record `True`, so a declined cap sat in
+    the passed numerator. `test_a_run_that_declines_every_cap_leaves_only_skip_traces`
+    below is the exploit that conversion closes.
+    """
     cfg = json.loads((ai_repo / _CONFIG_REL).read_text("utf-8"))
     cfg["budgets"]["AGENTS.md"] = None
     (ai_repo / _CONFIG_REL).write_text(json.dumps(cfg), "utf-8")
     res = run_python(sv, cwd=ai_repo)
     assert res.rc == 0, res.stdout
-    assert any(ln.startswith("[PASS] cap opt-out AGENTS.md")
+    assert any(ln.startswith("[SKIP] cap opt-out AGENTS.md")
                and "explicit null" in ln for ln in res.lines), res.lines
+    assert not any(ln.startswith("[PASS] cap opt-out AGENTS.md")
+                   for ln in res.lines), res.lines
     assert not any(ln.startswith("[FAIL] budget AGENTS.md")
                    for ln in res.lines), res.lines
+    summary = [ln for ln in res.lines if "checks passed" in ln]
+    assert len(summary) == 1 and "skipped" in summary[0], res.lines
 
 
 # --------------------------------------------------------------------------
@@ -312,6 +320,15 @@ def test_a_bom_does_not_make_two_secret_files_disagree(ai_repo, sv):
 
 # --------------------------------------------------------------------------
 # finding D: check_extra must name the command and the reason, never just rc=-1
+#
+# Honesty note (lane S2, r1 finding 9): the three tests below are REGRESSION
+# PINS for an EARLIER lane's fix, not red-before-green pins for this one. The
+# `cmd ` prefix they assert was already printed at this wave's base `1ab2dc4`
+# (r1-review-report.md finding 9 walks the base source), and the `rc=0; freeze
+# verified` string S1's report quoted as its pre-fix comparison is a written
+# comparison, not an executed run: the base never emitted it. They stay because
+# a pin that outlives its lane is still a pin; they are labelled for what they
+# are.
 
 
 def _evidence_lines(capfd) -> list[str]:
@@ -322,14 +339,19 @@ def _evidence_lines(capfd) -> list[str]:
 def _run_extra(monkeypatch, tmp_path, result_argv, timeout=None):
     mod = _load_sync_verify()
     monkeypatch.setattr(mod, "ROOT", tmp_path)
-    if timeout is not None:
-        monkeypatch.setattr(mod, "EXTRA_CHECK_TIMEOUT", timeout)
-    mod.check_extra({"extra_checks": [{"name": "freeze", "cmd": result_argv}]})
+    # Lane S2 finding 7: the timeout is a config key with no constant beside it,
+    # so the driver passes the key instead of monkeypatching a module global.
+    cfg = {"extra_checks": [{"name": "freeze", "cmd": result_argv}],
+           "check_timeout": (mod.DEFAULT_CONFIG["check_timeout"]
+                             if timeout is None else timeout)}
+    mod.check_extra(cfg)
     return mod.RESULTS[-1]
 
 
 def test_a_timed_out_extra_check_names_its_command(tmp_path, monkeypatch, capfd):
-    """`res.timed_out` was computed and discarded: `rc=-1; (no output)`."""
+    """REGRESSION PIN for lane S1's finding D (see the honesty note above):
+    `res.timed_out` was once computed and discarded, printing `rc=-1;
+    (no output)`."""
     sleeper = [sys.executable, "-c", "import time; time.sleep(30)"]
     name, ok, evidence = _run_extra(monkeypatch, tmp_path, sleeper, timeout=1)
     assert name == "freeze"
@@ -343,6 +365,7 @@ def test_a_timed_out_extra_check_names_its_command(tmp_path, monkeypatch, capfd)
 
 
 def test_an_unlaunchable_extra_check_names_its_command(tmp_path, monkeypatch, capfd):
+    """REGRESSION PIN for lane S1's finding D (see the honesty note above)."""
     bogus = ["definitely-not-an-executable-here", "--version"]
     name, ok, evidence = _run_extra(monkeypatch, tmp_path, bogus)
     assert name == "freeze"
@@ -356,9 +379,9 @@ def test_an_unlaunchable_extra_check_names_its_command(tmp_path, monkeypatch, ca
 
 def test_a_green_extra_check_still_reports_its_command_and_rc(
         tmp_path, monkeypatch, capfd):
-    """Finding 6: every assertion this test used to make was also satisfied by
-    the PRE-FIX single line `rc=0; freeze verified`, so it stayed green when its
-    own fix was reverted. The `cmd ` prefix is the one thing that cannot be."""
+    """REGRESSION PIN for lane S1's finding D (see the honesty note above): the
+    `cmd ` prefix pins an EARLIER fix, and is satisfied by the base, so this is
+    not a red-before-green pin at this HEAD."""
     name, ok, evidence = _run_extra(
         monkeypatch, tmp_path, [sys.executable, "-c", "print('freeze verified')"])
     assert name == "freeze"
@@ -406,3 +429,163 @@ def test_the_import_refusal_carries_only_ascii_characters():
     assert len(lines) == 1, lines
     assert "--" in lines[0], lines[0]
     assert "—" not in lines[0], lines[0]
+
+
+# --------------------------------------------------------------------------
+# lane S2 (r1 findings 1, 2, 3, 4, 6, 7, 11): the same defect, four more times
+# -- a decline, an emptiness, a crash, or an all-skipped run booking itself in
+# the passed numerator, or escaping the run altogether.
+
+
+def test_a_run_that_declines_every_cap_leaves_only_skip_traces(ai_repo, sv):
+    """Finding 1 (HIGH): `{"budgets": {<each floor name>: null}}` measured ZERO
+    token budgets and printed five `[PASS] cap opt-out ...` lines -- the same
+    line count as a healthy run -- at rc 0. Spec 4: a degradation may be a WARN
+    or a SKIP, never a PASS."""
+    cfg = json.loads((ai_repo / _CONFIG_REL).read_text("utf-8"))
+    cfg["budgets"] = {name: None for name in sync_verify.BUDGET_FLOOR}
+    (ai_repo / _CONFIG_REL).write_text(json.dumps(cfg), "utf-8")
+    res = run_python(sv, cwd=ai_repo)
+    assert res.rc == 0, res.stdout + res.stderr
+    declined = [ln for ln in res.lines if "cap opt-out" in ln]
+    assert declined, res.lines
+    assert all(ln.startswith("[SKIP] cap opt-out ") for ln in declined), declined
+    assert not any(ln.startswith("[PASS]") and "cap opt-out" in ln
+                   for ln in res.lines), res.lines
+    summary = [ln for ln in res.lines if "checks passed" in ln]
+    assert len(summary) == 1 and "skipped" in summary[0], res.lines
+
+
+def test_the_run_says_how_many_project_checks_it_was_asked_to_run(ai_repo, sv):
+    """Finding 2 (HIGH): the run never recorded how many `extra_checks` /
+    `secret_mirrors` it registered, so `{"extra_checks": []}` -- or deleting the
+    key from a config that carried three governance verifiers -- removed every
+    project check with NO line at all and `N/N` green. An empty governance set
+    costs the run its clean `passed == total` without going red."""
+    res = run_python(sv, cwd=ai_repo)
+    assert res.rc == 0, res.stdout + res.stderr
+    empty = [ln for ln in res.lines
+             if ln.startswith("[SKIP] registered project checks:")]
+    assert empty, res.lines
+    assert "0 extra_checks" in empty[0] and "secret_mirrors" in empty[0], empty[0]
+    assert not any(ln.startswith("[PASS] registered project checks:")
+                   for ln in res.lines), res.lines
+    patch_cfg(ai_repo, extra_checks=[
+        {"name": "freeze", "cmd": [sys.executable, "-c", "print('verified')"]}])
+    res = run_python(sv, cwd=ai_repo)
+    assert res.rc == 0, res.stdout + res.stderr
+    assert any(ln.startswith("[PASS] registered project checks:")
+               and "1 extra_checks" in ln for ln in res.lines), res.lines
+    assert any(ln.startswith("[PASS] freeze:") for ln in res.lines), res.lines
+
+
+def test_a_check_that_raises_is_named_and_the_rest_of_the_run_survives(ai_repo, sv):
+    """Finding 3 (MEDIUM-HIGH): "the verifier reports failures instead of dying"
+    covered CHILDREN only. A budget naming a directory reached `read_text()` and
+    raised `IsADirectoryError` out of `main()`: no summary printed, and
+    `check_extra` never ran."""
+    patch_cfg(ai_repo, budgets={".ai/state": 60})
+    res = run_python(sv, cwd=ai_repo)
+    assert "Traceback" not in res.stderr, res.stderr + res.stdout
+    # The OS error for "read a directory" is host-dependent
+    # (`IsADirectoryError` on POSIX, `PermissionError [WinError 5]` here), so
+    # the pin is that the crash was CONTAINED AND NAMED, not its class name.
+    assert any(ln.startswith("[FAIL] token budgets check:")
+               and "check raised" in ln for ln in res.lines), res.lines
+    assert [ln for ln in res.lines if "checks passed" in ln], res.lines
+    assert any(ln.startswith("[PASS] registered project checks:")
+               or ln.startswith("[SKIP] registered project checks:")
+               for ln in res.lines), res.lines
+    assert any("secret ignored" in ln for ln in res.lines), res.lines
+    # the sibling shape the review named: a mirror entry that is a directory
+    patch_cfg(ai_repo, secret_mirrors=[[".", ".ai/state"]])
+    res = run_python(sv, cwd=ai_repo)
+    assert "Traceback" not in res.stderr, res.stderr + res.stdout
+    assert any(ln.startswith("[FAIL] secret mirrors check:") for ln in res.lines), \
+        res.lines
+    assert [ln for ln in res.lines if "checks passed" in ln], res.lines
+
+
+@pytest.mark.parametrize("raw", [
+    '{"required_files": ["/etc/passwd"]}',
+    '{"required_files": ["../outside.md"]}',
+    '{"secret_files": ["../../etc/passwd"]}',
+    '{"secret_mirrors": [["../outside", ".env"]]}',
+])
+def test_a_path_entry_cannot_point_outside_the_checkout(tmp_path, raw):
+    """Finding 4 (MEDIUM): `PATH_LIST_KEYS` validated `isinstance(str)` and
+    nothing else, so `required_files: ["/etc/passwd"]` became
+    `ROOT / "/etc/passwd"` == `/etc/passwd` and printed a counted PASS about a
+    file outside the tree."""
+    cfg_path = tmp_path / "sync_config.json"
+    cfg_path.write_text(raw, encoding="utf-8")
+    with pytest.raises(sync_verify.ConfigError) as excinfo:
+        sync_verify.load_config(cfg_path)
+    assert str(excinfo.value).startswith("malformed:"), excinfo.value
+    assert "repo-relative" in str(excinfo.value), excinfo.value
+
+
+def test_a_run_of_only_skips_does_not_exit_zero(capsys):
+    """Finding 6 (MEDIUM): `_summarise()` returned 0 whenever `failed` was empty,
+    so an all-SKIP report printed `== 0/N checks passed, N skipped ==` and exited
+    0. Latent at the base only because `config readable` always books a PASS --
+    and findings 1 and 2 add SKIP producers, so it stopped being latent here.
+    The `git usable` / `install layout` early returns are unaffected: they have a
+    FAIL, which is why the second half below is a REGRESSION PIN, not a fix."""
+    mod = _load_sync_verify()
+    mod.RESULTS[:] = [("cap opt-out a", None, "declined"),
+                      ("cap opt-out b", None, "declined")]
+    assert mod._summarise() == 1, mod.RESULTS
+    printed = capsys.readouterr().out
+    assert "== 0/2 checks passed, 2 skipped ==" in printed, printed
+    assert "NOT VERIFIED" in printed, printed
+
+    mod = _load_sync_verify()
+    mod.RESULTS[:] = [("config readable", True, "read"),
+                      ("cap opt-out a", None, "declined")]
+    assert mod._summarise() == 0, mod.RESULTS
+    capsys.readouterr()
+
+
+def test_the_two_child_workloads_have_two_timeouts(capsys):
+    """Finding 7 (MEDIUM): one knob served `git check-ignore` (milliseconds) and
+    user-registered scientific verifiers (minutes), and `EXTRA_CHECK_TIMEOUT`
+    stayed alive as a second source of truth purely for in-process callers -- a
+    drift pin (`DEFAULT_CONFIG == EXTRA_CHECK_TIMEOUT`) that LOCKED IN the
+    single-knob design. Each key is now pinned on its own."""
+    mod = _load_sync_verify()
+    assert mod.DEFAULT_CONFIG["check_timeout"] == 600, mod.DEFAULT_CONFIG
+    assert mod.DEFAULT_CONFIG["git_check_timeout"] == 15, mod.DEFAULT_CONFIG
+    assert "git_check_timeout" in mod.KEY_SHAPES, sorted(mod.KEY_SHAPES)
+    assert "git_check_timeout" in mod.POSITIVE_INT_KEYS, sorted(mod.POSITIVE_INT_KEYS)
+    assert not hasattr(mod, "EXTRA_CHECK_TIMEOUT"), \
+        "the second source of truth is back"
+    assert mod.check_secrets_ignored.__code__.co_varnames[:1] == ("cfg",)
+    text = (SCRIPTS / "sync_verify.py").read_text("utf-8")
+    assert 'cfg["git_check_timeout"]' in text, "git is off on its own knob again"
+    assert 'cfg["check_timeout"]' in text, text
+
+
+def test_a_zero_git_check_timeout_is_named_malformed(tmp_path):
+    cfg_path = tmp_path / "sync_config.json"
+    cfg_path.write_text('{"git_check_timeout": 0}', encoding="utf-8")
+    with pytest.raises(sync_verify.ConfigError) as excinfo:
+        sync_verify.load_config(cfg_path)
+    assert "git_check_timeout" in str(excinfo.value), excinfo.value
+
+
+def test_an_ignored_secret_that_is_not_there_says_so(ai_repo, sv):
+    """Finding 11 (LOW): `secret ignored: .env` PASSed on `git check-ignore` rc 0
+    -- which proves a RULE matched, not that the file is safely placed. An absent
+    `.env` yielded a counted PASS with no hint that nothing was checked."""
+    (ai_repo / ".env").unlink(missing_ok=True)
+    res = run_python(sv, cwd=ai_repo)
+    assert res.rc == 0, res.stdout + res.stderr
+    absent = [ln for ln in res.lines if ln.startswith("[PASS] secret ignored: .env")]
+    assert absent, res.lines
+    assert "file absent" in absent[0], absent[0]
+    (ai_repo / ".env").write_text("KEY=value\n", encoding="utf-8")
+    res = run_python(sv, cwd=ai_repo)
+    assert res.rc == 0, res.stdout + res.stderr
+    present = [ln for ln in res.lines if ln.startswith("[PASS] secret ignored: .env")]
+    assert present and "file absent" not in present[0], res.lines
