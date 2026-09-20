@@ -222,8 +222,12 @@ def _read_raw_text(path: Path) -> tuple[str | None, str | None]:
     N3: the text keeps the file's OWN line terminators. `read_text` folds CRLF to
     LF and the matching `write_text` then emits `os.linesep`, so an install run
     on Windows reformatted the caller's whole file while it was only asked to add
-    a block to it. A file that cannot be decoded comes back as a name, not an
-    exception.
+    a block to it.
+
+    N4: a file that cannot be decoded is reported as a name instead of raising
+    out of `main()`, so the caller can leave it exactly as it found it —
+    `UnicodeDecodeError` here used to abort the install after `.gitignore` had
+    been appended, wrote no `CLAUDE.md`, and named nothing.
     """
     try:
         raw = path.read_bytes()
@@ -535,7 +539,16 @@ def update_agents_md(root: Path, force: bool) -> str:
     # run on Windows re-emitted the caller's whole file as CRLF (measured: an
     # 8-line LF file came back with 24 CRLF terminators) while every template
     # this tool copies is LF.
-    text = agents.read_bytes().decode("utf-8")
+    #
+    # N4: the decode is guarded. This read used to raise straight out of main(),
+    # so a GBK/ANSI AGENTS.md — routine on a cp936 host — aborted the install
+    # with a traceback *after* .gitignore had been appended, wrote no CLAUDE.md,
+    # and named nothing.
+    text, why_not = _read_raw_text(agents)
+    if text is None:
+        return (f"AGENTS.md: ERROR ({why_not}) — left untouched and the managed "
+                "block was not added; everything else in this run stands, so "
+                "save the file as UTF-8 and re-run")
     if "Canonical instructions for ALL harnesses" in text:
         # Already the full template — the whole protocol is inline, no block needed
         return "AGENTS.md: already the full template, no managed block added"
