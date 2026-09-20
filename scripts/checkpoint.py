@@ -8,16 +8,26 @@ Usage:
     python .ai/scripts/checkpoint.py --prime            # Session-start injection
     python .ai/scripts/checkpoint.py --handoff          # Archive handoff, mark handed-off
     python .ai/scripts/checkpoint.py --validate         # Required files exist & non-empty
-    python .ai/scripts/checkpoint.py --lock --agent X   # Acquire advisory writer lock
-    python .ai/scripts/checkpoint.py --unlock --agent X # Release the writer lock
+    python .ai/scripts/checkpoint.py --lock --agent X # Acquire advisory writer lock
+    python .ai/scripts/checkpoint.py --unlock --agent X# Release the writer lock
+    python .ai/scripts/checkpoint.py --lock --agent X --force --reason "<why>"
+                                        # take a live hold OVER: --force on --lock
+                                        # always names a --reason, because the
+                                        # reason is the only thing that tells the
+                                        # next machine this was a takeover and not
+                                        # an accident
     python .ai/scripts/checkpoint.py --lock --agent X --force --discard-lock
+                                        --reason "<why>"
                                         # abandon an UNREADABLE lock record: the
-                                        # only override for a merged/corrupt one
+                                        # only override for a merged/corrupt one.
+                                        # --force takes over, it never resolves:
+                                        # the conflicted record stays in the tree
+                                        # until this replaces it or git resolves it
     python .ai/scripts/checkpoint.py --lock --agent X --force --reason "<why>"
                                         # the only override for a linked git
                                         # worktree, a symlinked install or an
-                                        # undetermined layout (D15); --force
-                                        # there without --reason is refused too
+                                        # undetermined layout (D15); the layout
+                                        # is recorded with the reason
 
 This script handles the MECHANICAL parts of checkpointing:
 - runtime/STATUS.json timestamps and counters
@@ -50,7 +60,7 @@ try:
     from ai_common import (RepoError, checkout_layout, protect_stdio,
                            resolve_roots, worktree_listing)
 except ImportError:
-    print("[FAIL] install layout: ai_common.py is missing from .ai/scripts/ — "
+    print("[FAIL] install layout: ai_common.py is missing from .ai/scripts/ -- "
           "re-run init_sync.py so the shared primitives are copied in")
     sys.exit(2)
 
@@ -683,15 +693,27 @@ def cmd_lock(args):
     # this command creates on its way to the lock file.
     kind, detail = install_layout()
     force_reason = (getattr(args, "reason", None) or "").strip()
+    # C1/ruling 1, the gate batch-B7a left: EVERY --force on --lock names a
+    # --reason, not only the one over a D15 layout. The lock stays ADVISORY —
+    # nothing here is enforced against an agent that never asks for the pen —
+    # but an override that does not say why is indistinguishable, in the record
+    # it leaves for the next machine, from an accident. rc 1 rather than 2: a
+    # reasonless --force over a linked worktree already exited 1 here, and one
+    # omission gets one verdict.
+    if args.force and not force_reason:
+        print("--force must name a --reason: an override that does not say why "
+              "is indistinguishable, in the record it leaves, from an accident.")
+        if kind != "normal":
+            print(f"  this checkout is {kind} ({detail}), so the split itself "
+                  "has to be recorded alongside the reason.")
+        print("--force takes a lock OVER: the displaced record stays in the "
+              "tree and in git history. It does not RESOLVE a conflicted record "
+              "— that needs --discard-lock here, or a git resolve.")
+        sys.exit(1)
     forced_layout = False
     if kind != "normal":
         if not args.force:
             _layout_refusal(kind, detail)
-            sys.exit(1)
-        if not force_reason:
-            print(f"--force over a {kind} checkout ({detail}) must name a "
-                  "--reason: the split has to be recorded in the lock itself, "
-                  "or the override is indistinguishable from an accident.")
             sys.exit(1)
         forced_layout = True
         print(f"WARN {kind}: --force with --reason {force_reason!r} — the "
@@ -711,7 +733,8 @@ def cmd_lock(args):
               "treated as HELD, not as free.")
         print(f"  detail: {status.detail}")
         print("Resolve the git conflict (or repair the JSON) and re-run. If the "
-              "record is unrecoverable, --force --discard-lock abandons it.")
+              "record is unrecoverable, --force --discard-lock --reason \"<why>\" "
+              "abandons it.")
         if not (args.force and discard):
             sys.exit(1)
         print("  Discarding the unreadable record: the old bytes stay in git "
@@ -721,7 +744,8 @@ def cmd_lock(args):
         print(f"LOCK CONFLICT: held by {holder} {status.detail} "
               f"(reason: {lock.get('reason', '-')})")
         print("Advisory lock: you may wait for expiry, coordinate, or re-run "
-              "with --force (record why in the handoff).")
+              'with --force --reason "<why>" — that takes the pen over and '
+              "records the takeover (and the reason) in the lock itself.")
         sys.exit(1)
     acquired = now_dt()
     expires = acquired.timestamp() + args.ttl
@@ -880,12 +904,14 @@ def main():
                         help="Lock TTL in seconds (default 4h)")
     parser.add_argument("--reason", type=str, default=None,
                         help="Task/issue ID or reason recorded on the lock; "
-                             "required with --force over a non-normal checkout "
-                             "layout (linked worktree, symlinked install, "
-                             "undetermined root)")
+                             "required by every --force, and it names the D15 "
+                             "layout override (linked worktree, symlinked "
+                             "install, undetermined root)")
     parser.add_argument("--force", action="store_true",
-                        help="Override a conflicting lock (and, together with "
-                             "--reason, a refused checkout layout — D15)")
+                        help="Take a conflicting lock OVER (reason-required), "
+                             "override a refused checkout layout (D15) and, with "
+                             "--discard-lock, abandon an unparseable record. "
+                             "Takes over; never resolves")
     parser.add_argument("--discard-lock", action="store_true",
                         help="With --force, abandon a lock record that cannot be "
                              "parsed; the discarded bytes stay in git history")

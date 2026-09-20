@@ -78,23 +78,131 @@ def test_expired_lock_is_still_free_to_acquire(ai_repo, cp):
 
 
 def test_force_alone_does_not_discard_an_unreadable_lock(ai_repo, cp):
+    """One wall, both flags (ruling 3): the pair, not the flag, clears the wall.
+
+    C1 correction: `--reason` joins the command because `--force` now names a
+    reason on EVERY path (ruling 1). Without it this command is refused by the
+    gate two lines earlier and the `--discard-lock` assertion below would be
+    proving the gate's wording instead of the pair's requirement.
+    """
     write_lock(ai_repo, "<<<<<<< HEAD\n{}\n=======\n{}\n>>>>>>> other\n")
-    res = run_python(cp, ["--lock", "--agent", "claude-code", "--force"],
-                     cwd=ai_repo)
+    res = run_python(cp, ["--lock", "--agent", "claude-code", "--force",
+                          "--reason", "T12 handoff"], cwd=ai_repo)
     assert res.rc == 1, res.stdout
     assert "--discard-lock" in res.stdout, res.stdout
 
 
 def test_force_with_discard_lock_replaces_the_unreadable_record(ai_repo, cp):
-    write_lock(ai_repo, "<<<<<<< HEAD\n{}\n=======\n{}\n>>>>>>> other\n")
+    """The pin batch-B7a left behind, corrected: it ran `--force` with NO
+    `--reason` and asserted rc 0, which is the behaviour ruling 1 removes.
+
+    Same command plus the reason, same rc 0 and the same replaced record — the
+    discard path is unchanged apart from having to say why.
+    """
+    write_lock(ai_repo, CONFLICT)
     res = run_python(cp, ["--lock", "--agent", "claude-code", "--force",
-                          "--discard-lock"], cwd=ai_repo)
+                          "--discard-lock", "--reason", "T12 takeover"],
+                     cwd=ai_repo)
     assert res.rc == 0, res.stdout
     assert "Writer lock acquired by claude-code" in res.stdout, res.stdout
     assert "git history" in res.stdout, res.stdout
     record = json.loads((ai_repo / ".ai" / "runtime" / "WRITER_LOCK.json")
                         .read_text("utf-8-sig"))
     assert record["agent"] == "claude-code", record
+    assert record["reason"] == "T12 takeover", record
+    # The displaced half could not be parsed, so nothing was copied out of it:
+    # the gap is named instead of invented.
+    assert "merge conflict markers" in record["forced_over_unreadable"], record
+
+
+# ---------------------------------------------------------------------------
+# C1 ruling 1: `--force` on `--lock` requires `--reason` on EVERY path, not
+# only over the D15 layouts batch-B7a landed. A takeover that does not say why
+# is indistinguishable, in the record it leaves, from an accident — and the
+# record is the only thing the next machine reads. Advisory: nothing here
+# enforces the lock, it only refuses to take one silently.
+
+
+def test_force_without_a_reason_is_refused_before_any_write(ai_repo, cp):
+    """Red at HEAD as written: the discard path accepted a reasonless override."""
+    lock = write_lock(ai_repo, CONFLICT)
+    res = run_python(cp, ["--lock", "--agent", "claude-code", "--force",
+                          "--discard-lock"], cwd=ai_repo)
+    assert res.rc == 1, res.stdout
+    assert "--force must name a --reason" in res.stdout, res.stdout
+    assert "does not resolve" in res.stdout.lower(), res.stdout
+    assert lock.read_text("utf-8-sig") == CONFLICT, (
+        "refused the override and replaced the record anyway: "
+        f"{lock.read_text('utf-8-sig')!r}")
+
+
+def test_a_blank_reason_is_not_a_reason(ai_repo, cp):
+    """`--reason " "` satisfies argparse and empties under strip(); it must not
+    satisfy the gate, or the flag becomes a way to answer the question."""
+    write_lock(ai_repo, live(agent="codex"))
+    blank = run_python(cp, ["--lock", "--agent", "claude-code", "--force",
+                            "--reason", "   "], cwd=ai_repo)
+    assert blank.rc == 1, blank.stdout
+    assert "--force must name a --reason" in blank.stdout, blank.stdout
+    # The positive partner: the gate is a sentence, not a wall.
+    named = run_python(cp, ["--lock", "--agent", "claude-code", "--force",
+                            "--reason", "T12 takeover, recorded in the handoff"],
+                       cwd=ai_repo)
+    assert named.rc == 0, named.stdout
+
+
+def test_a_named_takeover_records_whose_pen_it_took(ai_repo, cp):
+    """Regression pin, green at HEAD: the takeover stays auditable.
+
+    `forced_over` is copied from the displaced record so the second machine can
+    see the split in git history; `epoch` is wave 1b's schema, written here and
+    read by nothing in this lane's decisions.
+    """
+    write_lock(ai_repo, live(agent="codex", epoch=4))
+    res = run_python(cp, ["--lock", "--agent", "claude-code", "--force",
+                          "--reason", "T12 takeover"], cwd=ai_repo)
+    assert res.rc == 0, res.stdout
+    record = json.loads((ai_repo / ".ai" / "runtime" / "WRITER_LOCK.json")
+                        .read_text("utf-8-sig"))
+    assert record["agent"] == "claude-code", record
+    assert record["reason"] == "T12 takeover", record
+    assert record["forced_over"] == {
+        "agent": "codex", "epoch": 4,
+        "acquired_at": "2026-09-21T10:00:00+10:00"}, record
+
+
+def test_the_printed_override_is_a_command_that_works(ai_repo, cp):
+    """The hints must survive their own gate.
+
+    Red at HEAD: the conflict hint told the user to `re-run with --force`, which
+    the gate then refuses — an honest agent following the printed advice gets a
+    second error and no clue that the missing word is `--reason`.
+    """
+    write_lock(ai_repo, live(agent="codex"))
+    conflict = run_python(cp, ["--lock", "--agent", "claude-code"], cwd=ai_repo)
+    assert conflict.rc == 1, conflict.stdout
+    assert "LOCK CONFLICT" in conflict.stdout, conflict.stdout
+    assert "--force --reason" in conflict.stdout, conflict.stdout
+
+    write_lock(ai_repo, CONFLICT)
+    unreadable = run_python(cp, ["--lock", "--agent", "claude-code"],
+                            cwd=ai_repo)
+    assert unreadable.rc == 1, unreadable.stdout
+    assert "--force --discard-lock --reason" in unreadable.stdout, \
+        unreadable.stdout
+
+
+def test_force_help_names_the_reason_it_requires(ai_repo, cp):
+    """`--help` is the only usage text this command prints, so the gate has to
+    be in it: a flag whose refusal the help does not predict is a surprise.
+
+    The probe is one hyphenated token because argparse rewraps help text to the
+    terminal width — a two-word phrase can land across a line break and the
+    assertion would then depend on COLUMNS.
+    """
+    res = run_python(cp, ["--help"], cwd=ai_repo)
+    assert res.rc == 0, res.stdout + res.stderr
+    assert "reason-required" in res.stdout, res.stdout
 
 
 def load(cp_path):

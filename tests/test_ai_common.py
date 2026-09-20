@@ -160,21 +160,6 @@ def test_missing_ai_common_is_a_hard_failure_not_an_inline_fallback(ai_repo, scr
     assert "checks passed" not in out, out
 
 
-@pytest.mark.xfail(
-    strict=False,
-    reason="finding E; the fix is not in this file set. The `except ImportError` "
-           "print in BOTH shipped scripts emits an em dash at module-import time, "
-           "before protect_stdio() can run, and protect_stdio() lives in the "
-           "module that is missing in exactly this path. On an ASCII stdout the "
-           "print raises UnicodeEncodeError, so a broken install reports rc 1 "
-           "with an EMPTY stdout instead of the intended rc 2 and a named layout "
-           "failure. One-line change per script: replace "
-           "`missing from .ai/scripts/ \\u2014 ` with "
-           "`missing from .ai/scripts/ -- ` in scripts/checkpoint.py (line 40 at "
-           "d1628d7) and scripts/sync_verify.py (line 37). The byte-identical "
-           "constraint does not cover this line, and the test above asserts only "
-           "the substring `ai_common.py is missing from .ai/scripts/`. Delete "
-           "this marker once both are applied.")
 def test_a_missing_ai_common_still_names_itself_on_an_ascii_console(ai_repo, cp):
     """The refusal must reach the user even when the console cannot encode it."""
     (ai_repo / ".ai" / "scripts" / "ai_common.py").unlink()

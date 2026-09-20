@@ -224,7 +224,8 @@ def test_force_records_the_displaced_holder_and_bumps_the_epoch(ai_repo, cp):
         "agent": "codex", "reason": "T7", "epoch": 4,
         "acquired_at": "2026-09-21T10:00:00+10:00",
         "expires_at": "2099-01-01T10:00:00+10:00", "released_at": None}))
-    res = run_python(cp, ["--lock", "--agent", "claude-code", "--force"],
+    res = run_python(cp, ["--lock", "--agent", "claude-code", "--force",
+                          "--reason", "T12 takeover, recorded in the handoff"],
                      cwd=ai_repo)
     assert res.rc == 0, res.stdout
     record = lock_record(ai_repo)

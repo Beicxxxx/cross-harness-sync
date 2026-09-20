@@ -49,3 +49,23 @@ def test_prime_and_handoff_advertise_the_safe_form(ai_repo, cp):
         assert res.rc == 0, res.stdout
         assert "--unlock --agent" in res.stdout, (args, res.stdout)
         assert "release the lock (--unlock)" not in res.stdout
+
+
+def test_the_reason_law_does_not_reach_the_release_path(ai_repo, cp):
+    """Negative partner for C1's gate: `--force` must name a reason when it TAKES
+    a pen, because that is the act the record has to explain. Putting one back
+    needs no explanation, and asking for it would be the hard enforcement this
+    protocol deliberately refuses (spec 4: advisory, and a release can only help
+    the next writer).
+
+    Regression pin rather than a fix: green at HEAD, and it is what keeps a later
+    widening of the gate from silently swallowing the unlock.
+    """
+    write_lock(ai_repo, held(agent="codex"))
+    res = run_python(cp, ["--unlock", "--agent", "claude-code", "--force"],
+                     cwd=ai_repo)
+    assert res.rc == 0, res.stdout
+    record = json.loads((ai_repo / ".ai" / "runtime" / "WRITER_LOCK.json")
+                        .read_text("utf-8-sig"))
+    assert record["released_by"] == "claude-code", record
+    assert record["released_at"], record
