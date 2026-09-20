@@ -140,3 +140,103 @@ def test_denied_lock_read_is_error_and_not_free(ai_repo, cp, monkeypatch):
     status = mod.lock_state()
     assert status.state == "error", status
     assert status.detail == err, status
+
+
+def test_unlock_never_overwrites_a_record_it_could_not_parse(ai_repo, cp,
+                                                            monkeypatch, capsys):
+    """F2: cmd_unlock decided from one read and then re-read for the write,
+    throwing the error away, so a record that turned unparseable in between was
+    replaced by a `released_at`/`released_by` stub — which the next read reports
+    as free. That is the evidence-erasing behaviour this batch exists to stop.
+
+    The second read is made to return conflict markers, which is the exact
+    mid-flight race (another machine's merge landing between the check and the
+    write). Either honest answer passes: abort with a named error and a nonzero
+    exit, or write back the record that was actually validated. What may NOT
+    happen is a stub that keeps only the release fields.
+    """
+    mod = load(cp)
+    mod._set_paths(ai_repo / ".ai")
+    lock = write_lock(ai_repo, live())
+    real_read = Path.read_bytes
+    reads = []
+
+    def second_read_conflicts(self):
+        reads.append(self.name)
+        if len(reads) > 1:
+            return b"<<<<<<< HEAD\n{}\n=======\n{}\n>>>>>>> other\n"
+        return real_read(self)
+
+    monkeypatch.setattr(Path, "read_bytes", second_read_conflicts)
+
+    class Args:
+        agent = "codex"
+        force = False
+
+    try:
+        mod.cmd_unlock(Args())
+    except SystemExit as exc:
+        assert exc.code, "unlock aborted with exit code 0"
+    out = capsys.readouterr().out
+    assert ("UNLOCK ABORTED" in out) or (len(reads) == 1), (out, reads)
+    written = json.loads(lock.read_text("utf-8-sig"))
+    assert written.get("agent") == "codex", (
+        f"the validated record was erased; the file now holds: {written}")
+    assert written.get("expires_at"), written
+
+
+# F3: the state writers never looked at the lock. A conflicted record means HELD
+# (this batch's own definition), so an agent that skipped --lock could still
+# rewrite runtime/STATUS.json beside it. The lock stays advisory, so the two
+# cases are treated differently on purpose: unreadable blocks, another agent's
+# live hold is named out loud and then proceeds.
+
+CONFLICT = "<<<<<<< HEAD\n{}\n=======\n{}\n>>>>>>> other\n"
+
+
+def test_checkpoint_refuses_to_write_over_an_unreadable_lock(ai_repo, cp):
+    status = ai_repo / ".ai" / "runtime" / "STATUS.json"
+    status.parent.mkdir(parents=True, exist_ok=True)
+    status.write_text('{"current_task": "DO-NOT-CLOBBER"}', encoding="utf-8")
+    write_lock(ai_repo, CONFLICT)
+    res = run_python(cp, ["--agent", "claude-code"], cwd=ai_repo)
+    assert res.rc == 1, res.stdout
+    assert "CHECKPOINT REFUSED" in res.stdout, res.stdout
+    assert "unreadable" in res.stdout, res.stdout
+    assert "--force" in res.stdout, res.stdout
+    assert json.loads(status.read_text("utf-8-sig")) == {
+        "current_task": "DO-NOT-CLOBBER"}, status.read_text("utf-8-sig")
+
+
+def test_validate_and_handoff_name_another_holders_lock_and_proceed(ai_repo, cp):
+    """Advisory, not enforced: a live hold by somebody else is warned by name and
+    the command still runs, because nothing here may require a server."""
+    write_lock(ai_repo, live(agent="codex"))
+    for args, marker in ((["--handoff", "--agent", "claude-code"],
+                          "Handoff prepared"),
+                         (["--validate"], "state files")):
+        res = run_python(cp, args, cwd=ai_repo)
+        assert "WARN" in res.stdout, (args, res.stdout)
+        assert "codex" in res.stdout, (args, res.stdout)
+        assert marker in res.stdout, (args, res.stdout)
+    status = json.loads((ai_repo / ".ai" / "runtime" / "STATUS.json")
+                        .read_text("utf-8-sig"))
+    assert status["status"] == "handed-off", status
+
+
+def test_owner_sees_no_warning_and_force_still_writes(ai_repo, cp):
+    """The guard must not nag the holder, and --force keeps its existing
+    override behaviour through an unreadable record."""
+    write_lock(ai_repo, live(agent="claude-code"))
+    mine = run_python(cp, ["--agent", "claude-code"], cwd=ai_repo)
+    assert mine.rc == 0, mine.stdout
+    assert "WARN" not in mine.stdout.split("Checkpoint #")[0], mine.stdout
+    assert "Checkpoint #" in mine.stdout, mine.stdout
+
+    write_lock(ai_repo, CONFLICT)
+    forced = run_python(cp, ["--agent", "claude-code", "--force"], cwd=ai_repo)
+    assert forced.rc == 0, forced.stdout
+    assert "WARN" in forced.stdout and "unreadable" in forced.stdout, forced.stdout
+    status = json.loads((ai_repo / ".ai" / "runtime" / "STATUS.json")
+                        .read_text("utf-8-sig"))
+    assert status["status"] == "active", status

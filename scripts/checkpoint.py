@@ -509,11 +509,61 @@ def cmd_unlock(args):
         print(f"Lock is held by {status.holder}, not {args.agent}. "
               "Use --force to override.")
         sys.exit(1)
-    lock, _err = read_json_or_error(LOCK_PATH)
+    # F2: the error this read used to discard is the one that decides whether a
+    # write is allowed at all. The check at the top of the command is not enough
+    # — a merge can land on this path mid-command — and writing the {} that a
+    # failed read returns would leave a released_at-only stub whose next read
+    # says "free": exactly the evidence this batch exists to keep. The record
+    # written back is therefore either one that parsed or nothing at all.
+    lock, err = read_json_or_error(LOCK_PATH)
+    if err:
+        print(f"UNLOCK ABORTED: the lock record could not be parsed ({err}); "
+              "refusing to release a record this command cannot read. Resolve "
+              "the git conflict, then --unlock --agent <name>.")
+        sys.exit(2)
     lock["released_at"] = now_iso()
     lock["released_by"] = args.agent
     write_json(LOCK_PATH, lock)   # never deleted: the record is the audit trail
     print(f"Writer lock released at {now_display()}")
+
+
+def _guard_state_writes(command, args):
+    """F3: the commands that write state must consult the lock they never took.
+
+    Before this, only --status, --prime, --lock and --unlock looked at
+    lock_state(), so an agent that skipped --lock could still clobber
+    runtime/STATUS.json while a conflicted — i.e. HELD — record sat in the tree,
+    which is the whole D1/F1 failure one step to the left.
+
+    The lock stays ADVISORY, deliberately: it coordinates honest agents, and the
+    protocol refuses to require a server, so a record that merely names another
+    holder warns BY NAME and continues. Only an unreadable record — the state
+    this batch defined as HELD — blocks the write, and --force remains the local
+    override for it. No enforcement that needs a server, and no wall that
+    --force cannot open.
+    """
+    status = lock_state()
+    if status.state in ("free", "expired"):
+        return
+    force = bool(getattr(args, "force", False))
+    if status.state == "error":
+        if force:
+            print(f"WARN {command}: the writer lock record is unreadable "
+                  f"({status.detail}); --force writes state over it anyway.")
+            return
+        print(f"{command.upper()} REFUSED: the writer lock record is unreadable "
+              f"({status.detail}), which is HELD, not free — no state file is "
+              "written. Resolve the conflict, or re-run with --force to write "
+              "anyway.")
+        sys.exit(1)
+    if status.holder == getattr(args, "agent", None):
+        return
+    print(f"WARN {command}: the writer lock is held by {status.holder} "
+          f"{status.detail}, not by "
+          f"{getattr(args, 'agent', None) or 'an identified agent'}. Advisory "
+          "lock, so this continues: coordinate, wait for expiry, or record the "
+          "overlap in the handoff.")
+
 
 
 def main():
