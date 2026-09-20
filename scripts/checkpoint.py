@@ -616,21 +616,16 @@ def install_layout():
     — a different tree that then looks perfectly ordinary from the inside. The
     unresolved invocation path is the only witness, so it is compared here.
     """
-    kind, detail = checkout_layout(ROOT)
-    if kind != "normal":
-        return kind, detail
-    script = Path(__file__)
-    if not script.is_absolute():
-        script = Path.cwd() / script
-    logical_ai = script.parent.parent
-    if logical_ai.is_symlink():
-        try:
-            target = logical_ai.readlink().as_posix()
-        except OSError as exc:
-            target = f"<target not readable: {type(exc).__name__}>"
-        return "symlinked", (f"{logical_ai} is a symlink -> {target}, and ROOT "
-                             f"resolved through it to {ROOT}")
-    return kind, detail
+    # invocation_layout lives in ai_common so the verifier's install-layout check
+    # can call the same pair instead of a link-blind one (finding B7a-6), and it
+    # is imported here rather than in the module header on purpose: the header's
+    # try/except names a missing primitive that EVERY command needs, and this one
+    # has a single call path. What it adds is the unresolved invocation path as a
+    # witness, trusted only in the shape it claims (finding B7a-4): reading
+    # parent.parent of a scripts directory as "not a link, therefore normal" was
+    # the fail-open this replaces.
+    from ai_common import invocation_layout
+    return invocation_layout(ROOT, __file__)
 
 
 def _layout_refusal(kind, detail):
@@ -641,11 +636,19 @@ def _layout_refusal(kind, detail):
                 "does not stop another worktree from writing.")
         where = "Work in the main checkout, or"
     elif kind == "symlinked":
-        head = (f"REFUSED: part of this install is a symlink ({detail}).\n"
-                "The state and the lock behind that symlink are not files this "
+        head = (f"REFUSED: part of this install is relocated by a link (a "
+                f"symlink or, on Windows, a junction) ({detail}).\n"
+                "The state and the lock behind that link are not files this "
                 "checkout versions, so they do not travel by git pull and are "
                 "not the ones another harness reads.")
         where = "Work on the real checkout, or"
+    elif kind == "not-repository-root":
+        head = (f"REFUSED: this install is not at the root of the repository it "
+                f"is inside ({detail}).\n"
+                "The tracked lock written here travels by git pull of the OUTER "
+                "repository, which is not the history of this install: one "
+                "install root per checkout, at its top level.")
+        where = "Move the install to the repository root, or"
     else:
         head = (f"REFUSED: the checkout layout could not be determined "
                 f"({kind}: {detail}).\n"
@@ -669,19 +672,23 @@ def _layout_refusal(kind, detail):
 
 
 def _next_epoch(prev, err):
-    """One past the epoch the displaced record carried, or None if it had no answer.
+    """(epoch, reason): one past the displaced record's epoch, or None plus why.
 
     `epoch` is wave 1b's schema; starting to write it now is additive. None is
     what a record that could not be read leaves behind — the key is omitted and
     the gap named, rather than a first epoch asserted over an unknown history.
     """
+    # B7a-3: an epoch of null, "abc" or a dict used to land in the except and
+    # come back as a confident 1 with no WARN, which is "cannot determine"
+    # wearing the shape of a clean number - the form spec section 4 forbids. It
+    # now returns None plus its own reason, so the caller names the gap.
     if err:
-        return None
+        return None, f"the previous lock record was not read ({err})"
     raw = prev.get("epoch", 0)
     try:
-        return int(raw) + 1
+        return int(raw) + 1, None
     except (TypeError, ValueError):
-        return 0 + 1
+        return None, f"the epoch in the previous record is not a number: {raw!r}"
 
 
 def cmd_lock(args):
@@ -709,7 +716,13 @@ def cmd_lock(args):
         print("--force takes a lock OVER: the displaced record stays in the "
               "tree and in git history. It does not RESOLVE a conflicted record "
               "- that needs --discard-lock here, or a git resolve.")
-        sys.exit(1)
+        # R2 adjudication 4 overturns the rc batch C1 chose. A missing required
+        # companion argument is a USAGE error in this CLI, which exits 2 for
+        # "--lock requires --agent", for "--unlock requires --agent <name>" and
+        # via argparse; rc 1 is reserved for refusals reached after a verdict was
+        # possible (LOCK CONFLICT, LAYOUT REFUSED, CHECKPOINT REFUSED). One
+        # omission gets one usage verdict, whatever the layout turned out to be.
+        sys.exit(2)
     forced_layout = False
     if kind != "normal":
         if not args.force:
@@ -752,22 +765,40 @@ def cmd_lock(args):
     # Takeover must be auditable AFTER it is pushed: this file is tracked, so
     # whatever is copied out of the displaced record here is what the next
     # machine reads. Read it once, here, whatever the branches above did.
-    prev, prev_err = read_json_or_error(LOCK_PATH)
-    epoch = _next_epoch(prev, prev_err)
+    # The compare-and-write of B6/8, applied to the other reader (finding C1-3):
+    # what lands below is validated against the bytes this command actually read,
+    # so a merge that arrives mid-command aborts the acquisition instead of being
+    # destroyed by it. Bounded and advisory - an ABORT is a re-run, not a server.
+    prev, prev_err, prev_raw = read_json_for_update(LOCK_PATH)
+    epoch, epoch_err = _next_epoch(prev, prev_err)
     record = {
         "agent": args.agent,
-        "reason": args.reason or "",
+        # C1-6: one read of the reason, through the guarded form above, so a
+        # hand-built Namespace without the flag cannot crash this command.
+        "reason": force_reason,
         "acquired_at": acquired.isoformat(timespec="seconds"),
         "expires_at": datetime.fromtimestamp(expires, acquired.tzinfo)
                              .isoformat(timespec="seconds"),
         "released_at": None,
     }
-    if epoch is None:
-        print(f"WARN: the epoch is not recorded - the previous lock record was "
-              f"not read ({prev_err}); restarting the count at 1 would claim a "
-              "history this command cannot see.")
+    if epoch_err:
+        print(f"WARN: the epoch is not recorded - {epoch_err}; restarting the "
+              "count at 1 would claim a history this command cannot see.")
+        if not prev_err:
+            record["epoch_unreadable"] = repr(prev.get("epoch", 0))
     else:
         record["epoch"] = epoch
+    # C1-4: the record is built from scratch, so a takeover used to be visible
+    # only until the NEXT acquisition rewrote the file, and only if a commit
+    # landed in between - which nothing here checks. Two takeovers in one
+    # uncommitted session left one record. The chain is additive and travels
+    # forward whichever kind of acquisition writes it.
+    chain = [e for e in (prev.get("prior_forced") or []) if isinstance(e, dict)]
+    displaced_before = prev.get("forced_over")
+    if isinstance(displaced_before, dict):
+        chain.append(displaced_before)
+    if chain:
+        record["prior_forced"] = chain
     if args.force:
         displaced = prev.get("agent")
         if prev_err:
@@ -781,7 +812,17 @@ def cmd_lock(args):
         if forced_layout:
             record["forced_layout"] = kind
             record["forced_layout_detail"] = detail
-    write_json(LOCK_PATH, record)
+    elif (status.state == "expired" and prev.get("agent")
+            and prev.get("agent") != args.agent):
+        # C1-5: the split nobody audited. A TTL ran out mid-task, no --force was
+        # involved, and the single writer simply changed - so the displaced name
+        # is recorded on the same terms as a forced takeover.
+        record["over_expired_hold"] = {
+            "agent": prev.get("agent"),
+            "acquired_at": prev.get("acquired_at"),
+        }
+    if not _write_json_if_unchanged(LOCK_PATH, record, prev_raw, "LOCK"):
+        sys.exit(2)
     print(f"Writer lock acquired by {args.agent} until {record['expires_at']} "
           f"(TTL {args.ttl}s, advisory)")
     if holder == args.agent:
@@ -866,7 +907,9 @@ def _guard_state_writes(command, args):
                   f"({status.detail}); --force --discard-lock writes state over "
                   "it anyway. That does NOT resolve the conflict: the tracked "
                   "record stays in the tree until --lock --force --discard-lock "
-                  "or a git resolve replaces it, and the abandoned bytes stay in "
+                  "--reason \"<why>\" or a git resolve replaces it, and the "
+                  "abandoned "
+                  "bytes stay in "
                   "git history, so the hold remains auditable.")
             return
         print(f"{command.upper()} REFUSED: the writer lock record is unreadable "

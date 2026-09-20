@@ -124,11 +124,18 @@ def test_force_with_discard_lock_replaces_the_unreadable_record(ai_repo, cp):
 
 
 def test_force_without_a_reason_is_refused_before_any_write(ai_repo, cp):
-    """Red at HEAD as written: the discard path accepted a reasonless override."""
+    """Red at HEAD as written: the discard path accepted a reasonless override.
+
+    rc 2, not 1: R2 adjudication 4 overturns C1's choice. A missing required
+    companion argument is a usage error in this CLI — it exits 2 for `--lock
+    requires --agent`, for `--unlock requires --agent <name>`, and via argparse,
+    while rc 1 is reserved for refusals reached after a verdict was possible
+    (LOCK CONFLICT, LAYOUT REFUSED, CHECKPOINT REFUSED).
+    """
     lock = write_lock(ai_repo, CONFLICT)
     res = run_python(cp, ["--lock", "--agent", "claude-code", "--force",
                           "--discard-lock"], cwd=ai_repo)
-    assert res.rc == 1, res.stdout
+    assert res.rc == 2, res.stdout
     assert "--force must name a --reason" in res.stdout, res.stdout
     assert "does not resolve" in res.stdout.lower(), res.stdout
     assert lock.read_text("utf-8-sig") == CONFLICT, (
@@ -138,11 +145,16 @@ def test_force_without_a_reason_is_refused_before_any_write(ai_repo, cp):
 
 def test_a_blank_reason_is_not_a_reason(ai_repo, cp):
     """`--reason " "` satisfies argparse and empties under strip(); it must not
-    satisfy the gate, or the flag becomes a way to answer the question."""
+    satisfy the gate, or the flag becomes a way to answer the question.
+
+    Same rc 2 as the omitted reason: one omission, one usage verdict, whatever
+    the layout is (the asymmetry C1 kept between the layout path and the plain
+    path is what adjudication 4 removed).
+    """
     write_lock(ai_repo, live(agent="codex"))
     blank = run_python(cp, ["--lock", "--agent", "claude-code", "--force",
                             "--reason", "   "], cwd=ai_repo)
-    assert blank.rc == 1, blank.stdout
+    assert blank.rc == 2, blank.stdout
     assert "--force must name a --reason" in blank.stdout, blank.stdout
     # The positive partner: the gate is a sentence, not a wall.
     named = run_python(cp, ["--lock", "--agent", "claude-code", "--force",
@@ -454,6 +466,12 @@ def test_a_state_write_demands_the_same_flags_as_a_lock(ai_repo, cp):
     close-out `git add -A` commits. The asymmetry, not `--force`, is the defect:
     the two paths now demand the same pair, and the refusal says out loud what
     `--force` does not do.
+
+    No `--reason` is demanded of the state writer on purpose (C1 ruling 5): a
+    state write takes no pen, so there is no takeover record to attach a reason
+    to, and its own runtime files are untracked last-writer-wins — a reason
+    written there reaches no second machine. That is a named boundary, not an
+    oversight, and this test is where it is encoded.
     """
     write_lock(ai_repo, CONFLICT)
     status = ai_repo / ".ai" / "runtime" / "STATUS.json"
@@ -471,6 +489,15 @@ def test_a_state_write_demands_the_same_flags_as_a_lock(ai_repo, cp):
     assert "WARN checkpoint:" in pair.stdout, pair.stdout
     assert "git history" in pair.stdout, pair.stdout
     assert json.loads(status.read_text("utf-8-sig"))["status"] == "active", pair.stdout
+    # C1-2: the WARN pointed at a command the reason gate then refused. The
+    # remedy printed for a STATE WRITE has to survive the gate it tells you to
+    # walk through, which is the same defect `test_the_printed_override_is_a_
+    # command_that_works` catches on the lock side and this pin covers for the
+    # third printed hint.
+    remedy = [ln for ln in pair.stdout.splitlines() if "--lock" in ln]
+    assert remedy, pair.stdout
+    assert any("--reason" in ln for ln in remedy), (
+        f"the printed --lock remedy does not carry --reason: {remedy}")
     # The pair buys the WRITE, not a resolution: the conflicted record is still
     # there for --lock --force --discard-lock (or a git resolve) to replace.
     assert CONFLICT.strip() in (ai_repo / ".ai" / "runtime" / "WRITER_LOCK.json"

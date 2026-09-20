@@ -217,10 +217,113 @@ def _symlink_label(path: Path, ai: Path) -> str:
     return AI_DIR_NAME if rel in ("", ".") else f"{AI_DIR_NAME}/{rel}"
 
 
-def checkout_layout(root: Path) -> tuple[str, str]:
-    """Classify the checkout `root` names: `(kind, detail)`, kind one of four.
+def _canon(path: str) -> str:
+    """Comparable form of a path git printed for a path this module built."""
+    return os.path.normcase(path.replace("\\", "/").rstrip("/"))
 
-    "normal" | "linked-worktree" | "symlinked" | "outside-repo".
+
+def _strip_device_prefix(text: str) -> str:
+    """Drop the extended Win32 device prefix a junction's target arrives with.
+
+    A junction reports its target in the extended Win32 device form: a doubled
+    backslash, a question mark, then the path. Printing that hands the user a
+    string nobody else can paste, so it is dropped here.
+    """
+    for prefix in ("\\\\?\\", "\\??\\"):
+        if text.startswith(prefix):
+            return text[len(prefix):]
+    return text
+
+
+# `stat` is imported here rather than in the header because the reparse attribute
+# below is its only reader, and only on the one branch that needs it.
+import stat  # noqa: E402  (module-level, beside its only user by design)
+
+
+def _relocated(path: Path):
+    """None for an ordinary path, else `(mechanism, target)`.
+
+    "Is this a symlink?" is the wrong question, and r2 finding B7a-1 measured
+    why: a Windows directory junction (`mklink /J`) answers False to
+    `Path.is_symlink()` and True to `is_dir()`, and needs no
+    SeCreateSymbolicLinkPrivilege and no Developer Mode. A predicate limited to
+    symlinks therefore classifies a relocated `.ai` as "normal" on the exact
+    host that was told it could not be tested. REPARSE_POINT is the
+    mechanism-independent attribute — it is set for junctions and symlinks
+    alike — and `getattr` keeps the 3.9 floor honest on platforms without it.
+    """
+    if path.is_symlink():
+        return "a symlink", _read_target(path)
+    rp = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    if not rp:
+        return None
+    try:
+        attrs = path.stat(follow_symlinks=False).st_file_attributes
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        # Not "clean": a payload path this process cannot probe is not a payload
+        # path it may call ordinary (spec §4). The caller names the kind and why.
+        return "undetermined", f"cannot probe {path}: {exc}"
+    if not (attrs & rp):
+        return None
+    return "a directory junction (Windows reparse point)", _read_target(path)
+
+
+def _read_target(path: Path) -> str:
+    try:
+        return Path(_strip_device_prefix(str(path.readlink()))).as_posix()
+    except OSError as exc:
+        return f"<target not readable: {type(exc).__name__}>"
+
+
+def invocation_layout(root: Path, script_file: str) -> tuple[str, str]:
+    """`(kind, detail)` for THIS invocation: the witness first, then the checkout.
+
+    Exported so `checkpoint.py --lock` and `sync_verify.py`'s install-layout
+    check answer with one function instead of one of them being blind (finding
+    B7a-6). The next lane wires the verifier; this lane pins the signature.
+    """
+    kind, detail = _invocation_witness(root, script_file)
+    if kind != "normal":
+        return kind, detail
+    return checkout_layout(root)
+
+
+def _invocation_witness(root: Path, script_file: str) -> tuple[str, str]:
+    """The unresolved invocation path, which is the only thing that saw the link.
+
+    `resolve_roots()` calls `Path.resolve()`, which follows symlinks AND
+    junctions, so an invoked `.ai` that is relocated leaves ROOT naming the
+    target's parent — a tree that then looks perfectly ordinary from inside. The
+    witness is trusted only in the shape it claims, `<root>/.ai/scripts/<script>`:
+    invoked from `.ai/scripts/` itself the old code probed
+    `<root>/.ai/scripts`'s `is_symlink()`, always False, and reported a linked
+    install as normal (finding B7a-4). A shape this function cannot describe is
+    undetermined, never clean.
+    """
+    script = Path(script_file)
+    if not script.is_absolute():
+        script = Path.cwd() / script
+    parent, logical_ai = script.parent, script.parent.parent
+    if parent.name != "scripts" or logical_ai.name != AI_DIR_NAME:
+        return "outside-repo", (f"invocation layout not determined: {script} is "
+                                "not under " + AI_DIR_NAME + "/scripts/")
+    state = _relocated(logical_ai)
+    if state is None:
+        return "normal", str(root)
+    mechanism, target = state
+    if mechanism == "undetermined":
+        return "outside-repo", f"invocation layout not determined: {target}"
+    return "symlinked", (f"{logical_ai} is relocated by {mechanism} -> {target}, "
+                         f"and ROOT resolved through it to {root}")
+
+
+def checkout_layout(root: Path) -> tuple[str, str]:
+    """Classify the checkout `root` names: `(kind, detail)`, kind one of five.
+
+    "normal" | "linked-worktree" | "symlinked" | "not-repository-root" |
+    "outside-repo".
 
     D15 has two halves and this is where both become visible:
 
@@ -228,15 +331,21 @@ def checkout_layout(root: Path) -> tuple[str, str]:
       The lock is tracked so a second MACHINE sees the first machine's hold
       through `git pull`; two worktrees on one machine share no such thing, so
       R1's single-writer rule is broken locally, silently, with no git involved.
-    * A SYMLINKED part of the install means the payload is not in this tree.
-      `resolve_roots()` calls `Path.resolve()`, which follows symlinks, so a
-      linked or relocated `.ai` can name a ROOT in a different repository and
-      every read, write and report below it is then about the wrong tree.
+    * A RELOCATED part of the install means the payload is not in this tree.
+      The kind keeps the name "symlinked" because that is the contract callers
+      and `forced_layout` records already carry; `detail` says which mechanism was
+      found — a symlink or, on Windows, a junction — because those are different
+      things to fix (finding B7a-1).
+
+    "not-repository-root" is the fifth kind: `--is-inside-work-tree` is true for
+    EVERY descendant of a repository, so an install in a subdirectory used to
+    print "normal" and advertise a tracked lock that travels by the OUTER
+    repository's `git pull` (finding B7a-2).
 
     "outside-repo" carries "the layout could not be determined" as well as "not
-    a repository": an rc 128 from either `rev-parse` is an ERROR state, and a
-    caller must never read it as "normal" (spec §4 — a degradation is named, and
-    "cannot tell" is not "clean"). `detail` says which of the two it was.
+    a repository": an rc 128 from any probe is an ERROR state, and a caller must
+    never read it as "normal" (spec §4 — a degradation is named, and "cannot
+    tell" is not "clean"). `detail` says which of the two it was.
 
     Advisory by design: this classifies, it does not enforce. Callers refuse and
     offer the documented `--force` escape hatch.
@@ -244,31 +353,61 @@ def checkout_layout(root: Path) -> tuple[str, str]:
     ai = root / AI_DIR_NAME
     for rel in LAYOUT_PAYLOAD_PATHS:
         part = ai if not rel else ai / rel
-        if part.is_symlink():
-            try:
-                dest = part.readlink().as_posix()
-            except OSError as exc:
-                dest = f"<target not readable: {type(exc).__name__}>"
-            return "symlinked", f"{_symlink_label(part, ai)} is a symlink -> {dest}"
+        state = _relocated(part)
+        if state is None:
+            continue
+        mechanism, target = state
+        if mechanism == "undetermined":
+            return "outside-repo", (f"{_symlink_label(part, ai)}: {target}; "
+                                    "layout not determined")
+        return "symlinked", (f"{_symlink_label(part, ai)} is relocated by "
+                             f"{mechanism} -> {target}")
 
     inside = run_git(root, ["rev-parse", "--is-inside-work-tree"], timeout=15)
     git_dir = run_git(root, ["rev-parse", "--absolute-git-dir"], timeout=15)
-    common = run_git(root, ["rev-parse", "--path-format=absolute",
-                            "--git-common-dir"], timeout=15)
     if not inside.ok or not git_dir.ok:
         rc = inside.rc if not inside.ok else git_dir.rc
         return "outside-repo", (
             f"git could not locate a work tree for {root} (rev-parse rc {rc}); "
             "layout not determined")
+    common = run_git(root, ["rev-parse", "--path-format=absolute",
+                            "--git-common-dir"], timeout=15)
+    probe = "--path-format=absolute --git-common-dir"
+    cd = common.out().strip() if common.ok else ""
     if not common.ok:
+        # `--path-format` needs git 2.31. On an older client the only failure
+        # bucket here used to be "outside-repo", so EVERY legitimate main
+        # checkout was refused with a message blaming the user's location
+        # (finding B7a-5). Ask it the old way, resolve the answer against `root`,
+        # and if git still will not say, name the version as the reason.
+        fallback = run_git(root, ["rev-parse", "--git-common-dir"], timeout=15)
+        probe = "--git-common-dir (older git)"
+        if fallback.ok:
+            raw = fallback.out().strip().replace("\\", "/").rstrip("/")
+            cd = raw if Path(raw).is_absolute() else str((root / raw))
+    if not cd:
         return "outside-repo", (
             f"{root} is inside a work tree but git would not report its common "
-            f"directory (rev-parse --git-common-dir rc {common.rc}); layout not "
-            "determined")
-    gd = git_dir.out().strip().replace("\\", "/").rstrip("/")
-    cd = common.out().strip().replace("\\", "/").rstrip("/")
-    if gd != cd and _WORKTREE_MARKER in gd:
+            f"directory (rev-parse {probe} rc {common.rc}, git 2.31 or older "
+            "without a usable --git-common-dir answer); layout not determined")
+    gd = _canon(git_dir.out().strip())
+    cd = _canon(cd)
+    # `os.path.normcase` rewrites forward slashes to backslashes on Windows, so
+    # the marker has to be tested against the slash form again or every linked
+    # worktree silently classifies as a main checkout.
+    if gd != cd and _WORKTREE_MARKER in gd.replace("\\", "/"):
         return "linked-worktree", f"{gd} (common {cd})"
+    top = run_git(root, ["rev-parse", "--show-toplevel"], timeout=15)
+    if not top.ok:
+        return "outside-repo", (
+            f"git would not report the work tree top level for {root} (rev-parse "
+            f"--show-toplevel rc {top.rc}); layout not determined")
+    toplevel = _canon(top.out().strip())
+    if toplevel != _canon(str(root)):
+        return "not-repository-root", (
+            f"{root} is not the root of the work tree git reports "
+            f"(--show-toplevel {toplevel}): the tracked lock written here "
+            "travels by the OUTER repository's git pull, not this install's")
     return "normal", str(root)
 
 
