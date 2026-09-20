@@ -611,16 +611,26 @@ def main():
         cmd_status(args)
     elif args.prime:
         cmd_prime(args)
-    elif args.handoff:
-        cmd_handoff(args)
-    elif args.validate:
-        cmd_validate(args)
+    elif args.handoff or args.validate or not (args.lock or args.unlock):
+        # F3: the three commands that change the tree are --handoff, --validate
+        # and the bare-checkpoint default, and none of them had ever looked at
+        # the lock, so skipping --lock was enough to clobber state beside a
+        # conflicted (i.e. HELD) record. One gate, at the one place where the
+        # command being run is known, so a writer cannot be reached without the
+        # lock having been consulted.
+        command = ("handoff" if args.handoff else
+                   "validate" if args.validate else "checkpoint")
+        _guard_state_writes(command, args)
+        if args.handoff:
+            cmd_handoff(args)
+        elif args.validate:
+            cmd_validate(args)
+        else:
+            cmd_checkpoint(args)
     elif args.lock:
         cmd_lock(args)
     elif args.unlock:
         cmd_unlock(args)
-    else:
-        cmd_checkpoint(args)
     return 0
 
 
