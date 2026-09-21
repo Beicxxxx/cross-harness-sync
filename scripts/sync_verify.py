@@ -303,6 +303,17 @@ def _check_shape(key: str, val) -> None:
                               f"repo-relative paths inside the checkout, not "
                               f"{escaping}")
     if key == "budgets":
+        # Lane Z finding 1 (HIGH): the keys are paths and only the VALUES were
+        # ever checked, so `{"../outside/x.md": 99999}` measured a file outside
+        # the checkout and booked `[PASS] budget ../outside/x.md` at rc 0 --
+        # `reference.md` documents these keys as repo-relative paths, so the
+        # escape contradicts the shipped contract. Same predicate, same
+        # refusal, as the list keys one branch above.
+        escaping = sorted({str(k) for k in val if not _is_repo_relative_path(k)})
+        if escaping:
+            raise ConfigError(f"malformed: config key {key!r} keys must be "
+                              f"repo-relative paths inside the checkout, not "
+                              f"{escaping}")
         bad = sorted(str(k) for k, v in val.items()
                      if not (v is None or (isinstance(v, int)
                                            and not isinstance(v, bool))))
@@ -310,6 +321,23 @@ def _check_shape(key: str, val) -> None:
             raise ConfigError(f"malformed: budgets values must be line-count "
                               f"integers (or null to drop a default), not "
                               f"under {bad}")
+    if key == "budgets":
+        over = sorted((str(k), v) for k, v in val.items()
+                      if isinstance(v, int) and not isinstance(v, bool)
+                      and v > LINE_CAP_CEILING)
+        if over:
+            raise ConfigError(f"malformed: budgets values above "
+                              f"{LINE_CAP_CEILING} lines cannot fail, so they "
+                              f"measure nothing (see the derivation of "
+                              f"LINE_CAP_CEILING); got {over}")
+    if key == "decisions_file" and not _is_repo_relative_path(val):
+        # Lane Z finding 1, second surface: this one string retargets the
+        # decision cap, so `../outside/DECISIONS.md` reported 3 entries against
+        # cap 20 while the repo's real 500-entry log went uncapped -- and the
+        # drive-letter spelling escapes on Windows too.
+        raise ConfigError(f"malformed: config key {key!r} must be a "
+                          f"repo-relative path inside the checkout, got "
+                          f"{val!r}")
     if key in POSITIVE_INT_KEYS and (
             isinstance(val, bool) or not isinstance(val, int) or val <= 0):
         # `true` is an int in Python and `n <= True` passes at 1 entry, so the
