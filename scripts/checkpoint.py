@@ -79,7 +79,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     from ai_common import (AUTHORIZATIONS_SUBDIR, DEFAULT_REQUIRED_FILES,
                            REQUIRED_FILE_FLOOR, RepoError, SHA_HEX_LEN,
-                           checkout_layout, commit_exists, decode,
+                           authorization_records, checkout_layout,
+                           commit_exists, decode, is_accepted,
                            parse_governance_block, protect_stdio, resolve_roots,
                            run_argv, run_git, with_required_file_floor,
                            worktree_listing)
@@ -817,6 +818,13 @@ def _review_authorizations_dir(cfg):
 def _review_records(auth_dir):
     """`[(path, text, fields, err)]` -- every record file, index aside.
 
+    The FILE LIST comes from `ai_common.authorization_records()`, the same flat
+    `*.md` walk with the same case-insensitive `INDEX.md` exclusion that
+    `sync_verify.py` runs (final review I-4). They used to be two walks —
+    `rglob` + `name == "INDEX.md"` there, `glob` + `name.upper() == "INDEX.MD"`
+    here — so a record in a nested directory was counted by the coverage walk and
+    never printed to the reviewer, which is the one shape where a reviewer signs
+    off a change whose authorization they could not see.
     `INDEX.md` is the directory's index (the `DECISIONS_INDEX.md` idiom spec 6
     keeps) and `.gitkeep` is a placeholder for a directory git cannot otherwise
     carry; neither is an authorization, and counting the index as one would make
@@ -828,9 +836,7 @@ def _review_records(auth_dir):
     out = []
     if not auth_dir.is_dir():
         return out
-    for path in sorted(auth_dir.glob("*.md")):
-        if path.name.upper() == "INDEX.MD" or not path.is_file():
-            continue
+    for path in authorization_records(auth_dir):
         try:
             text = path.read_bytes().decode("utf-8", "surrogateescape")
         except OSError as exc:
@@ -856,7 +862,8 @@ def _record_state(fields):
     """`('accepted'|'declined'|'legacy', detail)` for one record.
 
     `accepted` is the verdict B1's swarm boundary counts, and it is decided the
-    SAME WAY here — normalized `verdict == accepted`, and nothing else. The two
+    SAME WAY here — the one `ai_common.is_accepted` predicate, normalised
+    `verdict == accepted`, and nothing else. The two
     readers must not diverge on what "active" means: `expires_at` is D10's
     LOCK field, not a spec 6 authorization record key, and `sync_verify`'s
     accepted count does not consult it, so gating on it here would let one
@@ -869,8 +876,7 @@ def _record_state(fields):
     """
     if fields is None:
         return "legacy", "governance: absent"
-    verdict = str(fields.get("verdict", "")).strip().lower()
-    if verdict != "accepted":
+    if not is_accepted(fields):
         return "declined", f"verdict: {fields.get('verdict') or '(no verdict key)'}"
     raw = fields.get("expires_at")
     value = "" if raw is None else str(raw).strip()

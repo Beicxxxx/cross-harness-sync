@@ -946,8 +946,11 @@ PINNED_STATE_FILES = ("CURRENT.md", "TASK.md", "BLOCKERS.md", "LATEST.md")
 
 # `INDEX.md` is the directory's index (the `DECISIONS_INDEX.md` idiom, kept by
 # spec 6), not a stage record. Reading it as one would fabricate a governance
-# record out of a table of contents.
-AUTHORIZATION_INDEX_NAME = "INDEX.md"
+# record out of a table of contents. The name — and the case-INSENSITIVE way it
+# is recognised, and the flat walk that honours it — live in `ai_common`, because
+# `checkpoint.py --review-prompt` reads the SAME directory and the two readers
+# must not hand the reviewer and the verifier different record sets (I-4).
+AUTHORIZATION_INDEX_NAME = ai_common.AUTHORIZATION_INDEX_NAME
 
 
 def _authorization_dir(cfg) -> Path:
@@ -987,14 +990,12 @@ def _authorization_records(cfg):
         return [], True
     records = []
     try:
-        found = sorted(adir.rglob("*.md"))
+        found = ai_common.authorization_records(adir)
     except OSError as exc:
         return [{"rel": _authorization_dir_label(cfg), "text": None,
                  "read_err": f"{type(exc).__name__}: {exc}",
                  "fields": None, "gov_err": None}], False
     for path in found:
-        if not path.is_file() or path.name == AUTHORIZATION_INDEX_NAME:
-            continue
         try:
             rel = path.relative_to(ROOT).as_posix()
         except ValueError:
@@ -1013,14 +1014,6 @@ def _authorization_records(cfg):
         records.append({"rel": rel, "text": text, "read_err": read_err,
                         "fields": fields, "gov_err": gov_err})
     return records, False
-
-
-def _verdict(record) -> str:
-    """`accepted` / anything else / `""` when the record carries no decidable
-    governance block. A legacy record is never treated as accepted."""
-    if record["text"] is None or record["gov_err"] or record["fields"] is None:
-        return ""
-    return str(record["fields"].get("verdict", "")).strip().lower()
 
 
 def _section_bullets(text: str, heading: str) -> list:
@@ -1130,6 +1123,45 @@ def _pin_names_state_file(pin: str, cfg) -> bool:
     return name.lower() in {n.lower() for n in PINNED_STATE_FILES}
 
 
+def _protected_pathspec(paths, cfg) -> list:
+    """The `git log -- <pathspec>` entries that MEAN the recorded D14 policy.
+
+    Final review I-2, measured: with `protected_paths: ["SRC/*"]` and
+    `protected_paths_case: "case-insensitive"` the walk printed
+    `[PASS] path coverage: 0 protected touches covered` over a commit that
+    touched `src/engine.py`, because the case policy only ever filtered the
+    EDITABLE side (`glob_match`) while the candidate side asked git with a plain,
+    case-SENSITIVE pathspec. The governed work never reached the comparison, so
+    the more the pattern under-matched the greener the run read — under-govern,
+    and book the PASS. `:(icase)` is git's own case-insensitive pathspec magic,
+    which makes the recorded policy mean one thing on both sides of the check.
+    An entry that already carries its own magic prefix is left alone.
+    """
+    if _case_sensitive(cfg):
+        return list(paths)
+    return [p if p.startswith(":(") else f":(icase){p}" for p in paths]
+
+
+def _protected_set_is_void(pathspec):
+    """`(void, why)` — does ANY tracked file match this protected set at all?
+
+    A typo'd pattern, a renamed directory, or a list written for a different
+    layout produces the same permanently-green shape as a genuinely quiet window:
+    zero candidates, zero touches, one PASS. §4 forbids reading a degradation as
+    a verdict, so the run says so by name. `why` is non-None when git could not
+    answer, which is its own named degradation and never a licence for the PASS.
+    """
+    res = ai_common.run_git(ROOT, ["ls-files", "-z", "--", *pathspec],
+                            timeout=15)
+    if res.timed_out:
+        return None, "`git ls-files` timed out"
+    if res.rc != 0:
+        detail = ai_common.decode(res.stderr).strip().splitlines()
+        return None, (f"`git ls-files` exited {res.rc}: "
+                      f"{detail[-1][:160] if detail else 'no stderr'}")
+    return (not [b for b in res.stdout.split(b"\x00") if b]), None
+
+
 def check_coverage_walk(cfg: dict) -> None:
     """spec 6.3: every protected-path touch in the window is covered by an
     ACCEPTED authorization's own `## Editable files` list.
@@ -1149,6 +1181,23 @@ def check_coverage_walk(cfg: dict) -> None:
     if window in ("", "NO_HISTORY"):
         record("path coverage", None, f"SKIP(no-window: {window or 'unset'})")
         return
+    if not ai_common.window_is_valid(window):
+        # Final review I-1, measured: `window_start_commit: "HEAD"` made
+        # `git log HEAD..HEAD` a permanently empty range, and the walk booked
+        # `[PASS] path coverage: 0 protected touches covered` at rc 0 while the
+        # window held a real protected commit nobody authorised. The shape
+        # predicate that refuses such an anchor used to live in `init_sync` as a
+        # private `_window_is_valid`, so only the writer of the field enforced it
+        # and every other reader governed whatever the rev happened to resolve
+        # to. An anchor that is not a commit id is not an empty window.
+        record("path coverage", False,
+               f"window anchor is not a commit id: "
+               f"`governance.window_start_commit` is {window!r}, which is "
+               f"neither a {ai_common.SHA_HEX_LEN}-lowercase-hex commit id nor "
+               f"`{ai_common.NO_HISTORY}`, so the range this walk is bounded by "
+               f"cannot be read (spec 8 writes, spec 6.3 reads: a malformed "
+               f"anchor is a FAIL, not the empty log it would have printed)")
+        return
     if not is_git_repo(ROOT):
         record("path coverage", False,
                "no git repository to walk (see the `git repository` check), so "
@@ -1164,24 +1213,42 @@ def check_coverage_walk(cfg: dict) -> None:
                f"shallow/indeterminate history ({shallow.lower()}): the bounded "
                f"walk cannot certify coverage of window {window[:8]}..HEAD")
         return
+    pathspec = _protected_pathspec(paths, cfg)
     rev = f"{window}..HEAD"
     nonmerge, why = ai_common.log_paths(
         ROOT, ["--no-merges", "--full-history", "--pretty=format:%H", rev],
-        paths)
+        pathspec)
     if nonmerge is None:
         record("path coverage", False, f"walk halted: {why}")
         return
     merges, why = ai_common.log_paths(
         ROOT, ["--merges", "-m", "--first-parent", "--pretty=format:%H", rev],
-        paths)
+        pathspec)
     if merges is None:
         record("path coverage", False, f"walk halted: {why}")
         return
     touched = sorted(set(_walk_touches(nonmerge) + _walk_touches(merges)))
+    if not touched:
+        void, void_why = _protected_set_is_void(pathspec)
+        if void_why is not None:
+            print(f"[WARN] path coverage: the registered set could not be "
+                  f"matched against the tracked files ({void_why}), so this "
+                  f"line certifies coverage of nothing it confirmed exists")
+        elif void:
+            print(f"[WARN] path coverage: no tracked file matches any of the "
+                  f"{len(paths)} protected_paths pattern(s), so the walk has no "
+                  f"candidate to govern")
+            record("path coverage", None,
+                   "SKIP(void-protected-set): no tracked file matches any "
+                   f"registered protected_paths pattern ({', '.join(paths[:6])}"
+                   f"{', ...' if len(paths) > 6 else ''}) -- a typo'd or "
+                   "renamed protected set governs nothing, and a permanently "
+                   "green line is how that hides (spec 4: named, never PASS)")
+            return
     records, _absent = _authorization_records(cfg)
     editable = []
     for rec in records:
-        if _verdict(rec) == "accepted" and rec["text"] is not None:
+        if ai_common.is_accepted(rec["fields"]) and rec["text"] is not None:
             editable += _section_bullets(rec["text"], "Editable files")
     uncovered = [(sha, rel) for sha, rel in touched
                  if not ai_common.glob_match(rel, editable,
@@ -1304,7 +1371,7 @@ def check_swarm_boundary(cfg: dict) -> None:
             # never PASS"), so it is carried as an undecided name instead.
             undecided.append(f"{rec['rel']} (its `## Governance` block names no "
                              f"`verdict:`)")
-        elif _verdict(rec) == "accepted":
+        elif ai_common.is_accepted(rec["fields"]):
             accepted.append(rec["rel"])
     if len(accepted) > 1:
         record("swarm boundary", False,

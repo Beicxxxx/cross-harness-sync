@@ -119,8 +119,8 @@ from ai_common import PROTOCOL_VERSION  # noqa: E402
 # spec §8's migration reads the repository through the SAME three-valued probes
 # the verifier uses — one definition of "what does git say about HEAD", not a
 # second one that can disagree with it on the machine that asks.
-from ai_common import (SHA_HEX_LEN, git_available, is_git_repo,  # noqa: E402
-                       run_argv, run_git)
+from ai_common import (NO_HISTORY, SHA_HEX_LEN, git_available,  # noqa: E402
+                       is_git_repo, run_argv, run_git, window_is_valid)
 
 # `check_version_match`'s fourth answer, as a constant so `main()` can tell
 # "nothing to compare yet" from a verdict without re-reading the sentence.
@@ -981,10 +981,12 @@ WRITER_LOCK_REL = ".ai/runtime/WRITER_LOCK.json"
 MIGRATION_AGENT = "init-sync-migrate"
 MIGRATION_COMMIT_TAG = "cross-harness-sync-migrate"
 
-# The sentinel `sync_verify.py` reads as `SKIP(no-history)`, never as a pass:
-# `"NO_HISTORY"` is a claim that the window has no anchor, so it must not be
-# confused with `""` (nobody has migrated this tree) or with a real commit.
-NO_HISTORY = "NO_HISTORY"
+# The sentinel `sync_verify.py` reads as `SKIP(no-window: NO_HISTORY)`, never as
+# a pass: `"NO_HISTORY"` is a claim that the window has no anchor, so it must not
+# be confused with `""` (nobody has migrated this tree) or with a real commit.
+# It is `ai_common.NO_HISTORY`, imported above, because the predicate that accepts
+# it — `ai_common.window_is_valid` — is now shared with the reader (final review
+# I-1) and a locally re-bound copy is how a shared constant stops being shared.
 
 # SHA-256 of every script the released v2.0.0 installed, taken from the git blob
 # at `e692e73` ("Initial release: cross-harness-sync v2.0.0") - i.e. the bytes a
@@ -1057,17 +1059,6 @@ def _no_commits_said(res) -> bool:
             or "unknown revision" in err
             or "does not have any commits" in err
             or "ambiguous argument 'head'" in err)
-
-
-def _window_is_valid(value: str) -> bool:
-    """A coverage-window anchor is a 40-lowercase-hex commit id or the sentinel.
-
-    Anything else - a short prefix, `HEAD`, an uppercased id, prose - is not an
-    anchor, and `verify_migration()` reporting PASS over one would let a forged
-    or truncated field read as a completed migration forever.
-    """
-    return value == NO_HISTORY or bool(
-        re.fullmatch(r"[0-9a-f]{%d}" % SHA_HEX_LEN, value))
 
 
 def git_head_state(root: Path) -> tuple:
@@ -1394,6 +1385,17 @@ def _migration_commit(root: Path, installed: str) -> tuple:
     if commit.ok:
         listing = run_git(root, ["show", "--name-only", "--format="],
                           timeout=60)
+        if not listing.ok:
+            # Final review M-2: this ignored `listing.ok`, so a git error here
+            # yielded an empty file list, printed `0 path(s) committed`, and —
+            # because the containment recheck below is driven by that same list —
+            # silently skipped the recheck. A commit DID land (the staged set was
+            # verified before it, and the commit is path-scoped to `.ai/`), so
+            # reporting failure would be its own lie; what must not happen is
+            # reporting an unqualified success with the recheck unseen.
+            return True, (f"committed; post-commit listing unavailable (rc "
+                          f"{listing.rc}), so the containment recheck did not "
+                          f"run: {_one_line(listing.err() or listing.out())}")
         files = [ln.strip() for ln in listing.out().splitlines() if ln.strip()]
         outside = [f for f in files
                    if not f.startswith(".ai/") or f == WRITER_LOCK_REL]
@@ -1482,9 +1484,9 @@ def verify_migration(root: Path) -> list:
         return out
     gov = cfg.get("governance") if isinstance(cfg.get("governance"), dict) else {}
     window = str(gov.get("window_start_commit", "") or "")
-    out.append((("PASS" if _window_is_valid(window) else "FAIL"),
+    out.append((("PASS" if window_is_valid(window) else "FAIL"),
                 "window anchor",
-                window if _window_is_valid(window) else
+                window if window_is_valid(window) else
                 f"{window or 'unset'!r} is neither a {SHA_HEX_LEN}-lowercase-hex "
                 f"commit id nor the exact {NO_HISTORY} sentinel, so it cannot be "
                 "a completed migration's anchor"))
@@ -1688,7 +1690,7 @@ def run_migration(root: Path, args) -> int:
         prior_gov = cfg.get("governance")
         prior_window = str((prior_gov or {}).get("window_start_commit", "")
                            or "") if isinstance(prior_gov, dict) else ""
-        if claims_done and prior_window and not _window_is_valid(prior_window):
+        if claims_done and prior_window and not window_is_valid(prior_window):
             return _refuse(
                 f"{MIGRATION_REL} records a completed migration to "
                 f"{PROTOCOL_VERSION}, but "
@@ -1697,7 +1699,7 @@ def run_migration(root: Path, args) -> int:
                 f"and not the exact {NO_HISTORY} sentinel. A half-written or "
                 "edited anchor is not re-migrated over in silence: repair the "
                 "config or delete the record deliberately.")
-        already = claims_done and _window_is_valid(prior_window)
+        already = claims_done and window_is_valid(prior_window)
         if already:
             print(f"already migrated "
                   f"({prior.get('from')} -> {PROTOCOL_VERSION}); verifying the "

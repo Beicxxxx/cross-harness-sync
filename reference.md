@@ -192,7 +192,12 @@ never block, never write state files — hooks remind, the agent writes.
   "decisions_file": ".ai/state/DECISIONS.md",
   "secret_files": [".env"],
   "secret_mirrors": [[".env", ".claude/.env"]],
-  "extra_checks": [{ "name": "freeze X", "cmd": ["python", "scripts/freeze_x.py", "--verify"] }]
+  "extra_checks": [{ "name": "freeze X", "cmd": ["python", "scripts/freeze_x.py", "--verify"] }],
+  "protected_paths": [],
+  "protected_paths_case": "case-sensitive",
+  "authorizations_dir": ".ai/state/authorizations",
+  "role_policy_sha256": "",
+  "governance": { "window_start_commit": "" }
 }
 ```
 
@@ -230,6 +235,55 @@ never block, never write state files — hooks remind, the agent writes.
   FAIL. `rc == 0` is never sufficient. Both timeouts are configurable
   (`check_timeout`, `git_check_timeout`). This is where a project's scientific
   freezes plug in.
+- `protected_paths`: the governed set, as forward-slash glob patterns. The
+  coverage walk (`path coverage`) asks git for the commits in
+  `governance.window_start_commit..HEAD` that touch any of them and FAILs on
+  every touch no ACCEPTED authorization's `## Editable files` covers. Default
+  `[]` — a walk with nothing registered is a named `SKIP(no-protected-paths)`,
+  and spec §4's honest order is one permanently-red week, then `[]`, then zero
+  coverage, never a config line that pretends to govern. Entries must be
+  repo-relative paths inside the checkout: an absolute path, a drive-letter
+  path, or any `..` component is refused at exit 2 (`malformed: config key
+  'protected_paths' entries must be repo-relative paths inside the checkout`),
+  because a pattern that reads another tree's files still prints `[PASS]` about
+  this one. `*` is NOT per-segment: it crosses `/`, so `docs/*.md` also matches
+  `docs/a/b.md`. That direction is the fail-closed one — a nested file cannot
+  slip out of the governed set by sitting deeper than the pattern's author
+  pictured.
+- `protected_paths_case`: the recorded case policy, and exactly two values —
+  `"case-sensitive"` (the default) or `"case-insensitive"`; a third spelling is
+  refused at exit 2, because silently picking one platform's case behaviour is
+  the D14 defect this key exists to end. The direction is which way the pattern
+  folds: under `case-sensitive` `SRC/*` governs only a path spelled `SRC/…`;
+  under `case-insensitive` it governs `src/engine.py` too. The policy applies to
+  BOTH sides of the comparison — the `git log` candidate set is asked with
+  git's own `:(icase)` pathspec magic, and the authorization's editable list is
+  folded by the same rule — so one config file governs the same set of files on
+  a case-insensitive host as on a case-sensitive one.
+- `authorizations_dir`: where the stage records live, repo-relative and inside
+  the checkout (an escaping value is refused at exit 2 like `protected_paths`).
+  The default, and what `init_sync.py` installs and `--migrate` records, is
+  `.ai/state/authorizations`. Both readers share one scan
+  (`ai_common.authorization_records`): FLAT `*.md` in that directory, with
+  `INDEX.md` set aside case-insensitively because an index is not an
+  authorization. A record in a subdirectory is seen by neither command — one
+  agreement, not two near-misses; keep one file per stage in this directory.
+- `role_policy_sha256`: the digest `.ai/state/ROLE_POLICY.md` must hash to. `""`
+  means not pinned and the check is `SKIP(no-sha-pinned)`; anything else must be
+  64 lowercase hex characters or the config is refused at exit 2 (`malformed:
+  config key 'role_policy_sha256' must be empty (not pinned) or 64 lowercase hex
+  characters`), since a truncated or SHA-1 value pins a digest no file can ever
+  match. `init_sync.py --migrate` writes the current digest.
+- `governance.window_start_commit`: the coverage window's lower anchor, and the
+  only `governance` key the migrator writes. Three shapes are legal: `""` (never
+  migrated — `SKIP(no-window: unset)`), the sentinel `NO_HISTORY` (a tree with no
+  commit to anchor on — `SKIP(no-window: NO_HISTORY)`), or a full 40-lowercase-hex
+  commit id. Anything else — `HEAD`, `main`, `HEAD~1`, a short prefix, an
+  uppercased id — is a FAIL naming the anchor, not an empty window: `git log
+  HEAD..HEAD` answers "nothing happened" forever, and the walk would have booked
+  `[PASS] path coverage: 0 protected touches covered` over protected work. Same
+  predicate on both sides (`ai_common.window_is_valid`, used by the writer in
+  §8 and the reader in §6.3).
 
 ## Role policy (summary — full text in templates/ROLE_POLICY.md)
 

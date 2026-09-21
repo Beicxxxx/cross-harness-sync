@@ -157,3 +157,49 @@ def test_the_required_file_flip_moves_the_fresh_install_count_exactly(ai_repo,
     assert len(summary) == 1, res.lines
     assert summary[0] == "== 20/24 checks passed, 4 skipped ==", summary[0]
 
+
+
+# ------------------------------------------------ one walk, one verdict -----
+#
+# I-4's predicate half: the file list and the accepted test both live in
+# `ai_common` now, so what `sync_verify` counts is exactly what
+# `checkpoint --review-prompt` prints. The behaviour half — a nested record the
+# verifier used to see and the reviewer did not — is pinned in
+# `tests/test_review_prompt.py::test_the_verifier_and_the_review_prompt_see_the_same_records`.
+
+
+def test_the_record_walk_is_flat_and_keeps_the_index_out(ai_repo):
+    """Flat `*.md`, index aside (case-insensitively), nothing else.
+
+    The nested entry is the I-4 asymmetry: `rglob` in one reader and `glob` in the
+    other meant the same directory held two different record sets. One flat walk
+    is now the only answer either command can give, and
+    `templates/authorizations/INDEX.md` documents exactly that layout.
+    """
+    adir = ai_repo / ".ai" / "state" / "authorizations"
+    assert (adir / "INDEX.md").is_file(), "the fixture install has no index"
+    # A directory whose only entries are the index and a `.gitkeep` is an EMPTY
+    # record set: that is what keeps a fresh install reading as "no live stage"
+    # rather than as one, in both readers.
+    assert ai_common.authorization_records(adir) == [], \
+        [p.as_posix() for p in ai_common.authorization_records(adir)]
+    (adir / "b-stage.md").write_text("b\n", encoding="utf-8")
+    (adir / "a-stage.md").write_text("a\n", encoding="utf-8")
+    (adir / "notes.txt").write_text("not a record\n", encoding="utf-8")
+    (adir / "sub").mkdir()
+    (adir / "sub" / "nested.md").write_text("nested\n", encoding="utf-8")
+
+    got = ai_common.authorization_records(adir)
+    assert [p.name for p in got] == ["a-stage.md", "b-stage.md"], \
+        [p.as_posix() for p in got]
+
+
+def test_accepted_is_one_normalised_predicate_for_both_readers():
+    """`verdict: Accepted `, `verdict: accepted`, and nothing else (spec 6)."""
+    assert ai_common.is_accepted({"verdict": "accepted"}) is True
+    assert ai_common.is_accepted({"verdict": "  ACCEPTED  "}) is True
+    assert ai_common.is_accepted({"verdict": "pending"}) is False
+    assert ai_common.is_accepted({"verdict": "rejected"}) is False
+    assert ai_common.is_accepted({}) is False
+    assert ai_common.is_accepted(None) is False, \
+        "a legacy record with no governance block is never accepted"

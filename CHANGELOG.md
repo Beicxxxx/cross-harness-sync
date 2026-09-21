@@ -59,14 +59,17 @@ quotable.
 
 ### Measured at `3546c08` on this host (Windows nt, Python 3.14.5)
 
-Every figure below was produced in one foreground session on 2026-09-21. Full
-output is in `.superpowers/sdd/2026-09-21-cross-harness-sync-v2.1-wave1b-governance-migration/evidence/`,
-and `b4-final-facts.md` beside it lists each number used in the docs.
+Every figure below was produced in one foreground session on 2026-09-21, and
+each one is re-measurable from a clone: the log-by-log detail is in
+`docs/evidence/wave1b-facts.md` (tracked), which names the command, the tree and
+the exact line for every number used here. The raw session transcripts additionally live
+under `.superpowers/sdd/2026-09-21-cross-harness-sync-v2.1-wave1b-governance-migration/evidence/`,
+which is gitignored and therefore is not evidence a reader can reach.
 
 | Figure | Value |
 |---|---|
-| `python -m pytest tests/ -n 8 -o addopts=""` | `450 passed, 5 skipped in 43.29s` |
-| Fresh install into a temp git repo, then `sync_verify.py` | `== 20/24 checks passed, 4 skipped ==`, rc 0; the `[PASS]` lines hand-counted to 20, the `[SKIP]` lines to 4 |
+| `python -m pytest tests/ -n 8 -o addopts=""` | `450 passed, 5 skipped in 43.29s` at `3546c08`; `479 passed, 5 skipped in 47.19s` at this commit (29 test cases added for the three false-greens below, each red-first), with the same 5 POSIX-only skips |
+| Fresh install into a temp git repo, then `sync_verify.py` | `== 20/24 checks passed, 4 skipped ==`, rc 0; the `[PASS]` lines hand-counted to 20, the `[SKIP]` lines to 4. Re-measured at this commit after the B5 fixes: the same line, the same rc |
 | The same repo carrying a **genuine v2.0.0 install** (scaffolded by the `e692e73` installer and committed), after `--migrate` | `== 21/24 checks passed, 3 skipped ==`, rc 0 — `role policy integrity` flips from SKIP to PASS |
 | A second `--migrate` on that repo | rc 0: `already migrated (2.0.0 -> 2.1.0); verifying the recorded state and writing nothing.` then 5 `[PASS] migrate verify …` lines; `git rev-parse HEAD` unchanged and `git rev-list --count HEAD` 3 → 3 |
 | That v2.0 install verified **before** any upgrade | `== 14/14 checks passed ==` — ten checks fewer than v2.1, and not one `[SKIP]` line |
@@ -77,6 +80,30 @@ and `b4-final-facts.md` beside it lists each number used in the docs.
 | Shallow history | a real `git clone --depth 1 file://…` **on this nt host**: `[FAIL] path coverage: shallow/indeterminate history (true): the bounded walk cannot certify coverage of window f2b030fe..HEAD`, rc 1 |
 | `is_shallow → UNKNOWN` | not reproducible with a real clone here; measured through B1's monkeypatched parametrization `tests/test_coverage_walk.py::test_the_shallow_or_indeterminate_halt_is_pinned_on_this_host[TRUE-True]` / `[UNKNOWN-True]` / `[FALSE-False]`, 3 passed. B1's real-clone test `test_a_real_shallow_clone_halts_the_walk` skips on this host with `posix-only test, running on nt` and is CI-gated; the manual clone above is the host-local substitute. |
 | Dogfood in a throwaway clone of this repo (§10.D) | `== 23/24 checks passed, 1 skipped ==` with `[PASS] path coverage: 0 protected touches covered`, `[PASS] pin violation: 1 authorization record(s), no state file pinned`, `[PASS] role policy integrity: .ai/state/ROLE_POLICY.md digests to the pinned 03f80ef0…`, `[PASS] swarm boundary: 1 accepted authorization(s) of 1 record(s) in the window` |
+
+**§10.D as written (this wave executing under the repo's OWN `.ai/`) was NOT
+done.** The repo root has no `.ai/` directory: the wave ran in a throwaway clone
+of the repo, whose install is a *clone's* install. That run is substitute
+evidence for the install/migrate/verify machinery and it is not self-dogfooding —
+nothing in this repository's own history is governed by the `path coverage` walk
+it ships. The published repo is therefore **not** self-dogfooding, and adopting
+§10.D as written is wave-1c work, not a claim this release can make.
+
+**Re-measured after the final whole-branch review.** Three false-greens the
+reviewer measured on this host are closed here, each red-first: a
+`governance.window_start_commit` that is not a commit id (`HEAD`, `main`, a short
+prefix) printed `[PASS] path coverage: 0 protected touches covered` over real
+protected work and now FAILs by name; `protected_paths_case: "case-insensitive"`
+reached only the authorization side of the comparison, so `["SRC/*"]` governed
+nothing while `glob_match` said the file was protected, and the candidate set now
+goes to git as `:(icase)`; and `sync_verify` and `--review-prompt` scanned the
+authorizations directory with two different walks, so a record could be counted by
+one and invisible to the other. A protected set that matches no tracked file is now
+a named `[WARN]` plus `SKIP(void-protected-set)` instead of a PASS. The counts in
+the table above did not move: a fresh install re-measured
+`== 20/24 checks passed, 4 skipped ==` at rc 0, a genuine v2.0.0 install re-measured
+`== 14/14 checks passed ==` before upgrade and `== 21/24 checks passed, 3 skipped ==`
+after `--migrate`.
 
 A default install is `== 20/24 checks passed, 4 skipped ==`, not 24/24. The four
 named skips are `registered project checks`, `path coverage`
@@ -163,7 +190,9 @@ function added), measured with the same command.
 
 The one-line shape a reviewer sees on a default install never changes to
 "everything passed": a default install registers no `extra_checks` and no
-`secret_mirrors`, so it prints exactly one named `[SKIP]` forever. `rc == 0` is
+`secret_mirrors`, so it prints one or more named `[SKIP]`s forever (a wave-1a
+default install printed exactly one; this release prints four, and the figure is
+the `== 20/24 checks passed, 4 skipped ==` line quoted above). `rc == 0` is
 not a verdict you can stop reading at.
 
 ### Development history — one commit inside this range is red

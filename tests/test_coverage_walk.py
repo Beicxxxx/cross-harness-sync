@@ -417,3 +417,161 @@ def test_a_real_shallow_clone_halts_the_walk(ai_repo, sv):
     assert not any(ln.startswith("[PASS] path coverage:")
                    for ln in res.lines), res.lines
 
+
+# ------------------------------------------------ the anchor's SHAPE (I-1) --
+#
+# Final review I-1, MEASURED on this host: with a real protected commit and no
+# covering authorization, `window_start_commit: "HEAD"` printed
+# `[PASS] path coverage: 0 protected touches covered` at rc 0. `git log
+# HEAD..HEAD` is a permanently empty range, so the walk governed nothing and
+# booked the line a walk over a genuinely empty window would have booked. The
+# predicate that refuses such an anchor already existed — in `init_sync`, as a
+# private `_window_is_valid`, so only the writer of the field ever enforced it.
+# `ai_common.window_is_valid` is that one predicate, now read by both.
+
+
+@pytest.mark.parametrize("anchor", ["HEAD", "main", "a" * 39, "A" * 40,
+                                    "HEAD~1", "not-a-rev"])
+def test_a_non_commit_window_anchor_fails_rather_than_governing_nothing(
+        ai_repo, sv, anchor):
+    """A malformed anchor is an unreadable window, not an empty one (I-1).
+
+    `A`*40 is in the set on purpose: git resolves an uppercase id happily, and the
+    migrator still refuses to WRITE one, so a verifier that accepted it would
+    certify a field the tooling calls corrupt — and a short prefix would certify a
+    range that resolves to a different commit on a host with more history.
+    """
+    (ai_repo / "protected").mkdir()
+    (ai_repo / "protected" / "model.py").write_text("x\n", encoding="utf-8")
+    git(ai_repo, "add", "-A")
+    git(ai_repo, "commit", "-q", "-m", "protected work nobody authorised")
+    _cfg(ai_repo, protected_paths=["protected/*"],
+         governance={"window_start_commit": anchor})
+
+    res = run_python(sv, cwd=ai_repo)
+    assert res.rc == 1, (anchor, res.stdout + res.stderr)
+    fails = [ln for ln in res.lines if ln.startswith("[FAIL] path coverage:")]
+    assert len(fails) == 1, (anchor, res.lines)
+    assert "window anchor is not a commit id" in fails[0], fails[0]
+    assert anchor in fails[0], fails[0]
+    assert not any(ln.startswith("[PASS] path coverage:")
+                   for ln in res.lines), (anchor, res.lines)
+
+
+def test_a_valid_anchor_still_governs_the_same_tree(ai_repo, sv):
+    """The control the test above needs: the SAME tree and records, the anchor
+    spelled as a 40-hex id, reaches the real uncovered FAIL — so the red above is
+    the anchor's shape and not the walk never running."""
+    window = git(ai_repo, "rev-parse", "HEAD")
+    (ai_repo / "protected").mkdir()
+    (ai_repo / "protected" / "model.py").write_text("x\n", encoding="utf-8")
+    git(ai_repo, "add", "-A")
+    git(ai_repo, "commit", "-q", "-m", "protected work nobody authorised")
+    _cfg(ai_repo, protected_paths=["protected/*"],
+         governance={"window_start_commit": window})
+
+    res = run_python(sv, cwd=ai_repo)
+    assert res.rc == 1, res.stdout + res.stderr
+    assert any(ln.startswith("[FAIL] path coverage:") and "uncovered" in ln
+               for ln in res.lines), res.lines
+
+
+# ------------------------------------------------ the CASE POLICY (I-2) ----
+#
+# Final review I-2, MEASURED on this host: `protected_paths: ["SRC/*"]` with
+# `protected_paths_case: "case-insensitive"` printed `[PASS] path coverage: 0
+# protected touches covered` over a commit that touched `src/engine.py`, while
+# `glob_match` — the same D14 policy — said that file IS protected. The policy
+# only ever filtered the EDITABLE side, so the candidate set came from git with a
+# case-SENSITIVE pathspec and the governed work never reached the check at all:
+# under-govern, and read green. `:(icase)` is git's own case-insensitive pathspec
+# magic, and it is what makes the recorded policy mean the same thing on the
+# candidate side that it means on the editable side.
+
+
+def _case_fixture(repo):
+    """One commit touching `src/engine.py`, window anchored, no authorization."""
+    window = git(repo, "rev-parse", "HEAD")
+    (repo / "src").mkdir()
+    (repo / "src" / "engine.py").write_text("x = 1\n", encoding="utf-8")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "protected work under a folded pattern")
+    return window
+
+
+def test_case_insensitive_policy_reaches_the_candidate_set(ai_repo, sv):
+    """D14 honoured on BOTH sides of the comparison (I-2)."""
+    window = _case_fixture(ai_repo)
+    _cfg(ai_repo, protected_paths=["SRC/*"], protected_paths_case="case-insensitive",
+         governance={"window_start_commit": window})
+
+    res = run_python(sv, cwd=ai_repo)
+    assert res.rc == 1, res.stdout + res.stderr
+    fails = [ln for ln in res.lines if ln.startswith("[FAIL] path coverage:")]
+    assert len(fails) == 1, res.lines
+    assert "src/engine.py" in fails[0], fails[0]
+    assert "uncovered" in fails[0], fails[0]
+    assert not any(ln.startswith("[PASS] path coverage:")
+                   for ln in res.lines), res.lines
+
+
+def test_case_insensitive_policy_covers_once_the_record_says_so(ai_repo, sv):
+    """Positive control: the red above is the missing authorization, and the
+    folded pattern still matches when a record lists the path — so the fix did not
+    turn the policy into a permanent FAIL."""
+    window = _case_fixture(ai_repo)
+    _auth(ai_repo, "folded-stage", ["src/*"])
+    _cfg(ai_repo, protected_paths=["SRC/*"], protected_paths_case="case-insensitive",
+         governance={"window_start_commit": window})
+
+    res = run_python(sv, cwd=ai_repo)
+    assert res.rc == 0, res.stdout + res.stderr
+    assert any(ln.startswith("[PASS] path coverage:")
+               and "1 protected touches covered" in ln
+               for ln in res.lines), res.lines
+
+
+# ------------------------------------------------ the VOID SET (I-2 guard) --
+#
+# The same walk over a protected set that names no tracked file at all — a typo,
+# a renamed directory, a pattern written for a different layout — is permanently
+# green for exactly the same reason: zero candidates, zero touches, one PASS.
+# Spec 4: a degradation is a named WARN/SKIP, never a PASS.
+
+
+def test_a_protected_set_matching_no_tracked_file_is_a_named_warn(ai_repo, sv):
+    window = _case_fixture(ai_repo)
+    _cfg(ai_repo, protected_paths=["src/core/*", "nope/**"],
+         governance={"window_start_commit": window})
+
+    res = run_python(sv, cwd=ai_repo)
+    cov = [ln for ln in res.lines
+           if ln.startswith(("[PASS] path coverage:", "[FAIL] path coverage:",
+                             "[SKIP] path coverage:"))]
+    assert len(cov) == 1, res.lines
+    assert cov[0].startswith("[SKIP] path coverage:"), cov[0]
+    assert "void-protected-set" in cov[0], cov[0]
+    assert any(ln.startswith("[WARN] path coverage:") for ln in res.lines), \
+        res.lines
+    assert res.rc == 0, res.stdout + res.stderr
+
+
+def test_a_protected_set_that_does_match_tracked_files_books_the_pass(ai_repo, sv):
+    """Control for the guard above: a real governed file, untouched in the window,
+    still certifies green — so the SKIP above is the void set and not a walk that
+    simply never finds anything."""
+    (ai_repo / "src").mkdir()
+    (ai_repo / "src" / "engine.py").write_text("x = 1\n", encoding="utf-8")
+    git(ai_repo, "add", "-A")
+    git(ai_repo, "commit", "-q", "-m", "the governed file, landed before the window")
+    window = git(ai_repo, "rev-parse", "HEAD")
+    _cfg(ai_repo, protected_paths=["src/*"],
+         governance={"window_start_commit": window})
+
+    res = run_python(sv, cwd=ai_repo)
+    assert res.rc == 0, res.stdout + res.stderr
+    assert any(ln.startswith("[PASS] path coverage:")
+               and "0 protected touches covered" in ln
+               for ln in res.lines), res.lines
+
+

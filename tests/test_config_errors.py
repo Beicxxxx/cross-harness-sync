@@ -672,3 +672,50 @@ def test_an_ignored_secret_that_is_not_there_says_so(ai_repo, sv):
     assert res.rc == 0, res.stdout + res.stderr
     present = [ln for ln in res.lines if ln.startswith("[PASS] secret ignored: .env")]
     assert present and "file absent" not in present[0], res.lines
+
+
+# ------------------------------------------------ path escape (M-6) ---------
+#
+# `_check_shape` refuses a `PATH_LIST_KEYS` entry that leaves the checkout, and
+# `protected_paths` / `authorizations_dir` were added to that family in wave 1b
+# without a test that walks the refusal. An escape in `protected_paths` would
+# point the coverage walk at another tree's files, and in `authorizations_dir` at
+# another tree's RECORD SOURCE — both still printing `[PASS] …` about this one.
+
+
+@pytest.mark.parametrize("key,bad", [
+    ("protected_paths", ["../outside/*"]),
+    ("protected_paths", ["src/../../outside/*"]),
+    ("protected_paths", ["/etc/passwd"]),
+    # A drive-letter path is the Windows spelling of "outside the tree", and
+    # `Path("C:/x").is_absolute()` is False there, so the refusal has to name the
+    # drive. Forward slashes on purpose: `Path` reads `C:/x` and `C:\\x` the same
+    # way, and the escaped form is what the JSON config itself carries.
+    ("protected_paths", ["C:/outside/*"]),
+    ("authorizations_dir", "../sibling/.ai/state/authorizations"),
+    ("authorizations_dir", "/tmp/authorizations"),
+    ("authorizations_dir", "C:/other/.ai/state/authorizations"),
+])
+def test_an_escaping_path_key_is_refused_before_any_check_runs(ai_repo, sv,
+                                                               key, bad):
+    """rc 2 (`no verdict`), the key named, and no check line printed at all."""
+    patch_cfg(ai_repo, **{key: bad})
+    res = run_python(sv, cwd=ai_repo)
+    assert res.rc == 2, (key, bad, res.stdout + res.stderr)
+    assert readable_failures(res), (key, res.lines)
+    line = readable_failures(res)[0]
+    assert "malformed:" in line and key in line, line
+    assert "repo-relative" in line, line
+    assert "Traceback" not in res.stderr, res.stderr + res.stdout
+    assert not any(ln.startswith(("[PASS] path coverage:",
+                                  "[PASS] swarm boundary:"))
+                   for ln in res.lines), res.lines
+
+
+@pytest.mark.parametrize("val", ["../outside/x.md", "src/../../x.md",
+                                 "/etc/passwd", "C:/x/y.md", "", "   ",
+                                 None, 7])
+def test_the_repo_relative_predicate_itself_answers_no(val):
+    """The guard exists; this pins it directly so a later `resolve()` refactor
+    cannot quietly start answering yes for a component-wise escape."""
+    assert sync_verify._is_repo_relative_path(val) is False, val

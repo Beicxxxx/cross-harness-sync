@@ -361,6 +361,78 @@ SHA256_HEX_LEN = 64
 # authorization file") but gave no canonical home, so nothing could read it back.
 AUTHORIZATIONS_SUBDIR = "state/authorizations"
 
+# The one record that is not a record: the directory's index (§8 creates it, spec 6
+# keeps it out of the audit set). Compared case-INSENSITIVELY by
+# `authorization_records()` below, because a host whose filesystem folds case can
+# write `index.md` and the two readers must not disagree about whether that is a
+# stage authorization.
+AUTHORIZATION_INDEX_NAME = "INDEX.md"
+
+# The anchor `--migrate` writes when the tree genuinely has no commit to anchor a
+# coverage window on — an empty repo, or one outside git altogether. It is a NAMED
+# skip, not a rev: `git log <x>..HEAD` would otherwise be asked about nothing.
+NO_HISTORY = "NO_HISTORY"
+
+_WINDOW_SHA_RE = re.compile(r"[0-9a-f]{%d}" % SHA_HEX_LEN)
+
+
+def window_is_valid(value) -> bool:
+    """A coverage-window anchor is a 40-lowercase-hex commit id or `NO_HISTORY`.
+
+    One copy, because the predicate decides a claim and not just a write. It was
+    `init_sync._window_is_valid`, which meant the migrator refused `HEAD` while the
+    VERIFIER accepted it and ran `git log HEAD..HEAD` — a permanently empty range —
+    and booked `[PASS] path coverage: 0 protected touches covered` at rc 0 over a
+    window containing real protected work. A malformed anchor is not an empty
+    window; it is an anchor that cannot be read, which §6 sends to FAIL. Short
+    prefixes, uppercase ids and prose all fail the same way: a rev that resolves to
+    something else would silently govern a different range than the one recorded.
+    """
+    return value == NO_HISTORY or bool(
+        isinstance(value, str) and _WINDOW_SHA_RE.fullmatch(value))
+
+
+def authorization_records(directory):
+    """The stage records in `directory`: flat `*.md`, index aside, sorted.
+
+    One copy for both readers (final review I-4), because two copies drifted the
+    moment they were written: `sync_verify` walked `rglob("*.md")` and skipped
+    `name == "INDEX.md"`, `checkpoint` walked `glob("*.md")` and skipped
+    `name.upper() == "INDEX.MD"`. A nested `authorizations/sub/x.md` was therefore
+    COVERAGE-visible but invisible to `--review-prompt`, and `index.md` was a record
+    to one and not to the other — the exact "two commands answer different
+    questions" class the module exists to end.
+
+    FLAT by contract: `templates/authorizations/INDEX.md` documents one file per
+    stage in this directory, and a recursive scan would invent a hierarchy nothing
+    writes and no reader can check. A missing directory answers `[]`, so callers
+    distinguish it from "unreadable" before calling.
+    """
+    try:
+        return sorted(p for p in Path(directory).glob("*.md")
+                      if p.is_file()
+                      and p.name.upper() != AUTHORIZATION_INDEX_NAME.upper())
+    except OSError:
+        # An unreadable directory is not an empty one. The caller that can name
+        # the failure (`sync_verify`'s record set) catches this and reports it;
+        # swallowing it here would answer "no authorizations" to a question git
+        # or the OS refused to answer.
+        raise
+
+
+def is_accepted(fields) -> bool:
+    """`verdict == accepted`, normalised, and nothing else (spec 6).
+
+    The one predicate `sync_verify`'s accepted count and `checkpoint`'s review
+    prompt share: a record live to one and stale to the other is a contradiction
+    the tree contains no way to check. `None` (no governance block, or an
+    unparseable one) is False — a legacy record is never treated as accepted — and
+    a non-string value is stringified before normalising rather than trusted.
+    """
+    if not fields:
+        return False
+    return str(fields.get("verdict", "") or "").strip().lower() == "accepted"
+
 _GOVERNANCE_OPEN = "```governance"
 _GOVERNANCE_CLOSE = "```"
 _GOV_KEY = re.compile(r"^[a-z][a-z0-9_]*$")

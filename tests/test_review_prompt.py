@@ -320,3 +320,61 @@ def test_diff_block_names_why_when_git_cannot_answer(ai_repo, cp):
     assert "0000000" in body, f"the unusable window must be named:\n{body}"
     assert "[DIFF" in body, \
         f"an undiffable window must print a named reason:\n{body}"
+
+
+# ------------------------------------------------ one record set (I-4) ------
+#
+# Final review I-4, MEASURED: `sync_verify` scanned the authorizations directory
+# with `rglob("*.md")` and a case-SENSITIVE `name == "INDEX.md"`, while this
+# command used `glob("*.md")` and `name.upper() == "INDEX.MD"`. A record in a
+# nested directory was therefore counted by the verifier and invisible to the
+# reviewer — the reviewer signs off on the change while the file that authorises
+# it sits in a block they never saw — and the template documents a FLAT
+# directory, so the extra nesting is a hole, not a feature. Both readers now call
+# `ai_common.authorization_records()`, so there is one walk and one answer.
+
+
+def test_the_verifier_and_the_review_prompt_see_the_same_records(ai_repo, cp, sv):
+    """Two accepted records flat, one nested: BOTH commands answer with the SAME
+    record set — same two names, same count, and the nested file treated the same
+    way by both (I-4).
+
+    The layout `templates/authorizations/INDEX.md` documents is FLAT ("one file per
+    stage, named `<YYYY-MM-DD>-<stage>.md`"), so the flat walk is the contract.
+    What was broken is that the two readers disagreed about it: `sync_verify`
+    walked recursively and `--review-prompt` did not, so a nested record's
+    `## Editable files` covered the coverage walk while the reviewer never saw the
+    document they were being asked to approve. One walk now, in both directions:
+    the nested record counts for nothing anywhere.
+    """
+    _write_auth(ai_repo, "flat-one.md",
+                "# Authorization -- one\n\nFLAT-ONE-MARKER\n\n## Governance\n"
+                + GOV_ACCEPTED)
+    _write_auth(ai_repo, "flat-two.md",
+                "# Authorization -- two\n\nFLAT-TWO-MARKER\n\n## Governance\n"
+                + GOV_ACCEPTED)
+    nested = ai_repo / ".ai" / "state" / "authorizations" / "sub"
+    nested.mkdir(parents=True, exist_ok=True)
+    (nested / "nested-stage.md").write_text(
+        "# Authorization -- nested\n\nNESTED-MARKER\n\n## Governance\n"
+        + GOV_ACCEPTED, encoding="utf-8")
+
+    res = run_python(sv, [], cwd=ai_repo)
+    swarm = [ln for ln in res.lines
+             if "swarm boundary" in ln and ln.startswith("[")]
+    assert len(swarm) == 1, res.lines
+    assert swarm[0].startswith("[FAIL] swarm boundary:"), swarm[0]
+    assert "2 concurrent accepted authorizations" in swarm[0], swarm[0]
+    assert "flat-one.md" in swarm[0] and "flat-two.md" in swarm[0], swarm[0]
+    assert "nested-stage.md" not in swarm[0], swarm[0]
+
+    prompt = run_python(cp, ["--review-prompt"], cwd=ai_repo)
+    assert prompt.rc == 0, f"rc {prompt.rc}:\n{prompt.stdout}\n{prompt.stderr}"
+    body = _sections(prompt)[HEADERS[0]]
+    assert "[AMBIGUOUS AUTHORIZATION] 2 accepted records" in body, \
+        f"the reviewer must count exactly what the verifier counted:\n{body}"
+    assert "flat-one.md" in body and "flat-two.md" in body, body
+    assert "FLAT-ONE-MARKER" in body and "FLAT-TWO-MARKER" in body, body
+    assert "nested-stage.md" not in body, \
+        f"a record outside the documented flat layout counts for nothing in " \
+        f"BOTH readers:\n{body}"
