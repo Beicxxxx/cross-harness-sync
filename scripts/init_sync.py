@@ -587,7 +587,8 @@ def warn_agents_over_budget(root: Path) -> list[str]:
 
     The budget raise pays for the block, not for the caller's text: an
     `AGENTS.md` already past its own cap still has to verify red. Saying so here
-    is what keeps init's `should be all green` line from being a lie.
+    is what keeps init's step-3 line ("sync_verify.py -> no FAILED line; a named
+    [SKIP] is EXPECTED") from being a promise this run cannot meet.
     """
     agents = root / "AGENTS.md"
     cfg_path = root / ".ai" / "sync_config.json"

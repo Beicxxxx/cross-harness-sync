@@ -7,7 +7,7 @@ Before any work, in order:
    never rewrite history.
 2. Read the root `AGENTS.md` — the single canonical instruction file for all
    harnesses (`CLAUDE.md` is only a pointer to it). Follow its L0/L1/L2 layered
-   reading rules and token budgets.
+   reading rules and line budgets.
 3. Startup reads are exactly three files: `.ai/state/CURRENT.md`, `TASK.md`,
    `BLOCKERS.md`. Do NOT read DECISIONS / handoff archives in full;
    retrieve single entries via `DECISIONS_INDEX.md` or grep.

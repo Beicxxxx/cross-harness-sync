@@ -1,10 +1,10 @@
 # Agents Instructions — <PROJECT NAME>
 
 Canonical instructions for ALL harnesses (Codex, Claude Code, Kimi, GLM, …).
-Keep YOUR rules ≤ 65 lines (enforced by `.ai/scripts/sync_verify.py`). If the
-skill's managed block is appended here instead of this template being copied,
-it adds 16 lines and `init_sync.py` raises the cap to 81 at install time — the
-65 lines below are still all the file may spend on its own instructions.
+Keep YOUR rules ≤ 65 lines (enforced by `.ai/scripts/sync_verify.py` against
+`.ai/sync_config.json`). If the skill's managed block is appended here instead of
+this template being copied, it adds 16 lines and `init_sync.py` raises the cap to
+81 (65 + 16) — those 65 lines are still all the file may spend on its own rules.
 
 ## On Session Start (L0 — the ONLY required reads)
 
@@ -17,7 +17,7 @@ it adds 16 lines and `init_sync.py` raises the cap to 81 at install time — the
 Shortcut: `python .ai/scripts/checkpoint.py --prime` prints lock status +
 exactly what to read.
 
-## Layered context (token budget — enforced by `.ai/scripts/sync_verify.py`)
+## Layered context (line budget — enforced by `.ai/scripts/sync_verify.py`)
 
 - **L0 startup**: the three files above.
 - **L1 task-level**: the task's single authorization `.md` plus directly named
