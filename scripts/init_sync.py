@@ -69,9 +69,13 @@ Flags:
                      hand afterwards. Refuses (exit 2, nothing written) on an
                      unborn or detached HEAD, a newer or unparseable stamp, an
                      unparseable config, an unstaged edit under `.ai/scripts/`,
-                     a staged change outside `.ai/`, or a held lock; a diverged
-                     script gets a `.new` sidecar instead of a clobber; a re-run
-                     verifies instead of migrating again.
+                     a staged change outside `.ai/`, a held lock, or a git that
+                     cannot be asked at all (no `git` on PATH, a refused probe
+                     such as dubious ownership, `index.lock` contention) — the
+                     last is its own halt, never the no-repository bucket; a
+                     diverged script gets a `.new` sidecar instead of a clobber,
+                     recorded in the migration record's `warnings`/`degraded`; a
+                     re-run verifies instead of migrating again.
     --authorizations-dir  where the stage records live. Never guessed: the flag
                      wins, then the config's `authorizations_dir`, then
                      `.ai/state/authorizations`.
@@ -1019,33 +1023,113 @@ def _refuse(why: str, extra: list | None = None) -> int:
     return MIGRATE_REFUSED
 
 
-def git_head_state(root: Path) -> tuple:
-    """`('head', sha40)` / `('no-git', detail)` / `('unborn', detail)` /
-    `('detached', sha40)` / `('bogus', detail)`.
+def _one_line(text: str, limit: int = 240) -> str:
+    """A subprocess's multi-line complaint as one readable line."""
+    return " | ".join(ln.strip() for ln in text.splitlines() if ln.strip())[:limit]
 
-    The four answers are separate because spec §8 sends them different ways:
-    unborn and detached REFUSE (a migration commit would land on no branch at
-    all, or on a detached one), while a tree with no repository at all still
-    gets its records - with `NO_HISTORY` as the window anchor, which is a named
-    skip rather than a claim. `bogus` is the fail-open guard: a HEAD that does
-    not resolve to exactly 40 lowercase hex is not a commit id, and storing
-    whatever came back would make `git log <window>..HEAD` a coin flip.
+
+def _not_a_repository_said(res) -> bool:
+    """True ONLY for git's own "outside any repository" answer.
+
+    The distinction is the whole point: every other non-zero exit is git
+    refusing to answer (dubious ownership, an `index.lock` left by a crashed
+    process, an unreadable object store, a timeout), and a question the
+    migration could not ask has no clean answer. Lumping the two together let a
+    repository with a transient lock be stamped `NO_HISTORY` — a value that then
+    travels to every other machine in `sync_config.json`.
+    """
+    if res.timed_out or res.rc == 0:
+        return False
+    err = res.err().lower()
+    return ("not a git repository" in err
+            or "repository not found" in err
+            or "cannot find repository" in err)
+
+
+def _no_commits_said(res) -> bool:
+    """True only for git's own "HEAD names no commit" answer (rc 1, a revision
+    problem). A repository-level fatal is rc 128 and belongs to the guard above.
+    """
+    if res.timed_out or res.rc != 1:
+        return False
+    err = res.err().lower()
+    return ("needed a single revision" in err
+            or "unknown revision" in err
+            or "does not have any commits" in err
+            or "ambiguous argument 'head'" in err)
+
+
+def _window_is_valid(value: str) -> bool:
+    """A coverage-window anchor is a 40-lowercase-hex commit id or the sentinel.
+
+    Anything else - a short prefix, `HEAD`, an uppercased id, prose - is not an
+    anchor, and `verify_migration()` reporting PASS over one would let a forged
+    or truncated field read as a completed migration forever.
+    """
+    return value == NO_HISTORY or bool(
+        re.fullmatch(r"[0-9a-f]{%d}" % SHA_HEX_LEN, value))
+
+
+def git_head_state(root: Path) -> tuple:
+    """`('head', sha40)` / `('no-repo', detail)` / `('unborn', detail)` /
+    `('detached', sha40)` / `('bogus', detail)` / `('probe-refused', detail)`.
+
+    The states are separate because spec §8 sends them different ways: unborn
+    and detached REFUSE (a migration commit would land on no branch at all, or
+    on a detached one), while a tree git positively confirms is outside any
+    repository still gets its records - with `NO_HISTORY` as the window anchor,
+    which is a named skip rather than a claim. `bogus` is the fail-open guard: a
+    HEAD that does not resolve to exactly 40 lowercase hex is not a commit id,
+    and storing whatever came back would make `git log <window>..HEAD` a coin
+    flip.
+
+    `probe-refused` is fix round 1's split, and it is deliberately NOT in the
+    no-repository bucket: git not being on PATH, a refused probe (dubious
+    ownership), a lock contention or a timeout all mean "this tree's history is
+    unknown". Reading that as "no repository" skipped the writer lock and
+    permanently stamped `NO_HISTORY` into a repo that has history, which §6
+    already refuses to do for dubious ownership ("its own actionable error").
+    Here it is a named halt of its own.
     """
     if not git_available():
-        return "no-git", "git is not on PATH"
+        return "probe-refused", ("`git` is not on PATH, so this tree's history "
+                                 "cannot be read at all (install git, or run "
+                                 "this from a shell that has it on PATH)")
     probe = run_git(root, ["rev-parse", "--is-inside-work-tree"], timeout=15)
-    if not probe.ok or probe.out().strip().lower() != "true":
-        return "no-git", "this directory is not a git working tree"
+    answer = probe.out().strip().lower()
+    if probe.ok and answer == "true":
+        pass                                   # a work tree: ask about HEAD
+    elif probe.ok and answer == "false":
+        return "probe-refused", ("`git rev-parse --is-inside-work-tree` answered "
+                                 "false: this is a git directory, not a working "
+                                 "tree, so nothing here can be committed from")
+    elif _not_a_repository_said(probe):
+        return "no-repo", ("git reports no repository around this directory "
+                           "(confirmed, not assumed)")
+    else:
+        return "probe-refused", (
+            f"`git rev-parse --is-inside-work-tree` exited {probe.rc} instead of "
+            f"answering: {_one_line(probe.err() or probe.out())}")
     head = run_git(root, ["rev-parse", "--verify", "HEAD"], timeout=15)
     if not head.ok:
-        return "unborn", "`git rev-parse --verify HEAD` found no commit"
+        if _no_commits_said(head):
+            return "unborn", "`git rev-parse --verify HEAD` found no commit"
+        return "probe-refused", (
+            f"`git rev-parse --verify HEAD` exited {head.rc} instead of "
+            f"answering: {_one_line(head.err() or head.out())}")
     sha = head.out().strip()
     if not re.fullmatch(r"[0-9a-f]{%d}" % SHA_HEX_LEN, sha):
         return "bogus", f"HEAD resolved to {sha!r}, not a {SHA_HEX_LEN}-hex id"
     branch = run_git(root, ["symbolic-ref", "--quiet", "HEAD"], timeout=15)
-    if not branch.ok:
-        return "detached", sha
-    return "head", sha
+    if branch.ok:
+        return "head", sha
+    if branch.timed_out or branch.rc != 1:
+        # rc 1 is "HEAD is not a symbolic ref" — the detached answer. Anything
+        # else (rc 128, a failed launch) is git declining to say.
+        return "probe-refused", (
+            f"`git symbolic-ref --quiet HEAD` exited {branch.rc} instead of "
+            f"answering: {_one_line(branch.err() or branch.out())}")
+    return "detached", sha
 
 
 def _nul_lines(res) -> list:
@@ -1054,34 +1138,70 @@ def _nul_lines(res) -> list:
             for part in res.stdout.split(b"\0") if part]
 
 
-def dirty_tracked_scripts(root: Path) -> list:
-    """Tracked files under `.ai/scripts/` edited or deleted in the worktree.
+def _in_a_work_tree(root: Path) -> tuple:
+    """`(yes, '')` / `(no, '')` / `(unknown, why)` for "is anything tracked here".
+
+    Shared by the two guards below so they cannot disagree about which question
+    they are answering.
+    """
+    probe = run_git(root, ["rev-parse", "--is-inside-work-tree"], timeout=15)
+    if probe.ok and probe.out().strip().lower() == "true":
+        return True, ""
+    if _not_a_repository_said(probe):
+        return False, ""
+    return None, (f"`git rev-parse --is-inside-work-tree` exited {probe.rc}: "
+                  f"{_one_line(probe.err() or probe.out())}")
+
+
+def dirty_tracked_scripts(root: Path) -> tuple:
+    """`(paths, why_unknown)` for tracked files under `.ai/scripts/` that are
+    edited or deleted in the worktree; `paths is None` means git could not answer.
 
     `git ls-files -m/-d` is asked, not `git status`: the question is exactly
     "tracked and modified", and an untracked install (everything `??`) must not
     read as a dirty one - that would refuse every tree that has not committed
     yet, which is the common case for a first `--migrate`.
+
+    Fix round 1: a FAILED probe no longer returns `[]`. `[]` means "checked, and
+    nothing is dirty"; a refused `ls-files` (an `index.lock` contention, a
+    dubious-ownership halt, a timeout) is not evidence of anything, and the
+    files it was asking about are exactly the ones this migration rewrites.
     """
-    if not is_git_repo(root):
-        return []
+    inside, why = _in_a_work_tree(root)
+    if inside is None:
+        return None, why
+    if not inside:
+        return [], ""                      # confirmed: nothing here is tracked
     out = []
     for flag in ("-m", "-d"):
         res = run_git(root, ["ls-files", flag, "-z", "--", ".ai/scripts"],
                       timeout=15)
         if not res.ok:
-            return []
+            return None, (f"`git ls-files {flag} -- .ai/scripts` exited "
+                          f"{res.rc}: {_one_line(res.err() or res.out())}")
         out.extend(_nul_lines(res))
-    return sorted(set(out))
+    return sorted(set(out)), ""
 
 
-def staged_outside_ai(root: Path) -> list:
-    """Index entries outside `.ai/` - the commit could not stay scoped with them."""
-    if not is_git_repo(root):
-        return []
+def staged_outside_ai(root: Path) -> tuple:
+    """`(paths, why_unknown)` for index entries outside `.ai/` - the commit
+    could not stay scoped with them. `paths is None` means git could not answer.
+
+    Fix round 1: same split as `dirty_tracked_scripts()` — and this one is read
+    AGAIN immediately before `git commit`, because the check that mattered was
+    running after it: a bad index reaching history at rc 0 cannot be undone by
+    noticing afterwards.
+    """
+    inside, why = _in_a_work_tree(root)
+    if inside is None:
+        return None, why
+    if not inside:
+        return [], ""
     res = run_git(root, ["diff", "--cached", "--name-only", "-z"], timeout=15)
     if not res.ok:
-        return []
-    return [p for p in _nul_lines(res) if not p.startswith(".ai/")]
+        return None, (f"`git diff --cached --name-only` exited {res.rc}: "
+                      f"{_one_line(res.err() or res.out())}")
+    return [p for p in _nul_lines(res) if not p.startswith(".ai/")], ""
 
 
 def head_blob(root: Path, rel: str):
@@ -1236,14 +1356,32 @@ def _migration_commit(root: Path, installed: str) -> tuple:
     """Commit `.ai/**` and nothing else. `(ok, detail)`; a failed commit is a
     NAMED outcome, never an absent one.
 
-    The lock record is unstaged before the commit - `--migrate` holds the pen,
-    it does not record the holding in the migration's own commit.
+    Two things make "and nothing else" true rather than hoped for:
+
+    1. the staged set is verified BEFORE the commit. The old order ran `git
+       show --name-only` afterwards and reported a bad commit having already
+       created it - a fact with an rc of 0 and a history entry behind it.
+    2. the commit is PATH-SCOPED (`git commit ... -- .ai`), so git cannot fold an
+       index entry from outside `.ai/` into it even if a guard failed to see it.
+       The scope excludes the lock record by pathspec, because a path-scoped
+       commit takes the WORKING-TREE content of the named paths and
+       `.gitignore` deliberately un-ignores `WRITER_LOCK.json` - `git reset`
+       alone would not have kept it out.
     """
     add = run_git(root, ["add", "-A", "--", ".ai"], timeout=120)
     if not add.ok:
         return False, (f"`git add -- .ai` exited {add.rc}: "
-                       f"{add.err().strip()[:200]}")
+                       f"{_one_line(add.err() or add.out())}")
     run_git(root, ["reset", "-q", "--", WRITER_LOCK_REL], timeout=60)
+    outside, why_unknown = staged_outside_ai(root)
+    if outside is None:
+        return False, (f"the staged set could not be verified before committing "
+                       f"({why_unknown}). A guard that could not run is not a "
+                       "clean index, and this commit cannot be un-made.")
+    if outside:
+        return False, (f"the index holds {len(outside)} change(s) outside .ai/ "
+                       f"before the commit: {_one_line(', '.join(outside))}. "
+                       "No commit was created.")
     message = (f"chore({MIGRATION_COMMIT_TAG}): v{installed} -> "
                f"v{PROTOCOL_VERSION} governance records\n\n"
                f"Written by `init_sync.py --migrate`: the authorization index, "
@@ -1251,7 +1389,8 @@ def _migration_commit(root: Path, installed: str) -> tuple:
                f"{MIGRATION_JOURNAL_REL}.\n"
                f"Revert this commit to undo the .ai/ part; "
                f"{MIGRATION_JOURNAL_REL} names what a revert cannot undo.")
-    commit = run_git(root, ["commit", "-q", "-m", message], timeout=120)
+    commit = run_git(root, ["commit", "-q", "-m", message, "--", ".ai",
+                            ":(exclude)" + WRITER_LOCK_REL], timeout=120)
     if commit.ok:
         listing = run_git(root, ["show", "--name-only", "--format="],
                           timeout=60)
@@ -1343,8 +1482,17 @@ def verify_migration(root: Path) -> list:
         return out
     gov = cfg.get("governance") if isinstance(cfg.get("governance"), dict) else {}
     window = str(gov.get("window_start_commit", "") or "")
-    out.append((("PASS" if window else "FAIL"), "window anchor",
-                window or "unset"))
+    out.append((("PASS" if _window_is_valid(window) else "FAIL"),
+                "window anchor",
+                window if _window_is_valid(window) else
+                f"{window or 'unset'!r} is neither a {SHA_HEX_LEN}-lowercase-hex "
+                f"commit id nor the exact {NO_HISTORY} sentinel, so it cannot be "
+                "a completed migration's anchor"))
+    rec_warns = record.get("warnings")
+    if isinstance(rec_warns, list) and rec_warns:
+        out.append(("WARN", "migration warnings",
+                    f"{len(rec_warns)} recorded in {MIGRATION_REL}: "
+                    + " ; ".join(str(w) for w in rec_warns)[:300]))
     adir = effective_authorizations_dir(cfg, None)
     index = root / Path(adir) / "INDEX.md"
     out.append((("PASS" if index.is_file() and index.stat().st_size else "FAIL"),
@@ -1403,6 +1551,17 @@ def run_migration(root: Path, args) -> int:
     installed = (_read_text(stamp_path) or "").strip()
 
     state, value = git_head_state(root)
+    if state == "probe-refused":
+        # Its own halt, named: not the no-repository bucket. Stamping the
+        # sentinel here would (a) skip the writer lock over a tree that DOES
+        # have tracked state and (b) write a permanent "no history" claim into
+        # the config every other machine pulls.
+        return _refuse("git could not be asked what this tree's HEAD is, so "
+                       "this run cannot tell a repository from a plain "
+                       "directory - and the two answers send the migration in "
+                       "opposite directions (one needs a commit and a writer "
+                       "lock, the other is the only case that records a "
+                       "history-free window)", [value])
     if state == "unborn":
         return _refuse("this repository has no commits (unborn HEAD), so a "
                        "migration commit has nowhere to land and the coverage "
@@ -1414,13 +1573,25 @@ def run_migration(root: Path, args) -> int:
                        "receive it. Check out a branch first.")
     if state == "bogus":
         return _refuse(f"HEAD is not a usable commit id: {value}")
+    # Only the two states above survive: `head` (a real 40-hex anchor) and
+    # `no-repo` (git positively confirming there is no repository), and only the
+    # latter may carry the sentinel.
     window = value if state == "head" else NO_HISTORY
     window_how = ("taken from `git rev-parse --verify HEAD` at migration time"
                   if state == "head" else
-                  "SKIP(no-history): no repository to anchor a window on, so "
-                  "the coverage walk reports a named skip rather than a pass")
+                  "SKIP(no-history): git confirmed there is no repository here "
+                  "to anchor a window on, so the coverage walk reports a named "
+                  "skip rather than a pass")
 
-    dirty = dirty_tracked_scripts(root)
+    dirty, dirty_unknown = dirty_tracked_scripts(root)
+    if dirty is None:
+        return _refuse("git could not answer whether .ai/scripts/ is dirty, and "
+                       "that guard is the one standing between this run and "
+                       "overwriting an unrecoverable unstaged edit",
+                       [dirty_unknown,
+                        "A guard that could not run is never 'clean': fix "
+                        "whatever made git refuse (dubious ownership, "
+                        "`index.lock`, PATH) and re-run."])
     if dirty:
         return _refuse(".ai/scripts/ has edits that are not even staged, and "
                        "migration rewrites those exact files",
@@ -1428,7 +1599,14 @@ def run_migration(root: Path, args) -> int:
                        + ["Commit or discard them first: this is the one state "
                           "where a migration could destroy work git cannot "
                           "restore."])
-    outside = staged_outside_ai(root)
+    outside, outside_unknown = staged_outside_ai(root)
+    if outside is None:
+        return _refuse("git could not answer what the index holds, so this run "
+                       "cannot promise its commit stays inside .ai/",
+                       [outside_unknown,
+                        "Nothing was staged or committed: the index is read "
+                        "AGAIN immediately before `git commit` for exactly this "
+                        "reason."])
     if outside:
         return _refuse("the index already holds changes outside .ai/, and this "
                        "run's commit is scoped to .ai/** only",
@@ -1457,10 +1635,16 @@ def run_migration(root: Path, args) -> int:
                            f"inside the checkout, got "
                            f"{args.authorizations_dir!r}")
         adir_rel = norm
+    # Degradations collected here are PRINTED and, when this run writes the
+    # record, RECORDED in it: `--migrate` exits 0 on a preserved customised
+    # script, so an rc-only caller (a hook, a wrapper) has only the file.
+    warns: list = []
     if not adir_rel.startswith(".ai/") and args.authorizations_dir:
         print(f"[WARN] {adir_rel} is outside .ai/, so the index this run "
               "creates is NOT in the migration commit (which is scoped to "
               ".ai/**). Commit it yourself.")
+        warns.append(f"authorization records: {adir_rel} is outside .ai/, so "
+                     "its INDEX.md is not in the migration commit")
 
     policy_path = root / ROLE_POLICY_REL
     role_sha = ""
@@ -1476,6 +1660,8 @@ def run_migration(root: Path, args) -> int:
               f"{ROLE_POLICY_REL} digests to {role_sha}. Left as it is - an "
               "intentional edit of the governance document is reconciled by a "
               "human, not overwritten by a migrator.")
+        warns.append(f"role policy pin: {CONFIG_REL} still says {pinned} while "
+                     f"{ROLE_POLICY_REL} digests to {role_sha}")
 
     planned = config_edits(cfg, adir_rel, window, role_sha,
                            bool(args.authorizations_dir))
@@ -1491,13 +1677,31 @@ def run_migration(root: Path, args) -> int:
             prior = json.loads(_read_text(root / MIGRATION_REL) or "")
         except ValueError:
             prior = None
-        already = (isinstance(prior, dict)
-                   and prior.get("to") == PROTOCOL_VERSION
-                   and prior.get("from") == installed
-                   and bool(window))
+        # What makes a migration "already done" is the pair this run WRITES: the
+        # record's `to` and the config's window anchor. It is deliberately NOT
+        # `prior["from"] == installed` — after a real 2.0.0 -> 2.1.0 upgrade the
+        # stamp is 2.1.0 while the record says `from: 2.0.0`, so that predicate
+        # re-migrated on every later run: a rewritten MIGRATION.json, an
+        # overwritten journal, and a second `cross-harness-sync-migrate` commit.
+        claims_done = (isinstance(prior, dict)
+                       and prior.get("to") == PROTOCOL_VERSION)
+        prior_gov = cfg.get("governance")
+        prior_window = str((prior_gov or {}).get("window_start_commit", "")
+                           or "") if isinstance(prior_gov, dict) else ""
+        if claims_done and prior_window and not _window_is_valid(prior_window):
+            return _refuse(
+                f"{MIGRATION_REL} records a completed migration to "
+                f"{PROTOCOL_VERSION}, but "
+                f"{CONFIG_REL}'s governance.window_start_commit is "
+                f"{prior_window!r} - not a {SHA_HEX_LEN}-lowercase-hex commit id "
+                f"and not the exact {NO_HISTORY} sentinel. A half-written or "
+                "edited anchor is not re-migrated over in silence: repair the "
+                "config or delete the record deliberately.")
+        already = claims_done and _window_is_valid(prior_window)
         if already:
-            print(f"already migrated ({installed} -> {PROTOCOL_VERSION}); "
-                  "verifying the recorded state and writing nothing.")
+            print(f"already migrated "
+                  f"({prior.get('from')} -> {PROTOCOL_VERSION}); verifying the "
+                  "recorded state and writing nothing.")
             fails = 0
             for kind, name, detail in verify_migration(root):
                 print(f"[{kind}] migrate verify {name}: {detail}")
@@ -1513,11 +1717,12 @@ def run_migration(root: Path, args) -> int:
 
     # --- the writer lock, taken before the first mutation --------------------
     # Spec §8's reason for the lock is that migration MUTATES TRACKED STATE. A
-    # tree with no repository has no tracked state and no second machine to
-    # contend with - and `checkpoint.py --lock` refuses a non-repository layout
-    # by design - so the lock is skipped BY NAME here rather than pretending to
-    # be held.
-    if state == "no-git":
+    # tree git CONFIRMS has no repository has no tracked state and no second
+    # machine to contend with - and `checkpoint.py --lock` refuses a
+    # non-repository layout by design - so the lock is skipped BY NAME here
+    # rather than pretending to be held. A probe that REFUSED is not in this
+    # branch: it halted above, under its own name.
+    if state == "no-repo":
         print("[SKIP(no-repository)] writer lock: nothing in this install is "
               "tracked, so there is no shared state to acquire a pen over.")
     else:
@@ -1529,7 +1734,6 @@ def run_migration(root: Path, args) -> int:
 
     started = _now()
     touched: list = []
-    warns: list = []
 
     # 1. the config, edited as text.
     if planned:
@@ -1576,9 +1780,14 @@ def run_migration(root: Path, args) -> int:
                              f"even as a sidecar ({exc.__class__.__name__})")
                 continue
             touched.append(side.relative_to(root).as_posix())
+            side_rel = side.relative_to(root).as_posix()
+            warns.append(f"preserved customised script: {rel} was NOT "
+                         f"overwritten ({detail}); the shipped copy is at "
+                         f"{side_rel} and this install still runs the OLD "
+                         "script")
             print(f"[WARN] preserved customised script: {rel} is left exactly "
                   f"as it was ({detail}); the shipped copy is at "
-                  f"{side.relative_to(root).as_posix()}. This install still "
+                  f"{side_rel}. This install still "
                   "runs the OLD script - review the sidecar, then replace it "
                   "by hand and re-run `--migrate`.")
 
@@ -1644,17 +1853,27 @@ def run_migration(root: Path, args) -> int:
                 "protocol.")
     journal = _journal(started, completed, installed, window, window_how,
                        adir_rel, sorted(set(touched)), not_reversible)
-    _write_text(root / MIGRATION_JOURNAL_REL, journal + "")
+    _write_text(root / MIGRATION_JOURNAL_REL, journal)
     touched.append(MIGRATION_JOURNAL_REL)
     record = {"from": installed, "to": PROTOCOL_VERSION, "started": started,
-              "completed": completed, "files_touched": sorted(set(touched))}
-    _write_text(root / MIGRATION_REL,
-                json.dumps(record, indent=2, ensure_ascii=False) + "\n")
+              "completed": completed, "files_touched": sorted(set(touched)),
+              "warnings": list(warns), "degraded": bool(warns)}
+
+    def _write_record() -> None:
+        """The record, as it stands right now. Re-called after a failed commit:
+        `warnings` is the field an rc-only caller reads, and the commit is the
+        one degradation that can only be learned by attempting it."""
+        record["warnings"] = list(warns)
+        record["degraded"] = bool(warns)
+        _write_text(root / MIGRATION_REL,
+                    json.dumps(record, indent=2, ensure_ascii=False) + "\n")
+    _write_record()
     print(f"wrote: {MIGRATION_REL}")
     print(f"wrote: {MIGRATION_JOURNAL_REL}")
 
-    # 7. the commit - `.ai/**` only, and never the lock record.
-    if state == "no-git":
+    # 7. the commit - `.ai/**` only, never the lock record, and the staged set
+    #    re-verified inside `_migration_commit()` BEFORE it runs.
+    if state == "no-repo":
         print(f"[SKIP(no-repository)] commit: there is no repository to commit "
               f"{MIGRATION_REL} into; the files are on disk, nothing is in "
               "history.")
@@ -1667,6 +1886,21 @@ def run_migration(root: Path, args) -> int:
         else:
             warns.append(f"the migration commit: {detail}")
             print(f"[WARN] commit failed: {detail}")
+            # The record and the journal already went to disk and were already
+            # staged; they now say what actually happened instead of implying a
+            # commit that does not exist. Nothing here is in history, which is
+            # itself the named degradation.
+            _write_text(root / MIGRATION_JOURNAL_REL, journal + (
+                "\n## NAMED FAILURE: this run's commit did not land\n\n"
+                f"- {detail}\n"
+                "- Everything this migration wrote is on disk and NOT in "
+                "history, so no other machine has it and `git revert` has "
+                "nothing to undo. Fix whatever git refused (dubious ownership, "
+                "`index.lock`, a staged change outside `.ai/`) and re-run "
+                "`--migrate`.\n"))
+            _write_record()
+            print(f"rewrote: {MIGRATION_REL} and {MIGRATION_JOURNAL_REL} to "
+                  "record the failed commit (they are not in history either)")
 
     print(f"\nwindow_start_commit: {window} - {window_how}")
     for line in warns:
@@ -1722,7 +1956,10 @@ def main() -> int:
                              "Refuses and writes nothing on an unborn or "
                              "detached HEAD, an unusable protocol stamp, an "
                              "unparseable config, an unstaged edit under "
-                             ".ai/scripts/, or a held writer lock; a re-run is "
+                             ".ai/scripts/, an index holding changes outside "
+                             ".ai/, a git that cannot be asked (no git on "
+                             "PATH, a refused probe, index.lock contention), "
+                             "or a held writer lock; a re-run is "
                              "a verifying no-op. Implies neither --force nor "
                              "--clobber, and refuses --clobber.")
     parser.add_argument("--authorizations-dir", default=None, metavar="DIR",

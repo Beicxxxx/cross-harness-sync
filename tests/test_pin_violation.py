@@ -50,7 +50,7 @@ def test_a_frozen_artifact_pin_passes(ai_repo, sv):
     assert any(ln.startswith("[PASS] pin violation:") for ln in res.lines), res.lines
 
 
-def test_no_authorizations_is_a_named_skip(ai_repo, sv):
+def test_an_index_only_authorizations_dir_is_a_named_skip(ai_repo, sv):
     adir = ai_repo / ".ai" / "state" / "authorizations"
     # The installer creates the directory (spec 6: it is the canonical home
     # v2.0 never gave the records); what makes the check skip is that it holds

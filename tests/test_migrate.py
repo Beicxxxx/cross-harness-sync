@@ -13,6 +13,7 @@ branch the wave is on.
 """
 from __future__ import annotations
 
+import argparse
 import hashlib
 import importlib.util
 import json
@@ -44,6 +45,7 @@ def _load(name: str, path: Path):
 
 
 init_sync = _load("_b3_migrate_init_sync", SCRIPTS / "init_sync.py")
+ai_common = _load("_b3_migrate_ai_common", SCRIPTS / "ai_common.py")
 
 INDEX_REL = ".ai/state/authorizations/INDEX.md"
 MIGRATION_REL = ".ai/protocol/MIGRATION.json"
@@ -135,8 +137,12 @@ def test_migrate_records_head_index_and_pins_the_role_policy(tmp_path):
     assert index.is_file() and index.stat().st_size > 0, res.lines
 
     record = json.loads((repo / MIGRATION_REL).read_text("utf-8"))
+    # The record's exact shape, pinned: `warnings`/`degraded` are there so an
+    # rc-only caller (a hook, a wrapper script) can see a `.new`-sidecar
+    # divergence — a run that exits 0 having NOT delivered every script.
     assert set(record) == {"from", "to", "started", "completed",
-                           "files_touched"}, record
+                           "files_touched", "warnings", "degraded"}, record
+    assert record["warnings"] == [] and record["degraded"] is False, record
     assert record["to"] == init_sync.PROTOCOL_VERSION, record
     # this install's own stamp is the `from`: the migration records the upgrade
     # it actually performed, and a re-run of the same version says so honestly.
@@ -501,3 +507,309 @@ def test_the_new_flags_exist(tmp_path):
     assert res.rc == 0, res.stdout + res.stderr
     assert "--migrate" in res.stdout, res.stdout
     assert "--authorizations-dir" in res.stdout, res.stdout
+
+
+# ---------------------------------------------------------------------------
+# fix round 1, guard 1: a guard that could not run is never "clean"
+#
+# `dirty_tracked_scripts()` and `staged_outside_ai()` answered a FAILED git
+# command with `[]` — the same value as "checked, nothing found" — so the two
+# states that exist to stop a destructive migration (an unstaged edit under
+# `.ai/scripts/`, an index holding someone else's work) read as clean exactly
+# when git refused to answer: dubious ownership, `index.lock` contention, a
+# timeout. `None` is the not-known answer, and the caller turns it into a
+# refusal.
+
+
+def test_a_failed_git_probe_is_not_known_clean(tmp_path, monkeypatch):
+    repo = installed(make_repo(tmp_path))
+    lock_err = (b"fatal: Unable to create '/tmp/x/.git/index.lock':"
+                b" File exists.")
+
+    def subcommand_fails(root_, args, timeout=60):
+        # The work tree answers; the guard's own command does not.
+        if args[:2] == ["rev-parse", "--is-inside-work-tree"]:
+            return ai_common.GitResult(0, b"true\n", b"", False)
+        return ai_common.GitResult(128, b"", lock_err, False)
+
+    monkeypatch.setattr(init_sync, "run_git", subcommand_fails)
+    dirty, why_dirty = init_sync.dirty_tracked_scripts(repo)
+    outside, why_outside = init_sync.staged_outside_ai(repo)
+    assert dirty is None, "a failed `ls-files` read as 'nothing dirty'"
+    assert outside is None, "a failed `diff --cached` read as 'index is clean'"
+    assert "ls-files" in why_dirty and "index.lock" in why_dirty, why_dirty
+    assert "diff --cached" in why_outside, why_outside
+
+    def probe_refused(root_, args, timeout=60):
+        return ai_common.GitResult(
+            128, b"", b"fatal: detected dubious ownership in repository at "
+            b"'//tsclient/x'", False)
+
+    monkeypatch.setattr(init_sync, "run_git", probe_refused)
+    assert init_sync.dirty_tracked_scripts(repo)[0] is None
+    assert init_sync.staged_outside_ai(repo)[0] is None
+    # §6: dubious ownership is its own actionable error, NOT the no-repository
+    # bucket — so no `NO_HISTORY` stamp and no skipped writer lock.
+    assert init_sync.git_head_state(repo)[0] == "probe-refused"
+
+    def no_repository(root_, args, timeout=60):
+        return ai_common.GitResult(
+            128, b"", b"fatal: not a git repository (or any of the parent "
+            b"directories): .git", False)
+
+    monkeypatch.setattr(init_sync, "run_git", no_repository)
+    # The confirmed non-repository is the ONE case where nothing is tracked, so
+    # "clean" is a real answer rather than a guess.
+    assert init_sync.git_head_state(repo)[0] == "no-repo"
+    assert init_sync.dirty_tracked_scripts(repo) == ([], "")
+    assert init_sync.staged_outside_ai(repo) == ([], "")
+
+
+def test_a_git_that_cannot_answer_is_its_own_halt(tmp_path):
+    """End to end: with no `git` to ask, `--migrate` stops — it does not guess.
+
+    The empty PATH is the reachable instance of the same hole as a refused
+    probe: `git_head_state()` used to answer `no-git` for "git is not on PATH",
+    which is the bucket that skips the writer lock and permanently stamps
+    `NO_HISTORY` into a tree that HAS history (and, because the stamp goes into
+    the config that the next machine pulls, stamps it for every machine).
+    """
+    repo = installed(make_repo(tmp_path))
+    before = snapshot(repo)
+    cfg_before = (repo / CONFIG_REL).read_bytes()
+    res = run_python(SCRIPTS / "init_sync.py", [str(repo), "--migrate"],
+                     cwd=repo, env={"PATH": ""})
+    assert res.rc == 2, res.stdout + res.stderr
+    assert "Nothing was written" in res.stdout, res.lines
+    assert "NO_HISTORY" not in res.stdout, res.lines
+    assert "no-history" not in res.stdout, res.lines
+    assert "PATH" in res.stdout, res.lines
+    assert snapshot(repo) == before
+    assert (repo / CONFIG_REL).read_bytes() == cfg_before
+    assert not (repo / MIGRATION_REL).exists()
+
+
+def test_a_bad_index_is_caught_before_the_commit_and_the_commit_is_scoped(
+        tmp_path, monkeypatch):
+    """Two halves of one guard: verify the staged set, THEN commit by path.
+
+    The old order checked the created commit with `git show` — after the fact,
+    at rc 0, with the bad index already in history.
+    """
+    repo = installed(make_repo(tmp_path / "staged"))
+    (repo / "outside.py").write_text("staged by someone else\n",
+                                     encoding="utf-8")
+    git(repo, "add", "outside.py")
+    calls: list = []
+    real = init_sync.run_git
+
+    def spy(root_, args, timeout=60):
+        calls.append(list(args))
+        return real(root_, args, timeout=timeout)
+
+    monkeypatch.setattr(init_sync, "run_git", spy)
+    head_before = git(repo, "rev-parse", "HEAD")
+    count_before = int(git(repo, "rev-list", "--count", "HEAD"))
+    ok, detail = init_sync._migration_commit(repo, "2.0.0")
+    assert ok is False, detail
+    assert "outside .ai/" in detail, detail
+    assert not any(c and c[0] == "commit" for c in calls), calls
+    assert any(c[:2] == ["diff", "--cached"] for c in calls), calls
+    assert git(repo, "rev-parse", "HEAD") == head_before
+    assert int(git(repo, "rev-list", "--count", "HEAD")) == count_before, \
+        "a refused index still reached history"
+
+    # The clean path: still verified before the commit, and the commit itself
+    # cannot name anything outside `.ai/`.
+    repo2 = installed(make_repo(tmp_path / "scoped"))
+    (repo2 / ".ai/state/CURRENT.md").write_text("# written by the migration\n",
+                                                encoding="utf-8")
+    calls2: list = []
+
+    def spy2(root_, args, timeout=60):
+        calls2.append(list(args))
+        return real(root_, args, timeout=timeout)
+
+    monkeypatch.setattr(init_sync, "run_git", spy2)
+    ok2, detail2 = init_sync._migration_commit(repo2, "2.0.0")
+    assert ok2 is True, detail2
+    commits = [i for i, c in enumerate(calls2) if c and c[0] == "commit"]
+    assert len(commits) == 1, calls2
+    argv = calls2[commits[0]]
+    assert "--" in argv, argv
+    assert ".ai" in argv[argv.index("--"):], argv
+    verified = [i for i, c in enumerate(calls2) if c[:2] == ["diff", "--cached"]]
+    assert verified and min(verified) < commits[0], calls2
+    files = commit_files(repo2)
+    assert files and all(f.startswith(".ai/") for f in files), files
+
+
+# ---------------------------------------------------------------------------
+# fix round 1, guard 2: a real 2.0.0 -> 2.1.0 step must re-run as a NO-OP
+
+
+def test_a_real_cross_version_migrate_rereads_as_a_true_noop(tmp_path):
+    """The fixture the idempotency rule actually needs: a REAL version step.
+
+    Every other idempotency case here migrates a tree whose own stamp already
+    reads 2.1.0, so `prior["from"] == installed` held by construction and never
+    met the case that matters: after a genuine 2.0.0 -> 2.1.0 migration the
+    record says `from: 2.0.0` while the install now says `2.1.0`, and the
+    second run must VERIFY, not migrate a second time.
+
+    The scripts here are the released v2.0 blobs with no `ai_common.py` beside
+    them, which is what a real v2.0 install is: deleting `ai_common.py` from a
+    2.1 install would not model 2.0.0, it would model a broken tree whose
+    `checkpoint.py` cannot even take the writer lock.
+    """
+    repo = make_repo(tmp_path)
+    assert scaffold(repo).rc == 0
+    stamp = repo / ".ai/protocol/VERSION"
+    stamp.write_text("2.0.0\n", encoding="utf-8")
+    (repo / ".ai/scripts/ai_common.py").unlink()      # v2.0 never shipped one
+    for name in ("checkpoint.py", "sync_verify.py"):
+        (repo / ".ai/scripts" / name).write_bytes(
+            git_blob("e692e73", "scripts/" + name))
+    # the other half of the v2.0 hole: no canonical home for the records.
+    (repo / INDEX_REL).unlink()
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "v2.0.0 install")
+
+    first = migrate(repo)
+    assert first.rc == 0, first.stdout + first.stderr
+    assert stamp.read_text("utf-8").strip() == init_sync.PROTOCOL_VERSION
+    record_a = (repo / MIGRATION_REL).read_bytes()
+    assert json.loads(record_a)["from"] == "2.0.0", record_a
+    assert json.loads(record_a)["to"] == init_sync.PROTOCOL_VERSION, record_a
+    cfg_a = (repo / CONFIG_REL).read_bytes()
+    journal_a = (repo / JOURNAL_REL).read_bytes()
+    head_a = git(repo, "rev-parse", "HEAD")
+    count_a = int(git(repo, "rev-list", "--count", "HEAD"))
+    files_a = snapshot(repo)
+    assert json.loads(cfg_a.decode("utf-8"))["governance"][
+        "window_start_commit"], "the first run recorded no window anchor"
+
+    second = migrate(repo)
+    assert second.rc == 0, second.stdout + second.stderr
+    assert "already migrated" in second.stdout, second.lines
+    assert "2.0.0" in second.stdout, second.lines
+    assert not any(ln.startswith("wrote:") for ln in second.lines), second.lines
+    assert (repo / MIGRATION_REL).read_bytes() == record_a
+    assert (repo / CONFIG_REL).read_bytes() == cfg_a
+    assert (repo / JOURNAL_REL).read_bytes() == journal_a
+    assert git(repo, "rev-parse", "HEAD") == head_a
+    assert int(git(repo, "rev-list", "--count", "HEAD")) == count_a, \
+        "a second migration commit on an already-migrated tree"
+    assert snapshot(repo) == files_a, "the re-run wrote a file"
+
+
+# ---------------------------------------------------------------------------
+# fix round 1, guard 3: a weak verify reads a forged anchor as 'done'
+
+
+def test_verify_migration_accepts_only_a_real_anchor_or_the_sentinel(tmp_path):
+    repo = installed(make_repo(tmp_path))
+    assert migrate(repo).rc == 0
+    cfg_path = repo / CONFIG_REL
+    real = json.loads(cfg_path.read_text("utf-8"))["governance"][
+        "window_start_commit"]
+    assert re.fullmatch(r"[0-9a-f]{40}", real), real
+
+    def verdict():
+        kinds = {name: kind for kind, name, _d in init_sync.verify_migration(repo)}
+        return kinds["window anchor"]
+
+    assert verdict() == "PASS"
+    # Anything that is not 40 LOWERCASE hex, and is not the exact sentinel, is
+    # not an anchor: a short prefix, an upppercased id, a ref name, a padded
+    # sentinel, an unset value. (`"0123…" * 4` is NOT in this list: 40 lowercase
+    # hex is well-formed, and `verify_migration` cannot and must not judge
+    # whether a real-looking id exists — that is `commit_exists`' job.)
+    for forged in ("deadbeef", "deadbeef-deadbeef-deadbeef-deadbeef-01",
+                   "A" * 40, "HEAD",
+                   "NO_HISTORY ", " NO_HISTORY", "", real.upper(),
+                   "0" * 39, "0" * 41):
+        cfg = json.loads(cfg_path.read_text("utf-8"))
+        cfg["governance"]["window_start_commit"] = forged
+        cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+        assert verdict() == "FAIL", f"{forged!r} read as a completed migration"
+    cfg = json.loads(cfg_path.read_text("utf-8"))
+    cfg["governance"]["window_start_commit"] = "NO_HISTORY"
+    cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
+    assert verdict() == "PASS"
+
+
+# ---------------------------------------------------------------------------
+# fix round 1, minors: the degradation must survive the console
+
+
+def test_a_sidecar_divergence_is_recorded_not_just_printed(tmp_path):
+    """`warnings[]` + `degraded` in MIGRATION.json.
+
+    A preserved customised script exits 0 (the migration itself completed), so
+    the ONLY way a caller that reads the exit code — a hook, a wrapper — learns
+    this install still runs an old script is the record saying so.
+    """
+    repo = installed(make_repo(tmp_path))
+    target = repo / ".ai/scripts/checkpoint.py"
+    target.write_bytes(target.read_bytes() + b"\n# local customisation\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "customised the writer")
+
+    res = migrate(repo)
+    assert res.rc == 0, res.stdout + res.stderr
+    record = json.loads((repo / MIGRATION_REL).read_text("utf-8"))
+    assert record["degraded"] is True, record
+    assert any(".ai/scripts/checkpoint.py" in w and ".new" in w
+               for w in record["warnings"]), record
+    assert (repo / ".ai/scripts/checkpoint.py.new").is_file()
+    # and the verifying re-run still says so out loud rather than going quiet
+    again = migrate(repo)
+    assert any(ln.startswith("[WARN] migrate verify") and ".new" in ln
+               for ln in again.lines), again.lines
+
+
+def test_the_record_names_a_commit_that_did_not_land(tmp_path, monkeypatch):
+    """A failed commit is a degradation the record carries, not a printout."""
+    repo = installed(make_repo(tmp_path))
+    monkeypatch.setattr(
+        init_sync, "_migration_commit",
+        lambda root, installed_: (False, "simulated: `git commit` exited 128"))
+    rc = init_sync.run_migration(repo, argparse.Namespace(
+        authorizations_dir=None))
+    assert rc == 0, rc
+    record = json.loads((repo / MIGRATION_REL).read_text("utf-8"))
+    assert record["degraded"] is True, record
+    assert any("commit" in w and "simulated" in w for w in record["warnings"]), \
+        record
+    # the journal is the other half of the record: it names the same failure
+    journal = (repo / JOURNAL_REL).read_text("utf-8")
+    assert "simulated" in journal, journal
+
+
+# ---------------------------------------------------------------------------
+# fix round 1, minors: the text editor's own edges (it had only end-to-end
+# coverage, which cannot reach an escaped key or a non-object parent)
+
+
+def test_splice_json_handles_an_escaped_quote_key():
+    text = ('{\n  "say \\"hi\\"": 1,\n  "governance": {\n'
+            '    "window_start_commit": ""\n  }\n}\n')
+    out = init_sync._splice_json(text, [(("say \"hi\"",), "2")])
+    assert out != text
+    assert json.loads(out) == {"say \"hi\"": 2,
+                               "governance": {"window_start_commit": ""}}, out
+    # the key's own bytes survived: the edit is a splice, not a re-dump
+    assert '"say \\"hi\\""' in out, out
+    assert "window_start_commit" in out, out
+
+
+def test_splice_json_refuses_a_parent_segment_that_is_not_an_object():
+    arr = '{\n  "governance": [\n    "window_start_commit"\n  ]\n}\n'
+    edits = [(("governance", "window_start_commit"), '"deadbeef"')]
+    assert init_sync._splice_json(arr, edits) == arr, \
+        "a member was stuffed into a key whose value is an ARRAY"
+    # and a wholly absent parent is not invented by the splice either
+    flat = '{\n  "budgets": {\n    "CURRENT.md": 60\n  }\n}\n'
+    assert init_sync._splice_json(
+        flat, [(("governance", "window_start_commit"), '"x"')]) == flat
