@@ -285,9 +285,30 @@ def record(name: str, ok, evidence: str) -> None:
     reporting path itself.
     """
     verdict = ok if ok is None or isinstance(ok, bool) else False
-    RESULTS.append((name, verdict, evidence))
     tag = {True: "PASS", False: "FAIL", None: "SKIP"}[verdict]
-    print(f"[{tag}] {name}: {evidence}")
+    # Lane Z finding 5 (MEDIUM): this appended FIRST and printed second, so a
+    # print that raised left the record in the tally anyway -- a child emitting
+    # non-UTF-8 bytes gave 19 counted PASSes against 18 printed `[PASS]` lines.
+    # The numerator is now derived from what was actually written: the append
+    # happens only after the line survived the stream, and a line that does not
+    # survive becomes a NAMED degradation instead of a silent increment.
+    try:
+        print(f"[{tag}] {name}: {evidence}")
+    except UnicodeEncodeError as exc:
+        safe = f"[{tag}] {name}: {evidence}".encode(
+            "utf-8", "backslashreplace").decode("utf-8")
+        try:
+            print(safe)
+        except UnicodeEncodeError:
+            pass
+        RESULTS.append((f"{name} (unprintable)", False,
+                        f"the line above could not be written to stdout "
+                        f"({type(exc).__name__}: {exc}); an evidence line "
+                        "nobody can read is not a verification, so this is "
+                        "counted as a FAIL instead of the "
+                        f"{tag} it would have been"))
+        return
+    RESULTS.append((name, verdict, evidence))
 
 
 def _is_path_str(val) -> bool:
