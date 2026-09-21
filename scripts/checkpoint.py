@@ -938,6 +938,37 @@ def cmd_lock(args):
 
 def cmd_unlock(args):
     _require_paths()
+    # Lane Z finding 2 (HIGH): this was the one lock-touching command with no
+    # D15 gate. In a linked worktree `--lock` refused at rc 1 while
+    # `--unlock --agent <name>` exited 0 and wrote `released_at` into THAT
+    # worktree's tracked WRITER_LOCK.json, leaving the main checkout's hold
+    # intact -- so machine B pulled "released", started writing, and the writer
+    # on machine A never stopped. R1's single-writer rule, broken with the
+    # protocol's blessing, and `SKILL.md`'s rc-1 row for "refused checkout
+    # layout" was false for this command.
+    #
+    # The gate is the same classifier, the same rc 1, and the same `--force`
+    # override as `_refuse_unliveable_layout()`; that helper is not reused
+    # verbatim because its closing sentence ("this command writes no lock
+    # record") is the opposite of what a release does.
+    kind, detail = install_layout()
+    if kind != "normal":
+        if getattr(args, "force", False):
+            print(f"WARN unlock: this checkout is {kind} ({detail}) and "
+                  "--force was given, so the release is written here anyway. "
+                  "It lands in this worktree\'s tracked WRITER_LOCK.json; the "
+                  "checkout that took the pen keeps reading its own "
+                  "released_at: null, so say in the handoff that the release "
+                  "was made from a linked worktree.")
+        else:
+            _layout_refusal(kind, detail)
+            print("  unlock: the release would be written into THIS worktree\'s "
+                  "copy of the tracked lock record while the checkout holding "
+                  "the pen keeps reading its own -- the next machine would pull "
+                  "\"released\" and start writing beside a live writer. "
+                  "--force is the override here too, and it says so in the "
+                  "record you commit.")
+            sys.exit(1)
     status = lock_state()
     if status.state == "error":
         print(f"Lock record is unreadable ({status.detail}); refusing to release "
