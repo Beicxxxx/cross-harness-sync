@@ -4,10 +4,12 @@
 Usage:
     python init_sync.py [REPO_ROOT] [--force] [--clobber] [--scripts-only]
                         [--no-agents-block]
+    python init_sync.py [REPO_ROOT] --migrate [--authorizations-dir DIR]
 
 Creates (never overwrites unless --force, and --force never overwrites state
 the caller has edited unless --clobber):
     .ai/state/{CURRENT,TASK,BLOCKERS,ROLE_POLICY,DECISIONS,DECISIONS_INDEX}.md
+    .ai/state/authorizations/INDEX.md  (the record index wave 1b requires)
     .ai/handoff/{LATEST,NEXT_PROMPT}.md + archive/
     .ai/protocol/VERSION
     .ai/scripts/{ai_common.py,checkpoint.py,sync_verify.py}
@@ -53,14 +55,36 @@ Flags:
                      its line budget from sync_config.json, so
                      `sync_verify.py` stays green instead of failing forever
                      (D18). A repo that already has AGENTS.md keeps the budget.
+    --migrate        the governance upgrade (spec §8). Records what v2.0 never
+                     recorded on an EXISTING install: creates
+                     `.ai/state/authorizations/` and its `INDEX.md`, pins
+                     `role_policy_sha256`, deep-adds the config's governance
+                     namespaces as TEXT, anchors `governance.window_start_commit`
+                     on a real 40-hex HEAD (or the `NO_HISTORY` sentinel where
+                     there is no repository to anchor on, which the verifier
+                     reads as a named skip and never a pass), writes
+                     `.ai/protocol/MIGRATION.json` plus a journal naming what a
+                     revert cannot undo, and commits `.ai/**` only — never the
+                     writer-lock record, which it acquires first and releases by
+                     hand afterwards. Refuses (exit 2, nothing written) on an
+                     unborn or detached HEAD, a newer or unparseable stamp, an
+                     unparseable config, an unstaged edit under `.ai/scripts/`,
+                     a staged change outside `.ai/`, or a held lock; a diverged
+                     script gets a `.new` sidecar instead of a clobber; a re-run
+                     verifies instead of migrating again.
+    --authorizations-dir  where the stage records live. Never guessed: the flag
+                     wins, then the config's `authorizations_dir`, then
+                     `.ai/state/authorizations`.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 import shutil
 import sys
+from datetime import datetime
 from pathlib import Path
 
 try:
@@ -87,6 +111,12 @@ TEMPLATES = SKILL_DIR / "templates"
 # checkout, where `scripts/` is its own directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ai_common import PROTOCOL_VERSION  # noqa: E402
+
+# spec §8's migration reads the repository through the SAME three-valued probes
+# the verifier uses — one definition of "what does git say about HEAD", not a
+# second one that can disagree with it on the machine that asks.
+from ai_common import (SHA_HEX_LEN, git_available, is_git_repo,  # noqa: E402
+                       run_argv, run_git)
 
 # `check_version_match`'s fourth answer, as a constant so `main()` can tell
 # "nothing to compare yet" from a verdict without re-reading the sentence.
@@ -172,6 +202,14 @@ AGENTS_BUDGET_KEY = "AGENTS.md"
 AGENTS_OWN_BUDGET = 65
 
 # (source under templates/, destination under repo root)
+#
+# `authorizations/INDEX.md` is here because wave 1b makes it a REQUIRED file at
+# the same moment it becomes something the installer writes: a required file
+# nothing creates reddens every fresh install, and the two halves of that
+# sentence have to land in one commit.
+AUTHORIZATIONS_INDEX_SRC = "authorizations/INDEX.md"
+AUTHORIZATIONS_INDEX_REL = ".ai/state/authorizations/INDEX.md"
+
 FILE_MAP = [
     ("CURRENT.md", ".ai/state/CURRENT.md"),
     ("TASK.md", ".ai/state/TASK.md"),
@@ -183,6 +221,10 @@ FILE_MAP = [
     ("handoff/NEXT_PROMPT.md", ".ai/handoff/NEXT_PROMPT.md"),
     ("SYNC_PROMPT.md", ".ai/SYNC_PROMPT.md"),
     ("AUTHORIZATION.md", ".ai/templates/AUTHORIZATION.md"),
+    # wave 1b: the authorization records get a canonical home AND an index, in
+    # the same commit that makes that index a required file. Required-but-unwritten
+    # is the failure mode `ai_common.DEFAULT_REQUIRED_FILES` documents.
+    (AUTHORIZATIONS_INDEX_SRC, AUTHORIZATIONS_INDEX_REL),
     ("sync_config.json", ".ai/sync_config.json"),
 ]
 
@@ -410,6 +452,237 @@ def update_gitignore(root: Path, wanted: list[str] | None = None) -> str:
 def _splice_out_budget_line(text: str) -> str | None:
     """D18: drop the `"AGENTS.md"` budget line, keeping the file's byte shape."""
     return _splice_budget_line(text, AGENTS_BUDGET_KEY, None)
+
+
+# ---- the text-level JSON editor `--migrate` edits the config with ------------
+# Every constant here is derived from the file's OWN line terminator, because
+# N3's defect was a text edit that rewrote the caller's whole file while it was
+# only asked to add a line to it.
+
+def _skip_ws(text: str, i: int) -> int:
+    while i < len(text) and text[i] in " \t\r\n":
+        i += 1
+    return i
+
+
+def _json_string_end(text: str, i: int) -> tuple:
+    """`(index past the closing quote, the decoded string)`; `(-1, "")` if the
+    literal is unterminated. The scanner needs both: the end to keep walking
+    with, the value to compare against a key name."""
+    j = i + 1
+    while j < len(text):
+        ch = text[j]
+        if ch == "\\":
+            j += 2
+            continue
+        if ch == '"':
+            return j + 1, text[i + 1:j]
+        j += 1
+    return -1, ""
+
+
+def _json_value_end(text: str, i: int) -> int:
+    """Index just past the JSON value starting at `text[i]`; -1 if malformed.
+
+    Balanced-brace walking with string awareness, because `"{}"` inside a string
+    is the one thing a `text.index("}")` gets wrong - and getting it wrong here
+    means writing a config that no longer parses.
+    """
+    if i < 0 or i >= len(text):
+        return -1
+    ch = text[i]
+    if ch == '"':
+        end, _ = _json_string_end(text, i)
+        return end
+    if ch in "{[":
+        close = "}" if ch == "{" else "]"
+        j = i + 1
+        while True:
+            j = _skip_ws(text, j)
+            if j >= len(text):
+                return -1
+            if text[j] == close:
+                return j + 1
+            if text[j] == ",":
+                # The separator between two members: consume it and look again.
+                j += 1
+                continue
+            if ch == "{":
+                # an object's element is a `"key": value` member, so the key,
+                # the colon and the value all have to be where they belong.
+                if text[j] != '"':
+                    return -1
+                k, _ = _json_string_end(text, j)
+                if k < 0:
+                    return -1
+                k = _skip_ws(text, k)
+                if k >= len(text) or text[k] != ":":
+                    return -1
+                j = _skip_ws(text, k + 1)
+            end = _json_value_end(text, j)
+            if end < 0:
+                return -1
+            j = end
+    j = i
+    while j < len(text) and text[j] not in ",}] \t\r\n":
+        j += 1
+    return j if j > i else -1
+
+
+def _find_member(text: str, obj_start: int, key: str) -> int:
+    """Index of the opening quote of `"key"` in the object at `obj_start`, or -1."""
+    pos = obj_start + 1
+    while True:
+        pos = _skip_ws(text, pos)
+        if pos < 0 or pos >= len(text):
+            return -1
+        ch = text[pos]
+        if ch == "}":
+            return -1
+        if ch == ",":
+            pos += 1
+            continue
+        if ch != '"':
+            return -1
+        k, _name = _json_string_end(text, pos)
+        if k < 0:
+            return -1
+        try:
+            decoded = json.loads(text[pos:k])
+        except ValueError:
+            return -1
+        after = _skip_ws(text, k)
+        if after < 0 or after >= len(text) or text[after] != ":":
+            return -1
+        v_start = _skip_ws(text, after + 1)
+        v_end = _json_value_end(text, v_start)
+        if v_end < 0:
+            return -1
+        if decoded == key:
+            return pos
+        pos = v_end
+
+
+def _member_value(text: str, quote: int) -> tuple:
+    """`(value_start, value_end)` for the member whose key quote is at `quote`."""
+    k, _name = _json_string_end(text, quote)
+    after = _skip_ws(text, k)
+    v_start = _skip_ws(text, after + 1)
+    return v_start, _json_value_end(text, v_start)
+
+
+def _object_start(text: str, obj_start: int, key: str) -> int:
+    """The `{` of the sub-object stored at `key` inside `obj_start`, or -1."""
+    quote = _find_member(text, obj_start, key)
+    if quote < 0:
+        return -1
+    v_start, v_end = _member_value(text, quote)
+    if v_start < 0 or v_end < 0 or text[v_start:v_start + 1] != "{":
+        return -1
+    return v_start
+
+
+def _leading_len(text: str, line_start: int) -> int:
+    i = line_start
+    while i < len(text) and text[i] in " \t":
+        i += 1
+    return i
+
+
+def _insert_member(text: str, obj_start: int, member: str) -> str:
+    """Add `member` (a `"key": value` string) as the last member of the object."""
+    end = _json_value_end(text, obj_start)
+    if end < 0:
+        return text
+    nl = _dominant_newline(text)
+    close = end - 1
+    line_start = text.rfind("\n", 0, obj_start) + 1
+    outer_indent = text[line_start:_leading_len(text, line_start)]
+    first = _skip_ws(text, obj_start + 1)
+    if first < 0 or first > close:
+        return text
+    if text[first] == "}":
+        # An empty object: open it up around the one member it now has.
+        return (text[:obj_start + 1] + nl + outer_indent + "  " + member
+                + nl + outer_indent + text[close:])
+    line_start = text.rfind("\n", 0, first) + 1
+    inner_indent = text[line_start:_leading_len(text, line_start)]
+    p = close - 1
+    while p > obj_start and text[p] in " \t\r\n":
+        p -= 1
+    return (text[:p + 1] + "," + nl + inner_indent + member
+            + text[p + 1:])
+
+
+def _replace_member_value(text: str, quote: int, value_json: str) -> str:
+    v_start, v_end = _member_value(text, quote)
+    if v_start < 0 or v_end < 0:
+        return text
+    return text[:v_start] + value_json + text[v_end:]
+
+
+def _apply_edits(data, edits: list):
+    """`data` with the same edits applied in memory - the comparison target."""
+    out = json.loads(json.dumps(data))
+    for path, value_json in edits:
+        try:
+            value = json.loads(value_json)
+        except ValueError:
+            return None
+        node = out
+        for key in path[:-1]:
+            if not isinstance(node, dict):
+                return out
+            nxt = node.get(key)
+            if not isinstance(nxt, dict):
+                return out
+            node = nxt
+        if not isinstance(node, dict):
+            return out
+        node[path[-1]] = value
+    return out
+
+
+def _splice_json(text: str, edits: list) -> str:
+    """Apply `[(path, value_json)]` as TEXT; the ORIGINAL text whenever the
+    result would not parse back to exactly the same document.
+
+    `_splice_budget_line()`'s discipline, generalised (that is what the
+    byte-shape rule is for - a `json.dumps` round trip reflows every array and
+    rewrites every key the owner added, which turns "one line touched" into a
+    diff nobody reads). So: splice, then re-parse and compare against the same
+    edits applied in memory, and refuse the whole edit set on any mismatch.
+    """
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return text
+    if not isinstance(data, dict):
+        return text
+    out = text
+    for path, value_json in edits:
+        obj = out.index("{")
+        for key in path[:-1]:
+            obj = _object_start(out, obj, key)
+            if obj < 0:
+                # A parent segment is absent or is not an object: adding the
+                # whole parent is the caller's decision, not a guess made here.
+                return text
+        quote = _find_member(out, obj, path[-1])
+        member = json.dumps(path[-1], ensure_ascii=False) + ": " + value_json
+        if quote < 0:
+            new = _insert_member(out, obj, member)
+        else:
+            new = _replace_member_value(out, quote, value_json)
+        if new == out:
+            return text
+        out = new
+    expected = _apply_edits(data, edits)
+    try:
+        got = json.loads(out)
+    except ValueError:
+        return text
+    return out if got == expected else text
 
 
 def _splice_budget_line(text: str, key: str, value: int | None) -> str | None:
@@ -685,8 +958,734 @@ def write_claude_pointer(root: Path) -> str:
     return "CLAUDE.md: wrote pointer to AGENTS.md"
 
 
+# ---------------------------------------------------------------------------
+# spec §8: `--migrate` - records what v2.0 never recorded
+# ---------------------------------------------------------------------------
+#
+# An existing v2.0 install cannot run ANY of the 1a/1b scripts until it is
+# migrated, because it has no `ai_common.py` to import; and the governance layer
+# has nothing to read until the authorization records have a home on disk. This
+# is the one command that closes the wave boundary, so the rules are strict
+# about the direction of failure: refuse BEFORE writing, never guess, never
+# clobber something a hand wrote, and name what a `git revert` cannot undo.
+
+MIGRATION_REL = ".ai/protocol/MIGRATION.json"
+MIGRATION_JOURNAL_REL = ".ai/protocol/MIGRATION.md"
+CONFIG_REL = ".ai/sync_config.json"
+ROLE_POLICY_REL = ".ai/state/ROLE_POLICY.md"
+WRITER_LOCK_REL = ".ai/runtime/WRITER_LOCK.json"
+MIGRATION_AGENT = "init-sync-migrate"
+MIGRATION_COMMIT_TAG = "cross-harness-sync-migrate"
+
+# The sentinel `sync_verify.py` reads as `SKIP(no-history)`, never as a pass:
+# `"NO_HISTORY"` is a claim that the window has no anchor, so it must not be
+# confused with `""` (nobody has migrated this tree) or with a real commit.
+NO_HISTORY = "NO_HISTORY"
+
+# SHA-256 of every script the released v2.0.0 installed, taken from the git blob
+# at `e692e73` ("Initial release: cross-harness-sync v2.0.0") - i.e. the bytes a
+# real v2.0 install has in HEAD, not the working-tree copy a `core.autocrlf` or a
+# `.gitattributes` rule may have rewritten. `ai_common.py` has no entry because
+# v2.0 never shipped one: its absence is an ADD, not a divergence.
+#
+# The table is deliberately tiny and closed: it answers one question - "is the
+# committed copy exactly what we released?" - and where it cannot answer,
+# `--migrate` writes a `.new` sidecar instead of clobbering. `tests/test_migrate.py`
+# re-derives these digests from the commit itself, so a wrong entry goes red.
+V20_SCRIPT_SHA256 = {
+    ".ai/scripts/checkpoint.py":
+        "5b73b8a4fde6de315906632ce652e6987713ee2457b650ff691835f64afa4aa3",
+    ".ai/scripts/sync_verify.py":
+        "1c7beedf4d8127e4fd5a9d5827d855d885b31c9779cf8b2de76498245058b757",
+}
+
+# The commit refuses-and-writes-nothing cases all exit this way, so a script
+# around `--migrate` can tell "refused" (2) from "half-migrated, look" (1).
+MIGRATE_REFUSED = 2
+MIGRATE_INCOMPLETE = 1
+
+
+def _now() -> str:
+    return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _refuse(why: str, extra: list | None = None) -> int:
+    """One refusal shape: say why, say nothing was written, exit 2."""
+    print(f"MIGRATE REFUSED: {why}")
+    for line in extra or []:
+        print(f"  {line}")
+    print("Nothing was written: this run made no change to the install, the "
+          "index, the config, or the history.")
+    return MIGRATE_REFUSED
+
+
+def git_head_state(root: Path) -> tuple:
+    """`('head', sha40)` / `('no-git', detail)` / `('unborn', detail)` /
+    `('detached', sha40)` / `('bogus', detail)`.
+
+    The four answers are separate because spec §8 sends them different ways:
+    unborn and detached REFUSE (a migration commit would land on no branch at
+    all, or on a detached one), while a tree with no repository at all still
+    gets its records - with `NO_HISTORY` as the window anchor, which is a named
+    skip rather than a claim. `bogus` is the fail-open guard: a HEAD that does
+    not resolve to exactly 40 lowercase hex is not a commit id, and storing
+    whatever came back would make `git log <window>..HEAD` a coin flip.
+    """
+    if not git_available():
+        return "no-git", "git is not on PATH"
+    probe = run_git(root, ["rev-parse", "--is-inside-work-tree"], timeout=15)
+    if not probe.ok or probe.out().strip().lower() != "true":
+        return "no-git", "this directory is not a git working tree"
+    head = run_git(root, ["rev-parse", "--verify", "HEAD"], timeout=15)
+    if not head.ok:
+        return "unborn", "`git rev-parse --verify HEAD` found no commit"
+    sha = head.out().strip()
+    if not re.fullmatch(r"[0-9a-f]{%d}" % SHA_HEX_LEN, sha):
+        return "bogus", f"HEAD resolved to {sha!r}, not a {SHA_HEX_LEN}-hex id"
+    branch = run_git(root, ["symbolic-ref", "--quiet", "HEAD"], timeout=15)
+    if not branch.ok:
+        return "detached", sha
+    return "head", sha
+
+
+def _nul_lines(res) -> list:
+    """A `-z` git listing as paths: split on NUL, never `splitlines()` (§6)."""
+    return [part.decode("utf-8", "surrogateescape")
+            for part in res.stdout.split(b"\0") if part]
+
+
+def dirty_tracked_scripts(root: Path) -> list:
+    """Tracked files under `.ai/scripts/` edited or deleted in the worktree.
+
+    `git ls-files -m/-d` is asked, not `git status`: the question is exactly
+    "tracked and modified", and an untracked install (everything `??`) must not
+    read as a dirty one - that would refuse every tree that has not committed
+    yet, which is the common case for a first `--migrate`.
+    """
+    if not is_git_repo(root):
+        return []
+    out = []
+    for flag in ("-m", "-d"):
+        res = run_git(root, ["ls-files", flag, "-z", "--", ".ai/scripts"],
+                      timeout=15)
+        if not res.ok:
+            return []
+        out.extend(_nul_lines(res))
+    return sorted(set(out))
+
+
+def staged_outside_ai(root: Path) -> list:
+    """Index entries outside `.ai/` - the commit could not stay scoped with them."""
+    if not is_git_repo(root):
+        return []
+    res = run_git(root, ["diff", "--cached", "--name-only", "-z"], timeout=15)
+    if not res.ok:
+        return []
+    return [p for p in _nul_lines(res) if not p.startswith(".ai/")]
+
+
+def head_blob(root: Path, rel: str):
+    """The committed bytes at HEAD, or None when HEAD has no such path."""
+    res = run_git(root, ["show", f"HEAD:{rel}"], timeout=15)
+    return res.stdout if res.ok else None
+
+
+def script_plan(root: Path) -> list:
+    """`[(rel, action, detail)]` for every script, decided BEFORE anything writes.
+
+    action is `add` (absent), `current` (bytes already match what we ship),
+    `refresh` (HEAD holds the released v2.0 blob: overwriting is the upgrade),
+    `sidecar` (diverged or untracked: hand-edited and an unknown version cannot
+    be told apart, so the new bytes go to `<name>.new`), or `unknown-history`
+    (a git query that could not be answered - treated as `sidecar`, because the
+    fail-open direction here is the one that can destroy work).
+    """
+    plan = []
+    for name, rel in SCRIPT_MAP:
+        dst = root / rel
+        try:
+            shipped = (SKILL_DIR / "scripts" / name).read_bytes()
+        except OSError:
+            plan.append((rel, "missing-source", f"scripts/{name} is unreadable"))
+            continue
+        shipped_digest = hashlib.sha256(shipped).hexdigest()
+        if not dst.exists():
+            plan.append((rel, "add", ""))
+            continue
+        try:
+            work = dst.read_bytes()
+        except OSError as exc:
+            plan.append((rel, "unreadable", f"cannot read ({exc.__class__.__name__})"))
+            continue
+        if hashlib.sha256(work).hexdigest() == shipped_digest:
+            plan.append((rel, "current", ""))
+            continue
+        if not is_git_repo(root):
+            # Spec §8: an untracked file counts as MODIFIED, because byte
+            # comparison against a released version is not evidence here.
+            plan.append((rel, "sidecar",
+                         "no repository to read HEAD from, so an in-place "
+                         "customisation cannot be ruled out"))
+            continue
+        blob = head_blob(root, rel)
+        if blob is None:
+            plan.append((rel, "sidecar",
+                         "not in HEAD, so a hand edit and an older shipped "
+                         "version cannot be told apart"))
+            continue
+        head_digest = hashlib.sha256(blob).hexdigest()
+        if head_digest == shipped_digest:
+            # Identical in HEAD and in the worktree apart from what this run is
+            # about to write: `dirty_tracked_scripts()` already refused the
+            # worktree-modified case, so this is a stale check. Keep it honest.
+            plan.append((rel, "sidecar",
+                         "HEAD matches the shipped copy but the worktree does "
+                         "not: an unstaged edit git cannot recover"))
+            continue
+        if V20_SCRIPT_SHA256.get(rel) == head_digest:
+            plan.append((rel, "refresh", "HEAD is the released v2.0.0 blob"))
+            continue
+        plan.append((rel, "sidecar",
+                     "HEAD's blob is neither the released v2.0.0 copy nor the "
+                     "shipped one: a hand edit and an unknown version cannot be "
+                     "told apart"))
+    return plan
+
+
+def effective_authorizations_dir(cfg: dict, requested: str | None) -> str:
+    """CLI flag > config > canonical default - never a guess at a location.
+
+    Spec §8: a wrong guess fabricates an authoritative record source, so the
+    precedence is fixed and every level of it is named in the printout.
+    """
+    if requested:
+        return requested.rstrip("/\\")
+    declared = str(cfg.get("authorizations_dir", "") or "").strip()
+    if declared:
+        return declared.rstrip("/\\")
+    return AUTHORIZATIONS_INDEX_REL.rsplit("/", 1)[0]
+
+
+def config_edits(cfg: dict, adir_rel: str, window: str, role_sha: str,
+                 dir_explicit: bool = False) -> list:
+    """The `[(path, value_json)]` edits this migration owes the config.
+
+    Only what is ABSENT or deliberately empty is written: a `window_start_commit`
+    that already names a commit is not moved (that would rewind or forge the
+    coverage window), and a `role_policy_sha256` someone set to a value that
+    disagrees with the file is left for a human to reconcile.
+    """
+    edits = []
+    if "protected_paths" not in cfg:
+        edits.append((("protected_paths",), "[]"))
+    if "protected_paths_case" not in cfg:
+        edits.append((("protected_paths_case",), '"case-sensitive"'))
+    declared = str(cfg.get("authorizations_dir", "") or "").strip()
+    if not declared:
+        edits.append((("authorizations_dir",),
+                      json.dumps(adir_rel, ensure_ascii=False)))
+    elif dir_explicit and declared != adir_rel:
+        # An explicit `--authorizations-dir` is the user RETARGETING the record
+        # source, and the verifier reads that key - writing the index somewhere
+        # the config does not name would put the records out of sight.
+        edits.append((("authorizations_dir",),
+                      json.dumps(adir_rel, ensure_ascii=False)))
+    pinned = cfg.get("role_policy_sha256")
+    if "role_policy_sha256" not in cfg:
+        edits.append((("role_policy_sha256",),
+                      json.dumps(role_sha, ensure_ascii=False)))
+    elif pinned == "" and role_sha:
+        edits.append((("role_policy_sha256",),
+                      json.dumps(role_sha, ensure_ascii=False)))
+    gov = cfg.get("governance")
+    if not isinstance(gov, dict):
+        edits.append((("governance",), json.dumps({"window_start_commit":
+                                                   window})))
+    elif not str(gov.get("window_start_commit", "") or "").strip():
+        edits.append((("governance", "window_start_commit"),
+                      json.dumps(window, ensure_ascii=False)))
+    return edits
+
+
+def _acquire_writer_lock(root: Path) -> tuple:
+    """Take the pen THROUGH the installed `checkpoint.py`, not by copying its
+    record format: D23's disease was three scripts each writing the same file.
+
+    Returns `(ok, detail)`. A refusal here writes nothing at all, which is the
+    point - `--migrate` mutates tracked state, so it is exactly the command the
+    advisory lock exists for.
+    """
+    cp = root / ".ai/scripts/checkpoint.py"
+    if not cp.is_file():
+        return False, (".ai/scripts/checkpoint.py is missing, so the writer-lock "
+                       "contract cannot be invoked. Run plain `init_sync.py` "
+                       "first (a fresh install), not --migrate.")
+    res = run_argv(root, [sys.executable, str(cp), "--lock",
+                          "--agent", MIGRATION_AGENT, "--reason",
+                          f"cross-harness-sync --migrate to {PROTOCOL_VERSION}"],
+                   timeout=120)
+    if res.timed_out:
+        return False, "`checkpoint.py --lock` timed out; no lock was taken"
+    detail = (res.out() + res.err()).strip().replace("\n", " | ")
+    if res.rc != 0:
+        return False, f"`checkpoint.py --lock` exited {res.rc}: {detail}"
+    return True, detail
+
+
+def _migration_commit(root: Path, installed: str) -> tuple:
+    """Commit `.ai/**` and nothing else. `(ok, detail)`; a failed commit is a
+    NAMED outcome, never an absent one.
+
+    The lock record is unstaged before the commit - `--migrate` holds the pen,
+    it does not record the holding in the migration's own commit.
+    """
+    add = run_git(root, ["add", "-A", "--", ".ai"], timeout=120)
+    if not add.ok:
+        return False, (f"`git add -- .ai` exited {add.rc}: "
+                       f"{add.err().strip()[:200]}")
+    run_git(root, ["reset", "-q", "--", WRITER_LOCK_REL], timeout=60)
+    message = (f"chore({MIGRATION_COMMIT_TAG}): v{installed} -> "
+               f"v{PROTOCOL_VERSION} governance records\n\n"
+               f"Written by `init_sync.py --migrate`: the authorization index, "
+               f"the config's governance namespaces, and "
+               f"{MIGRATION_JOURNAL_REL}.\n"
+               f"Revert this commit to undo the .ai/ part; "
+               f"{MIGRATION_JOURNAL_REL} names what a revert cannot undo.")
+    commit = run_git(root, ["commit", "-q", "-m", message], timeout=120)
+    if commit.ok:
+        listing = run_git(root, ["show", "--name-only", "--format="],
+                          timeout=60)
+        files = [ln.strip() for ln in listing.out().splitlines() if ln.strip()]
+        outside = [f for f in files
+                   if not f.startswith(".ai/") or f == WRITER_LOCK_REL]
+        if outside:
+            return False, (f"the commit was created but it reaches outside "
+                           f".ai/: {', '.join(outside)}")
+        return True, f"{len(files)} path(s) committed"
+    out = (commit.out() + commit.err()).strip().replace("\n", " | ")
+    if "nothing to commit" in out:
+        return True, "nothing to commit (this run wrote no tracked change)"
+    return False, f"`git commit` exited {commit.rc}: {out[:200]}"
+
+
+def _journal(started: str, completed: str, installed: str, window: str,
+             window_how: str, adir_rel: str, touched: list,
+             not_reversible: list) -> str:
+    lines = [
+        f"# Migration journal - cross-harness-sync v{installed} -> "
+        f"v{PROTOCOL_VERSION}",
+        "",
+        f"- started: {started}",
+        f"- completed: {completed}",
+        f"- window anchor (`governance.window_start_commit`): `{window}` - "
+        f"{window_how}",
+        f"- authorization records: `{adir_rel}`",
+        "- record: `.ai/protocol/MIGRATION.json`",
+        "",
+        "## Files this run wrote",
+        "",
+    ]
+    lines += [f"- `{rel}`" for rel in touched] or ["- (none)"]
+    lines += ["", "## NOT reversible by reverting the migration commit", ""]
+    lines += (not_reversible or ["- (nothing this run: every change it made is "
+                                 "inside the commit, so a revert undoes all of "
+                                 "it)"])
+    lines += ["", "## Known unsolvable, documented rather than worked around",
+              "",
+              "- Customization detection needs history: an untracked "
+              "`.ai/scripts/`, or a shallow clone whose HEAD blob is not the "
+              "released copy, can only be reported as 'cannot tell', and the "
+              "answer taken is the fail-safe one (a `.new` sidecar).",
+              "- Two machines migrating the same install conflict in "
+              "`.gitignore`, `AGENTS.md`, `VERSION` and `sync_config.json`. "
+              "The lock that would serialise them is itself a tracked file, so "
+              "it cannot arbitrate across machines; `--ff-only` and no "
+              "force-push mean the loser rebases by hand, and re-running "
+              "`--migrate` there verifies instead of re-migrating.",
+              "- Hook command strings in `.claude/settings.json` live outside "
+              "`.ai/` and are invisible to this migration.",
+              "- `AGENTS.md` is NOT refreshed by `--migrate` (it is outside "
+              "`.ai/`, so the commit could not stay scoped to `.ai/**`). Run "
+              "plain `init_sync.py --force` for the managed block.",
+              ""]
+    return "\n".join(lines)
+
+
+def verify_migration(root: Path) -> list:
+    """The idempotency check: what `--migrate` promised, re-measured on disk.
+
+    A re-run that only reads `MIGRATION.json` would report success over a tree
+    that has since LOST the index - the same `rc == 0`-is-not-evidence class
+    this wave exists to end - so every item is read from the file it names.
+    """
+    out = []
+    text, why = _read_raw_text(root / MIGRATION_REL)
+    if text is None:
+        return [("FAIL", MIGRATION_REL, why or "unreadable")]
+    try:
+        record = json.loads(text)
+    except ValueError as exc:
+        return [("FAIL", MIGRATION_REL, f"does not parse: {exc}")]
+    ok_to = record.get("to") == PROTOCOL_VERSION
+    out.append(("PASS" if ok_to else "FAIL", "migration record `to`",
+                f"{record.get('to')!r} vs {PROTOCOL_VERSION!r}"))
+    stamp = (_read_text(root / ".ai/protocol/VERSION") or "").strip()
+    out.append(("PASS" if stamp == PROTOCOL_VERSION else "FAIL", "protocol stamp",
+                f"{stamp or 'missing'!r}"))
+    cfg_text, cfg_why = _read_raw_text(root / CONFIG_REL)
+    if cfg_text is None:
+        out.append(("FAIL", CONFIG_REL, cfg_why or "unreadable"))
+        return out
+    try:
+        cfg = json.loads(cfg_text)
+    except ValueError as exc:
+        out.append(("FAIL", CONFIG_REL, f"does not parse: {exc}"))
+        return out
+    gov = cfg.get("governance") if isinstance(cfg.get("governance"), dict) else {}
+    window = str(gov.get("window_start_commit", "") or "")
+    out.append((("PASS" if window else "FAIL"), "window anchor",
+                window or "unset"))
+    adir = effective_authorizations_dir(cfg, None)
+    index = root / Path(adir) / "INDEX.md"
+    out.append((("PASS" if index.is_file() and index.stat().st_size else "FAIL"),
+                "authorization index", index.relative_to(root).as_posix()))
+    pinned = str(cfg.get("role_policy_sha256", "") or "")
+    policy = root / ROLE_POLICY_REL
+    if not pinned:
+        out.append(("WARN", "role policy pin",
+                    "config pins no digest (the migration writes one; an empty "
+                    "value here means it was unpinned since)"))
+    elif policy.is_file():
+        got = hashlib.sha256(policy.read_bytes()).hexdigest()
+        out.append((("PASS" if got == pinned else "FAIL"), "role policy pin",
+                    f"digests to {got}" if got == pinned
+                    else f"digests to {got}, config pins {pinned}"))
+    else:
+        out.append(("FAIL", "role policy pin", f"{ROLE_POLICY_REL} is missing"))
+    for name, rel in SCRIPT_MAP:
+        dst = root / rel
+        if not dst.is_file():
+            out.append(("FAIL", rel, "missing"))
+            continue
+        try:
+            same = dst.read_bytes() == (SKILL_DIR / "scripts" / name).read_bytes()
+        except OSError:
+            same = False
+        if same:
+            continue
+        side = dst.parent / (dst.name + ".new")
+        if side.is_file():
+            out.append(("WARN", rel,
+                        "kept as installed, shipped copy at "
+                        f"{side.relative_to(root).as_posix()}"))
+        else:
+            out.append(("FAIL", rel,
+                        "neither the shipped copy nor a preserved `.new` "
+                        "sidecar"))
+    return out
+
+
+def run_migration(root: Path, args) -> int:
+    """`--migrate`: preflight everything that can refuse, THEN write, THEN commit."""
+    print(f"Migrating cross-harness-sync in {root} (protocol "
+          f"{PROTOCOL_VERSION})\n")
+
+    # --- preflight: nothing below writes a single byte ------------------------
+    stamp_path = root / ".ai/protocol/VERSION"
+    if not root.joinpath(".ai").is_dir() or not stamp_path.is_file():
+        return _refuse("there is no install here to migrate "
+                       "(`.ai/protocol/VERSION` is absent). For a new "
+                       "repository run `init_sync.py` without --migrate.")
+    version_ok, version_detail = check_version_match(root)
+    if not version_ok:
+        return _refuse(f"the installed protocol refuses this upgrade: "
+                       f"{version_detail}")
+    installed = (_read_text(stamp_path) or "").strip()
+
+    state, value = git_head_state(root)
+    if state == "unborn":
+        return _refuse("this repository has no commits (unborn HEAD), so a "
+                       "migration commit has nowhere to land and the coverage "
+                       f"window has no anchor. Commit the install first. "
+                       f"({value})")
+    if state == "detached":
+        return _refuse(f"HEAD is detached (at {value[:8]}): the commit would "
+                       "belong to no branch and the next machine could not "
+                       "receive it. Check out a branch first.")
+    if state == "bogus":
+        return _refuse(f"HEAD is not a usable commit id: {value}")
+    window = value if state == "head" else NO_HISTORY
+    window_how = ("taken from `git rev-parse --verify HEAD` at migration time"
+                  if state == "head" else
+                  "SKIP(no-history): no repository to anchor a window on, so "
+                  "the coverage walk reports a named skip rather than a pass")
+
+    dirty = dirty_tracked_scripts(root)
+    if dirty:
+        return _refuse(".ai/scripts/ has edits that are not even staged, and "
+                       "migration rewrites those exact files",
+                       [f"{rel} (unstaged edit or deletion)" for rel in dirty]
+                       + ["Commit or discard them first: this is the one state "
+                          "where a migration could destroy work git cannot "
+                          "restore."])
+    outside = staged_outside_ai(root)
+    if outside:
+        return _refuse("the index already holds changes outside .ai/, and this "
+                       "run's commit is scoped to .ai/** only",
+                       [f"{rel} (staged)" for rel in outside]
+                       + ["Commit or unstage them first - `--migrate` will not "
+                          "fold someone else's staged work into a protocol "
+                          "migration."])
+
+    cfg_text, cfg_why = _read_raw_text(root / CONFIG_REL)
+    if cfg_text is None:
+        return _refuse(f"{CONFIG_REL} {cfg_why or 'cannot be read'}")
+    try:
+        cfg = json.loads(cfg_text)
+    except ValueError as exc:
+        return _refuse(f"{CONFIG_REL} is not valid JSON, and rewriting it "
+                       f"silently would drop the owner's keys: {exc}")
+    if not isinstance(cfg, dict):
+        return _refuse(f"{CONFIG_REL} is not a JSON object")
+
+    adir_rel = effective_authorizations_dir(cfg, args.authorizations_dir)
+    if args.authorizations_dir:
+        norm = args.authorizations_dir.replace("\\", "/").strip("/")
+        if (not norm or norm.startswith("/") or ":" in norm
+                or ".." in Path(norm).parts):
+            return _refuse(f"--authorizations-dir must be a repo-relative path "
+                           f"inside the checkout, got "
+                           f"{args.authorizations_dir!r}")
+        adir_rel = norm
+    if not adir_rel.startswith(".ai/") and args.authorizations_dir:
+        print(f"[WARN] {adir_rel} is outside .ai/, so the index this run "
+              "creates is NOT in the migration commit (which is scoped to "
+              ".ai/**). Commit it yourself.")
+
+    policy_path = root / ROLE_POLICY_REL
+    role_sha = ""
+    if policy_path.is_file():
+        try:
+            role_sha = hashlib.sha256(policy_path.read_bytes()).hexdigest()
+        except OSError as exc:
+            return _refuse(f"{ROLE_POLICY_REL} cannot be read to pin its "
+                           f"digest ({exc.__class__.__name__})")
+    pinned = str(cfg.get("role_policy_sha256", "") or "")
+    if pinned and role_sha and pinned != role_sha:
+        print(f"[WARN] role policy pin: {CONFIG_REL} says {pinned}, "
+              f"{ROLE_POLICY_REL} digests to {role_sha}. Left as it is - an "
+              "intentional edit of the governance document is reconciled by a "
+              "human, not overwritten by a migrator.")
+
+    planned = config_edits(cfg, adir_rel, window, role_sha,
+                           bool(args.authorizations_dir))
+    new_cfg_text = _splice_json(cfg_text, planned) if planned else cfg_text
+    if planned and new_cfg_text == cfg_text:
+        return _refuse(f"{CONFIG_REL} could not be edited as text without "
+                       "reflowing or losing a key")
+    plan = script_plan(root)
+
+    # --- idempotency: a re-run VERIFIES and writes nothing -------------------
+    if (root / MIGRATION_REL).is_file():
+        try:
+            prior = json.loads(_read_text(root / MIGRATION_REL) or "")
+        except ValueError:
+            prior = None
+        already = (isinstance(prior, dict)
+                   and prior.get("to") == PROTOCOL_VERSION
+                   and prior.get("from") == installed
+                   and bool(window))
+        if already:
+            print(f"already migrated ({installed} -> {PROTOCOL_VERSION}); "
+                  "verifying the recorded state and writing nothing.")
+            fails = 0
+            for kind, name, detail in verify_migration(root):
+                print(f"[{kind}] migrate verify {name}: {detail}")
+                fails += kind == "FAIL"
+            if fails:
+                print(f"\nMIGRATE INCOMPLETE: {fails} verification(s) failed "
+                      f"after a recorded migration. This run changed nothing; "
+                      f"delete {MIGRATION_REL} only if you want to re-run the "
+                      "migration from scratch, or restore the named file from "
+                      "git.")
+                return MIGRATE_INCOMPLETE
+            return 0
+
+    # --- the writer lock, taken before the first mutation --------------------
+    # Spec §8's reason for the lock is that migration MUTATES TRACKED STATE. A
+    # tree with no repository has no tracked state and no second machine to
+    # contend with - and `checkpoint.py --lock` refuses a non-repository layout
+    # by design - so the lock is skipped BY NAME here rather than pretending to
+    # be held.
+    if state == "no-git":
+        print("[SKIP(no-repository)] writer lock: nothing in this install is "
+              "tracked, so there is no shared state to acquire a pen over.")
+    else:
+        ok, lock_detail = _acquire_writer_lock(root)
+        if not ok:
+            return _refuse("the writer lock could not be acquired, and --migrate "
+                           "mutates tracked state", [lock_detail])
+        print(f"lock: {lock_detail or 'acquired'}")
+
+    started = _now()
+    touched: list = []
+    warns: list = []
+
+    # 1. the config, edited as text.
+    if planned:
+        _write_bytes_text(root / CONFIG_REL, new_cfg_text)
+        touched.append(CONFIG_REL)
+        for path, _value in planned:
+            print(f"config: {'.'.join(path)} set")
+    else:
+        print(f"config: {CONFIG_REL} already carries every governance key")
+
+    # 2. the scripts: refresh what is provably ours, sidecar what is not.
+    for rel, action, detail in plan:
+        name = Path(rel).name
+        src = SKILL_DIR / "scripts" / name
+        if action == "current":
+            print(f"unchanged: {rel} (already the shipped copy)")
+            continue
+        if action == "add":
+            line = copy_file(src, root / rel, True)
+            print(line)
+            if line.startswith("wrote"):
+                touched.append(rel)
+            continue
+        if action == "refresh":
+            line = copy_file(src, root / rel, True)
+            print(line)
+            if line.startswith("wrote"):
+                touched.append(rel)
+            print(f"NOTE replaced: {rel} ({detail}, so no hand edit is in the "
+                  "line being overwritten) - `git diff HEAD^ " + rel + "` "
+                  "names what went")
+            continue
+        if action in ("sidecar", "unknown-history", "missing-source",
+                      "unreadable"):
+            if action == "missing-source":
+                warns.append(f"{rel}: {detail}")
+                print(f"[WARN] {rel}: {detail}")
+                continue
+            side = (root / rel).parent / (name + ".new")
+            try:
+                side.write_bytes(src.read_bytes())
+            except OSError as exc:
+                warns.append(f"{rel}: the shipped copy could not be written "
+                             f"even as a sidecar ({exc.__class__.__name__})")
+                continue
+            touched.append(side.relative_to(root).as_posix())
+            print(f"[WARN] preserved customised script: {rel} is left exactly "
+                  f"as it was ({detail}); the shipped copy is at "
+                  f"{side.relative_to(root).as_posix()}. This install still "
+                  "runs the OLD script - review the sidecar, then replace it "
+                  "by hand and re-run `--migrate`.")
+
+    # 3. the protocol stamp, the missing state files, the placeholders.
+    _write_text(stamp_path, PROTOCOL_VERSION + "\n")
+    touched.append(".ai/protocol/VERSION")
+    for rel_src, rel_dst in FILE_MAP:
+        if rel_dst == AUTHORIZATIONS_INDEX_REL and adir_rel != \
+                AUTHORIZATIONS_INDEX_REL.rsplit("/", 1)[0]:
+            continue
+        dst = root / rel_dst
+        if dst.exists():
+            continue
+        line = copy_file(TEMPLATES / rel_src, dst, True)
+        print(line)
+        if line.startswith("wrote"):
+            touched.append(rel_dst)
+
+    # 4. the authorization records: the directory, its index, and the template
+    #    that now carries a `## Governance` block.
+    index_dst = root / Path(adir_rel) / "INDEX.md"
+    line = copy_file(TEMPLATES / AUTHORIZATIONS_INDEX_SRC, index_dst, True,
+                     protected=True)
+    print(line)
+    if line.startswith("wrote"):
+        touched.append(index_dst.relative_to(root).as_posix())
+    elif line.startswith("SKIP") or line.startswith("KEEP"):
+        print("index: kept the record index already on disk "
+              f"({line.split(':')[0].strip()})")
+    auth_dst = root / ".ai/templates/AUTHORIZATION.md"
+    line = copy_file(TEMPLATES / "AUTHORIZATION.md", auth_dst, True,
+                     protected=True)
+    print(line)
+    if line.startswith("wrote"):
+        touched.append(".ai/templates/AUTHORIZATION.md")
+
+    # 5. the tracked placeholders and the append-only `.gitignore` (D16/D17).
+    not_reversible: list = []
+    for keep in (".ai/handoff/archive/.gitkeep", ".ai/state/archive/.gitkeep",
+                 f"{adir_rel}/.gitkeep", ".ai/runtime/.gitkeep"):
+        path = root / Path(keep)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if not path.exists():
+            _write_text(path, "")
+            touched.append(path.relative_to(root).as_posix())
+            print(f"wrote: {path.relative_to(root).as_posix()}")
+    line = update_gitignore(root)
+    print(line)
+    if "appended" in line:
+        not_reversible.append("- `.gitignore` was APPENDED to, and it lives "
+                              "outside `.ai/`: a revert of the migration "
+                              "commit does not take those lines back. `git diff "
+                              ".gitignore` names them.")
+
+    # 6. the journal, then the record that points at it.
+    completed = _now()
+    for rel, action, detail in plan:
+        if action in ("sidecar", "unknown-history"):
+            not_reversible.append(
+                f"- `{rel}` was NOT overwritten: it is still the customised "
+                f"copy ({detail}). Nothing here needs reverting, and nothing "
+                "here tells you the customisation still works under the new "
+                "protocol.")
+    journal = _journal(started, completed, installed, window, window_how,
+                       adir_rel, sorted(set(touched)), not_reversible)
+    _write_text(root / MIGRATION_JOURNAL_REL, journal + "")
+    touched.append(MIGRATION_JOURNAL_REL)
+    record = {"from": installed, "to": PROTOCOL_VERSION, "started": started,
+              "completed": completed, "files_touched": sorted(set(touched))}
+    _write_text(root / MIGRATION_REL,
+                json.dumps(record, indent=2, ensure_ascii=False) + "\n")
+    print(f"wrote: {MIGRATION_REL}")
+    print(f"wrote: {MIGRATION_JOURNAL_REL}")
+
+    # 7. the commit - `.ai/**` only, and never the lock record.
+    if state == "no-git":
+        print(f"[SKIP(no-repository)] commit: there is no repository to commit "
+              f"{MIGRATION_REL} into; the files are on disk, nothing is in "
+              "history.")
+    else:
+        ok, detail = _migration_commit(root, installed)
+        if ok:
+            print(f"commit: {MIGRATION_COMMIT_TAG} v{installed} -> "
+                  f"v{PROTOCOL_VERSION} ({detail}); "
+                  f"{WRITER_LOCK_REL} was deliberately left out")
+        else:
+            warns.append(f"the migration commit: {detail}")
+            print(f"[WARN] commit failed: {detail}")
+
+    print(f"\nwindow_start_commit: {window} - {window_how}")
+    for line in warns:
+        print(f"[WARN] {line}")
+    print("\nNext steps:")
+    print(f"  1. Read {MIGRATION_JOURNAL_REL} - it names what a revert cannot "
+          "undo.")
+    print("  2. Fill the index rows and write one .md per stage into "
+          f"{adir_rel}/ from .ai/templates/AUTHORIZATION.md.")
+    print("  3. python .ai/scripts/sync_verify.py -> a named [SKIP] is "
+          "expected; silence is not.")
+    print(f"  4. Release the pen when you are done: python "
+          f".ai/scripts/checkpoint.py --unlock --agent {MIGRATION_AGENT}")
+    return 0
+
+
 def main() -> int:
     # First, before anything is printed: a cp936 console turns the UTF-8 bytes
+
     # of any non-ASCII text left in them into mojibake, and the install output
     # is the first thing a new user reads (checkpoint.py and sync_verify.py
     # have always done this; init_sync.py was the one entry script that did not).
@@ -714,12 +1713,43 @@ def main() -> int:
                              "with a NOTE replaced: line.")
     parser.add_argument("--no-agents-block", action="store_true",
                         help="Do not touch AGENTS.md")
+    parser.add_argument("--migrate", action="store_true",
+                        help="The wave-1b upgrade path for an EXISTING install: "
+                             "record what v2.0 never recorded (the "
+                             "authorization index, the config's governance "
+                             "namespaces, the coverage window anchor, the "
+                             "role-policy digest) and commit it under .ai/**. "
+                             "Refuses and writes nothing on an unborn or "
+                             "detached HEAD, an unusable protocol stamp, an "
+                             "unparseable config, an unstaged edit under "
+                             ".ai/scripts/, or a held writer lock; a re-run is "
+                             "a verifying no-op. Implies neither --force nor "
+                             "--clobber, and refuses --clobber.")
+    parser.add_argument("--authorizations-dir", default=None, metavar="DIR",
+                        help="Where the stage authorization records live "
+                             "(repo-relative, inside the checkout). Never "
+                             "guessed: with no flag --migrate uses the config's "
+                             "authorizations_dir, falling back to "
+                             ".ai/state/authorizations.")
     args = parser.parse_args()
 
     root = Path(args.repo_root).resolve()
     if not root.is_dir():
         print(f"ERROR: {root} is not a directory")
         return 2
+
+    if args.migrate:
+        if args.clobber:
+            print("ERROR: --migrate never overwrites edited state, so it cannot "
+                  "be combined with --clobber. Use plain `init_sync.py "
+                  "--clobber` for that.")
+            return 2
+        if args.scripts_only:
+            print("ERROR: --migrate and --scripts-only are different upgrade "
+                  "paths; --migrate refreshes the scripts itself (and writes "
+                  ".new sidecars rather than clobbering a customised one).")
+            return 2
+        return run_migration(root, args)
 
     # D22: the version comparison runs BEFORE the banner and before a single
     # write, because the damage a downgrade does is exactly the overwrite this

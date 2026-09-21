@@ -104,10 +104,14 @@ def test_the_list_names_the_governance_files_and_nothing_unwritten():
     assert ".ai/state/ROLE_POLICY.md" in ai_common.DEFAULT_REQUIRED_FILES
     assert ".ai/state/CURRENT.md" in ai_common.DEFAULT_REQUIRED_FILES
     assert ".ai/protocol/VERSION" in ai_common.DEFAULT_REQUIRED_FILES
-    # wave 1b populates this; requiring it in 1a makes every fresh install red
-    assert not any("authorizations" in rel
-                   for rel in ai_common.DEFAULT_REQUIRED_FILES), \
-        ai_common.DEFAULT_REQUIRED_FILES
+    # wave 1b flipped this pin: the authorization index IS required now, because
+    # the same commit that requires it also ships the template and installs it
+    # (`FILE_MAP` in init_sync.py), so no install can be red for wanting a file
+    # nothing writes. `templates/authorizations/INDEX.md` is the proof of the
+    # other half; `test_authorization_records.py` pins that a fresh install gets
+    # the file.
+    assert ".ai/state/authorizations/INDEX.md" in \
+        ai_common.DEFAULT_REQUIRED_FILES, ai_common.DEFAULT_REQUIRED_FILES
 
 
 def test_the_floor_is_a_named_subset_of_the_shared_list():

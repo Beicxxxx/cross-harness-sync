@@ -53,9 +53,12 @@ def test_one_accepted_authorization_passes_naming_the_count(ai_repo, sv):
 
 def test_no_records_at_all_passes_with_zero(ai_repo, sv):
     adir = ai_repo / ".ai" / "state" / "authorizations"
-    # The installer creates the canonical home (spec 6); an empty one holds no
-    # live stage record, which is the zero the boundary is satisfied by.
-    assert not list(adir.glob("*.md")), list(adir.iterdir())
+    # The installer creates the canonical home (spec 6); one holding no live
+    # stage record is the zero the boundary is satisfied by. Since wave 1b that
+    # includes `INDEX.md`, which the record reader skips by name: an index is a
+    # table of contents, not an authorization (spec 6).
+    assert [p.name for p in adir.glob("*.md")] == ["INDEX.md"], \
+        list(adir.iterdir())
     res = run_python(sv, cwd=ai_repo)
     assert res.rc == 0, res.stdout + res.stderr
     passes = [ln for ln in res.lines if ln.startswith("[PASS] swarm boundary:")]

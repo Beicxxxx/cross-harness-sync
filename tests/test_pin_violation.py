@@ -54,8 +54,11 @@ def test_no_authorizations_is_a_named_skip(ai_repo, sv):
     adir = ai_repo / ".ai" / "state" / "authorizations"
     # The installer creates the directory (spec 6: it is the canonical home
     # v2.0 never gave the records); what makes the check skip is that it holds
-    # no stage record.
-    assert not list(adir.glob("*.md")), list(adir.iterdir())
+    # no stage record. Wave 1b's `--migrate`/install DOES put `INDEX.md` there
+    # (it is a required file now), and `_authorization_records()` skips it by
+    # name — so the honest form of "no record" is "nothing but the index".
+    assert [p.name for p in adir.glob("*.md")] == ["INDEX.md"], \
+        list(adir.iterdir())
     res = run_python(sv, cwd=ai_repo)
     assert res.rc == 0, res.stdout + res.stderr
     skips = [ln for ln in res.lines if ln.startswith("[SKIP] pin violation:")]

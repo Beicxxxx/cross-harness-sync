@@ -41,9 +41,11 @@ AI_DIR_NAME = ".ai"
 # constants, so every script imports the same object instead of copying it, and
 # the shipped `.ai/sync_config.json` carries the identical list.
 #
-# Deliberately absent: `.ai/state/authorizations/INDEX.md`. Wave 1b's `--migrate`
-# creates and populates it; requiring a file that nothing writes in 1a would make
-# every fresh install red for a 1b reason.
+# Deliberately absent: every file the installer does not write. Wave 1b's
+# `--migrate` creates `.ai/state/authorizations/INDEX.md` (and `init_sync.py`
+# now writes it on a fresh install too, from `templates/authorizations/`), so it
+# belongs on this list; requiring a file nothing writes would make every fresh
+# install red. The flip and the template landed in ONE commit for that reason.
 DEFAULT_REQUIRED_FILES = [
     ".ai/state/CURRENT.md",
     ".ai/state/TASK.md",
@@ -53,6 +55,7 @@ DEFAULT_REQUIRED_FILES = [
     ".ai/state/DECISIONS_INDEX.md",
     ".ai/handoff/LATEST.md",
     ".ai/protocol/VERSION",
+    ".ai/state/authorizations/INDEX.md",
 ]
 
 # The governance floor under the required-file list, living next to the list it

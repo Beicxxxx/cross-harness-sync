@@ -7,7 +7,8 @@
     ".ai/state/DECISIONS.md",
     ".ai/state/DECISIONS_INDEX.md",
     ".ai/handoff/LATEST.md",
-    ".ai/protocol/VERSION"
+    ".ai/protocol/VERSION",
+    ".ai/state/authorizations/INDEX.md"
   ],
   "budgets": {
     "AGENTS.md": 65,
@@ -20,5 +21,12 @@
   "decisions_file": ".ai/state/DECISIONS.md",
   "secret_files": [".env"],
   "secret_mirrors": [],
-  "extra_checks": []
+  "extra_checks": [],
+  "protected_paths": [],
+  "protected_paths_case": "case-sensitive",
+  "authorizations_dir": ".ai/state/authorizations",
+  "role_policy_sha256": "",
+  "governance": {
+    "window_start_commit": ""
+  }
 }
