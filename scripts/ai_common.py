@@ -181,7 +181,6 @@ def protect_stdio() -> None:
     bytes still reach the operator, as visible backslash escapes, rather
     than as the silent replacement character the old errors=replace path
     would have left behind.
-    the `?` that `errors="replace"` would have left behind.
     """
     for name in ("stdout", "stderr"):
         stream = getattr(sys, name)

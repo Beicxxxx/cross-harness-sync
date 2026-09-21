@@ -376,7 +376,13 @@ def _check_shape(key: str, val) -> None:
             raise ConfigError(f"malformed: budgets values must be line-count "
                               f"integers (or null to drop a default), not "
                               f"under {bad}")
-    if key == "budgets":
+        # R4 finding 5 (MINOR): this ceiling rule arrived as a SECOND
+        # `if key == "budgets":` branch one line below the shape rules above, so
+        # the key's contract lived in two places at once. Nothing was shadowed --
+        # they are separate `if`s, and the `bad` raise above means only ints
+        # reach here -- but a third budgets rule would have landed in whichever
+        # branch its author noticed, which is how D3's shallow merge survived as
+        # long as it did. One branch, same three refusals, same order.
         over = sorted((str(k), v) for k, v in val.items()
                       if isinstance(v, int) and not isinstance(v, bool)
                       and v > LINE_CAP_CEILING)
@@ -606,36 +612,57 @@ def check_line_budgets(cfg: dict, nulled: set | None = None) -> None:
     nulled = nulled or set()
     budgets = cfg["budgets"]
     for rel, cap in budgets.items():
-        p = ROOT / rel
-        if not p.exists():
-            record(f"budget {rel}", False, f"missing (cap {cap})")
-            continue
-        n = line_count(p)
-        record(f"budget {rel}", n <= cap, f"{n} lines (cap {cap})")
+        # R4 finding 3 (MODERATE, S4): this body ran inside the SECTION-level
+        # `except Exception` in `main()`, so ONE unreadable key --
+        # `{".ai/state": 10}`, which `line_count()` answers with
+        # `PermissionError [Errno 13]` on this host (`IsADirectoryError` on
+        # POSIX) -- replaced the whole budget layer's evidence with a single
+        # `[FAIL] line budgets check: check raised PermissionError` at `17/19`.
+        # Fail-closed, but denial-of-evidence is still evidence lost: the caps
+        # that had not printed yet, and the DECISIONS cap below, stopped being
+        # measured by a key that has nothing to do with them. Per-entry now: the
+        # raising key is one named FAIL naming its error, the rest still report.
+        # The same wrap covers the floor loop, which asks `exists()` about a
+        # fixed list of names and reaches the identical funnel (S1's shape).
+        try:
+            p = ROOT / rel
+            if not p.exists():
+                record(f"budget {rel}", False, f"missing (cap {cap})")
+                continue
+            n = line_count(p)
+            record(f"budget {rel}", n <= cap, f"{n} lines (cap {cap})")
+        except Exception as exc:
+            record(f"budget {rel}", False,
+                   f"could not be measured: {type(exc).__name__}: {exc}")
     # The floor half: a present file with no cap and no explicit null is a
     # silently unchecked file, and `absent so unchecked` is not a shape spec 4
     # allows. An explicit null IS allowed, and gets its own line so the opt-out
     # leaves a trace instead of vanishing from the evidence.
     for rel in BUDGET_FLOOR:
-        if rel in budgets:
-            continue
-        if not (ROOT / rel).exists():
-            continue
-        if rel in nulled:
-            # Lane S2 finding 1 (HIGH), the same shape one edit deeper than the
-            # one F5 closed: this recorded `True`, so `{"budgets": {<every floor
-            # name>: null}}` measured ZERO line budgets and still printed five
-            # `[PASS]` lines with the line count of a healthy run at rc 0. The
-            # config edit stays legal — the verdict is the claim the line makes,
-            # and a decline claims nothing. Spec 4: WARN or SKIP, never PASS.
-            record(f"cap opt-out {rel}", None,
-                   f"SKIP({rel} is present and its cap was dropped by an "
-                   f"explicit null in config: a considered act, not D3's "
-                   f"accident, and nothing is measured here)")
-        else:
+        try:
+            if rel in budgets:
+                continue
+            if not (ROOT / rel).exists():
+                continue
+            if rel in nulled:
+                # Lane S2 finding 1 (HIGH), the same shape one edit deeper than
+                # the one F5 closed: this recorded `True`, so `{"budgets":
+                # {<every floor name>: null}}` measured ZERO line budgets and
+                # still printed five `[PASS]` lines with the line count of a
+                # healthy run at rc 0. The config edit stays legal — the verdict
+                # is the claim the line makes, and a decline claims nothing.
+                # Spec 4: WARN or SKIP, never PASS.
+                record(f"cap opt-out {rel}", None,
+                       f"SKIP({rel} is present and its cap was dropped by an "
+                       f"explicit null in config: a considered act, not D3's "
+                       f"accident, and nothing is measured here)")
+            else:
+                record(f"budget {rel}", False,
+                       "file present, no cap in config and no explicit null - "
+                       "name the cap or decline it with null")
+        except Exception as exc:
             record(f"budget {rel}", False,
-                   "file present, no cap in config and no explicit null - "
-                   "name the cap or decline it with null")
+                   f"could not be measured: {type(exc).__name__}: {exc}")
     dec_rel = cfg["decisions_file"]
     dec = ROOT / dec_rel
     cap = cfg["decisions_max_active_entries"]
@@ -800,6 +827,21 @@ def check_extra(cfg: dict) -> None:
             # into a green run.
             record(name, None, f"cmd `{label}` rc=0; SKIP(child exited 0 but "
                                f"wrote nothing; nothing observed)")
+        elif res.ok and re.match(r"^(FAIL|ERROR)\b", evidence):
+            # R4 finding 2 (MAJOR, S3): the last surviving "rc == 0 is
+            # sufficient" hole on the only project-extensible surface this
+            # protocol has. A child writing `FAIL: nope` to stderr and exiting 0
+            # booked `[PASS] <name> ... rc=0; FAIL: nope` inside `== 20/20 ==`,
+            # so a green run could carry a line that says, in its own evidence,
+            # that the thing it checked failed. The child contradicts itself, and
+            # neither reading is defensible: honouring the exit code certifies a
+            # FAIL, honouring the line fails a project check we do not own. So
+            # the run neither passes nor fails it -- it names the contradiction
+            # and keeps it out of the passed fraction (spec 4: a degradation names
+            # itself, and a check we cannot vouch for is unverified).
+            record(name, None, f"cmd `{label}` rc=0; SKIP(child contradicted its "
+                               f"own exit code: it exited 0 and its last line "
+                               f"reads `{evidence}` -- not certified either way)")
         else:
             record(name, res.ok, f"cmd `{label}` rc={res.rc}; {evidence}")
 

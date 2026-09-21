@@ -404,6 +404,58 @@ def test_a_green_extra_check_still_reports_its_command_and_rc(
     assert any(ln.startswith("[PASS] freeze:") for ln in printed), printed
 
 
+def test_a_child_that_says_FAIL_and_exits_zero_is_not_certified(
+        tmp_path, monkeypatch, capfd):
+    """R4 finding 2 (MAJOR, S3), reproduced at HEAD `3427b19` in a real clone:
+    registering `["python","-c","import sys; sys.stderr.write('FAIL: nope\\n')"]`
+    as an extra_check printed `[PASS] s3 fail-on-stderr: cmd ... rc=0; FAIL:
+    nope` inside `== 20/20 checks passed ==` at rc 0 -- the last surviving
+    "rc == 0 is sufficient" hole on the one check surface a project can extend.
+    The child contradicts its own exit code, so the run certifies NEITHER: the
+    verdict is a named SKIP that quotes the contradiction, and the passed
+    fraction loses the line."""
+    says_fail = [sys.executable, "-c",
+                 "import sys; sys.stderr.write('FAIL: nope' + chr(10))"]
+    name, ok, evidence = _run_extra(monkeypatch, tmp_path, says_fail)
+    assert name == "freeze"
+    assert ok is None, f"expected the tri-state SKIP, got {ok!r}: {evidence}"
+    assert evidence.startswith("cmd "), evidence
+    assert "SKIP(child contradicted its own exit code" in evidence, evidence
+    assert "FAIL: nope" in evidence, evidence
+    assert "not certified" in evidence, evidence
+    printed = _evidence_lines(capfd)
+    assert any(ln.startswith("[SKIP] freeze:") for ln in printed), printed
+    assert not any(ln.startswith("[PASS] freeze:") for ln in printed), printed
+
+    # `ERROR:` is the same contradiction in another spelling.
+    name, ok, evidence = _run_extra(
+        monkeypatch, tmp_path,
+        [sys.executable, "-c",
+         "import sys; sys.stderr.write('ERROR: boom' + chr(10))"])
+    assert ok is None, evidence
+    assert "ERROR: boom" in evidence, evidence
+
+    # CONTROL, the shape that must NOT soften: the same `FAIL:` line with a real
+    # nonzero exit is the child agreeing with itself, and stays a FAIL.
+    name, ok, evidence = _run_extra(
+        monkeypatch, tmp_path,
+        [sys.executable, "-c",
+         "import sys; sys.stderr.write('FAIL: nope' + chr(10)); sys.exit(1)"])
+    assert ok is False, f"a failing child must stay red: {evidence}"
+    assert evidence.startswith("cmd "), evidence
+
+    # CONTROL, the other direction: a healthy child whose prose merely mentions
+    # a word beginning FAIL- is not contradicted, and stays a PASS.
+    name, ok, evidence = _run_extra(
+        monkeypatch, tmp_path,
+        [sys.executable, "-c", "print('FAILURES: 0, all good')"])
+    assert ok is True, f"'FAILURES' is not a FAIL line: {evidence}"
+    printed = _evidence_lines(capfd)
+    assert any(ln.startswith("[PASS] freeze:") and "FAILURES" in ln
+               for ln in printed), printed
+
+
+
 def test_a_real_subprocess_timeout_really_is_marked(tmp_path):
     """The fake above must match what `run_argv` actually returns, so build the
     genuine article once: timed_out True, rc -1, and `ok` False."""
@@ -500,8 +552,29 @@ def test_a_check_that_raises_is_named_and_the_rest_of_the_run_survives(ai_repo, 
     # The OS error for "read a directory" is host-dependent
     # (`IsADirectoryError` on POSIX, `PermissionError [WinError 5]` here), so
     # the pin is that the crash was CONTAINED AND NAMED, not its class name.
-    assert any(ln.startswith("[FAIL] line budgets check:")
-               and "check raised" in ln for ln in res.lines), res.lines
+    # R4 finding 3 (MODERATE, S4) moved WHERE it is contained: the section-level
+    # funnel used to answer ONE key with `[FAIL] line budgets check: check raised
+    # PermissionError` and delete every other budget line the run had to print,
+    # so one directory name cost the whole layer its evidence (`17/19` at HEAD).
+    # Per-entry now, and the rest of the section still measures.
+    per_entry = [ln for ln in res.lines
+                 if ln.startswith("[FAIL] budget .ai/state:")]
+    assert per_entry, res.lines
+    assert "could not be measured" in per_entry[0], per_entry[0]
+    assert ("PermissionError" in per_entry[0]
+            or "IsADirectoryError" in per_entry[0]), per_entry[0]
+    assert not any(ln.startswith("[FAIL] line budgets check:")
+                   and "check raised" in ln for ln in res.lines), res.lines
+    # The evidence this key used to delete: the five floor names it replaces, and
+    # the DECISIONS cap that lives AFTER the loop in the same function. At HEAD
+    # `3427b19` this run printed exactly ONE `budget` line; now every name is
+    # accounted for, which is the whole point of the fix.
+    budget_lines = [ln for ln in res.lines if " budget " in ln]
+    assert len(budget_lines) >= 7, budget_lines
+    assert any(ln.startswith("[FAIL] budget AGENTS.md:")
+               for ln in res.lines), res.lines
+    assert any("budget DECISIONS active entries" in ln
+               for ln in res.lines), res.lines
     assert [ln for ln in res.lines if "checks passed" in ln], res.lines
     assert any(ln.startswith("[PASS] registered project checks:")
                or ln.startswith("[SKIP] registered project checks:")

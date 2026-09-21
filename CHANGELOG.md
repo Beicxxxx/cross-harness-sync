@@ -21,10 +21,39 @@ says so next to it.
 | Same install cloned to a second absolute path | `== 18/19 checks passed, 1 skipped ==`, rc 0 | `d5aee6e` |
 | Tracked text still claiming the caps count tokens | 0 files — the two template hits were swept after this row was measured | `c288a52` |
 
+Lane Q (the `extra_checks` `FAIL:`-tail demotion and the per-entry budgets
+funnel) did not move the install's totals: a fresh install of its tree verified
+`== 18/19 checks passed, 1 skipped ==` at rc 0 and the same install cloned to a
+second absolute path printed the same line at rc 0, so the two rows above still
+hold as printed; its own suite line is `341 passed, 3 skipped` (one test
+function added), measured with the same command.
+
 The one-line shape a reviewer sees on a default install never changes to
 "everything passed": a default install registers no `extra_checks` and no
 `secret_mirrors`, so it prints exactly one named `[SKIP]` forever. `rc == 0` is
 not a verdict you can stop reading at.
+
+### Development history — one commit inside this range is red
+
+`584d7f3` ("fix(sync_verify): decisions_file and budgets keys cannot leave the
+checkout") is **red on its own**: `60 failed, 264 passed, 3 skipped in 24.67s`,
+measured at that sha in a fresh `git clone` with
+`python -m pytest tests/ -n 8 -o addopts=""`. Its parent `3cd9036` measures
+`324 passed, 3 skipped` and its child `2284fe6` `324 passed, 3 skipped` in the
+same clone and the same command, and HEAD measured `340 passed, 3 skipped` before
+this lane's tests landed, so the *fix* is fine and only the commit is not: one
+lane's hunk set was split with `git apply --cached` and just the final tree was
+gated, which is the risk `lane-Z2-report.md` "Concerns: 2" disclosed without
+pricing. The 60 failures were not diagnosed one by one, and this note does not
+claim to know which of them was which — only that the tree at that sha is not
+the tree the tests were written against. Nothing is rewritten over it — the
+branch's convention is additive commits and nothing here is pushed — so
+`git bisect` will stop at `584d7f3`, and a reader of `git log` should learn that
+from here rather than discover it. The same note covers `bc48332`, whose subject
+names only the VERSION cross-check while one hunk of it also carries
+`protect_stdio()`'s phantom-PASS fix; reverting "just the version check" reverts
+that too.
+
 
 ### Breaking change — read before upgrading an existing install
 

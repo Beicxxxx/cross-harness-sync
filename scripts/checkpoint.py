@@ -735,8 +735,16 @@ def install_layout():
     return invocation_layout(ROOT, __file__)
 
 
-def _layout_refusal(kind, detail):
-    """What a refused layout prints: the name, the why, the way out."""
+def _layout_refusal(kind, detail, command="lock"):
+    """What a refused layout prints: the name, the why, the way out.
+
+    `command` names the flag the operator actually typed. R4 finding 4
+    (MINOR): `cmd_unlock` reused this helper verbatim, so an agent told to
+    release a pen was told to re-run `--lock --force` -- to acquire a lock in
+    order to release one. The remedy is the same override on the SAME command,
+    and `--reason` belongs to `--lock` alone: it is the only one that records a
+    reason in WRITER_LOCK.json (see `cmd_lock`'s `force_reason`).
+    """
     if kind == "linked-worktree":
         head = (f"REFUSED: this checkout is a linked git worktree ({detail}).\n"
                 "WRITER_LOCK.json lives on disk per worktree, so locking here "
@@ -771,11 +779,14 @@ def _layout_refusal(kind, detail):
     elif len(other) > 1:
         print("  worktrees of this repository: "
               + ", ".join(p for p in other))
+    reason = ' --reason "<why>"' if command == "lock" else ""
+    visible = ("the takeover is visible in git." if command == "lock"
+               else "the release is visible in git.")
     print(f"{where} run\n"
-          f"  python .ai/scripts/checkpoint.py --lock --agent <name> --force "
-          f"--reason \"<why>\"\nonly after recording the split in the handoff: "
+          f"  python .ai/scripts/checkpoint.py --{command} --agent <name> "
+          f"--force{reason}\nonly after recording the split in the handoff: "
           "the lock stays advisory, and the\noverride is written into "
-          "WRITER_LOCK.json so the takeover is visible in git.")
+          f"WRITER_LOCK.json so {visible}")
 
 
 def _next_epoch(prev, err):
@@ -961,7 +972,7 @@ def cmd_unlock(args):
                   "released_at: null, so say in the handoff that the release "
                   "was made from a linked worktree.")
         else:
-            _layout_refusal(kind, detail)
+            _layout_refusal(kind, detail, "unlock")
             print("  unlock: the release would be written into THIS worktree\'s "
                   "copy of the tracked lock record while the checkout holding "
                   "the pen keeps reading its own -- the next machine would pull "

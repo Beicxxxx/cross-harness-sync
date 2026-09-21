@@ -197,7 +197,17 @@ never block, never write state files — hooks remind, the agent writes.
   an out-of-range `decisions_max_active_entries` / `check_timeout` /
   `git_check_timeout`, and a non-integer budgets value: four `malformed:`
   message families, all of them exit-2 "the verifier cannot answer at all", none
-  of them a per-line SKIP.
+  of them a per-line SKIP. **Compat note for v2.0 installs:** the predicate is
+  the by-component `..` refusal `required_files` already carried, and it is
+  stricter than "resolves inside the checkout" — a key that stays inside the
+  tree but merely *writes* `..` on its way (`docs/../.ai/state/TASK.md`) is now
+  refused at exit 2 where v2.0 accepted it. That is deliberate: a shape layer
+  that admitted a path whose text says "leave the tree" would have to parse the
+  filesystem to know what it was certifying, and the drive-letter and
+  through-a-junction escapes it exists to catch arrive in exactly that spelling.
+  Spell the key by its own path and the check measures as before; a directory
+  named by a well-formed key is now one `[FAIL] budget <key>` line, not the loss
+  of every budget line in the run.
 - `secret_files`: each must be git-ignored (`git check-ignore` must succeed).
 - `secret_mirrors`: pairs of env files whose KEY NAMES must be identical sets
   (e.g. a canonical `.env` and a harness-specific mirror). Presence is checked

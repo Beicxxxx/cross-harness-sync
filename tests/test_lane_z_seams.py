@@ -137,6 +137,14 @@ def test_f2_unlock_refuses_a_linked_worktree_and_keeps_the_hold(ai_repo,
     assert unlocked.rc == 1, unlocked.stdout
     assert "REFUSED" in unlocked.stdout, unlocked.stdout
     assert "released_at" not in unlocked.stdout, unlocked.stdout
+    # R4 finding 4 (MINOR): the refusal reused `--lock`'s remedy verbatim, so the
+    # command that releases a pen told the operator to run the command that TAKES
+    # one (`--lock --agent <name> --force --reason "<why>"`). The override is the
+    # same flag on the command actually typed, and `--reason` is `--lock`'s
+    # alone -- it is the only one that records a reason in WRITER_LOCK.json.
+    assert "--unlock --agent <name> --force" in unlocked.stdout, unlocked.stdout
+    assert "--lock --agent" not in unlocked.stdout, unlocked.stdout
+    assert '--reason "<why>"' not in unlocked.stdout, unlocked.stdout
     main_lock = repo / ".ai/runtime/WRITER_LOCK.json"
     wt_lock = wt / ".ai/runtime/WRITER_LOCK.json"
     assert json.loads(main_lock.read_text("utf-8"))["released_at"] is None
