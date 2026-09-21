@@ -186,7 +186,11 @@ def glob_match(rel_path, patterns, case_sensitive=True):
     the config and fail on the one that did not. Backslashes are folded to `/`
     before matching because git prints `/` and `Path.as_posix()` prints `/` while
     a caller holding a Windows path hands over backslashes: same file, different
-    answer.
+    answer. `*` is NOT per-segment: `fnmatch`'s `*` crosses `/`, so `docs/*.md` also
+    matches `docs/a/b.md`. That direction is the fail-closed one — a nested file can
+    never slip out of the governed set by sitting deeper than the pattern's author
+    pictured — and B1 must not assume segment-wise globbing: per-segment semantics would
+    be a different matcher, not a tweak of this one.
     """
     norm = rel_path.replace("\\", "/")
     for pat in patterns:
@@ -248,11 +252,25 @@ def commit_exists(root, sha):
 
 
 def is_shallow(root):
-    """TRUE / FALSE / UNKNOWN — how much of the history the other two can be trusted for."""
+    """TRUE / FALSE / UNKNOWN — how much of the history the other two can be trusted for.
+
+    §4: **rc == 0 is never sufficient.** `rev-parse --is-shallow-repository` answers with
+    one of exactly two words, so the words are compared and nothing else is: `true` ->
+    TRUE, `false` -> FALSE, any other stdout at rc 0 (empty, a warning that leaked onto
+    stdout, a future git that says `unknown`) -> UNKNOWN. Collapsing an unrecognised
+    answer to FALSE would be the one mistake this probe cannot make, because
+    `commit_exists` reads FALSE here as licence to call an object it has never seen
+    absent, and §6's whole three-valued rule is that a missing fact is named, not denied.
+    """
     res = run_git(root, ["rev-parse", "--is-shallow-repository"], timeout=15)
     if res.timed_out or res.rc != 0:
         return "UNKNOWN"
-    return "TRUE" if res.out().strip() == "true" else "FALSE"
+    answer = res.out().strip()
+    if answer == "true":
+        return "TRUE"
+    if answer == "false":
+        return "FALSE"
+    return "UNKNOWN"
 
 
 def log_paths(root, args, pathspec):

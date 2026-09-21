@@ -88,6 +88,31 @@ def test_is_shallow_answers_for_an_ordinary_repo(repo):
     assert ai.is_shallow(repo) == "FALSE"
 
 
+@pytest.mark.parametrize("stdout, expected", [
+    (b"true\n", "TRUE"),
+    (b"false\n", "FALSE"),
+    # rc 0 is never sufficient (§4): only the two exact words are answers.
+    (b"", "UNKNOWN"),
+    (b"\n", "UNKNOWN"),
+    (b"maybe\n", "UNKNOWN"),
+    (b"FALSE\n", "UNKNOWN"),
+    (b"true false\n", "UNKNOWN"),
+])
+def test_is_shallow_at_rc_zero_is_an_exact_word_or_nothing(repo, monkeypatch, stdout, expected):
+    """An unrecognised stdout at rc 0 must not collapse to FALSE.
+
+    `commit_exists` reads FALSE here as licence to call an unseen object absent, so a
+    garbage answer leaking FALSE would turn "git said nothing intelligible" into a
+    denial — the exact collapse §4 forbids. The rc != 0 and timeout branches are already
+    covered; this pins the third path through the function.
+    """
+    monkeypatch.setattr(
+        ai, "run_git",
+        lambda root, args, timeout=15: ai.GitResult(rc=0, stdout=stdout, stderr=b"",
+                                                    timed_out=False))
+    assert ai.is_shallow(repo) == expected
+
+
 @pytest.mark.posix
 def test_shallow_clone_turns_ancestry_into_unknown(tmp_path):
     """The end-to-end shallow case: a truncated history must not answer FALSE.
@@ -158,6 +183,38 @@ def test_log_paths_returns_nul_records_and_the_caller_splits_them(repo):
     # ... which is why a coverage walk cannot read this list as bare paths:
     sha, _, first_path = paths[0].partition("\n")
     assert (sha, first_path) == (head, "docs/a.md")
+
+
+def test_log_paths_joins_commits_on_one_nul_and_drops_it(repo):
+    """Two commits, because one cannot exercise the separator *between* records.
+
+    Measured here, two commits touching docs/ come back as
+    `b"<h2>\\ndocs/b.md\\x00\\x00<h1>\\ndocs/a.md\\x00"`: the joining NUL is an empty field
+    in the middle of the split, plus a trailing one. A one-commit log has only the
+    trailing field, so the test above measures nothing about the join — a build that
+    stripped the tail and kept interior empties would pass it and then hand a coverage
+    walk a phantom (`""`, `""`) "commit" from `partition("\\n")`, under-counting silently.
+    Exact equality on the whole list is the assertion; git log is newest-first and
+    `log_paths` reorders nothing.
+    """
+    (repo / "docs").mkdir()
+    (repo / "docs" / "a.md").write_text("a\n", encoding="utf-8")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "first doc")
+    h1 = git(repo, "rev-parse", "HEAD")
+    (repo / "docs" / "b.md").write_text("b\n", encoding="utf-8")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "second doc")
+    h2 = git(repo, "rev-parse", "HEAD")
+
+    paths, err = ai.log_paths(
+        repo, ["--no-merges", "--full-history", "--pretty=format:%H"], ["docs"])
+    assert err is None
+    assert paths == [f"{h2}\ndocs/b.md", f"{h1}\ndocs/a.md"], paths
+    assert "" not in paths, paths
+    # shas sit at record starts, one per commit, and nothing else does:
+    assert [p.partition("\n")[0] for p in paths] == [h2, h1], paths
+    assert [p.partition("\n")[2] for p in paths] == ["docs/b.md", "docs/a.md"], paths
 
 
 def test_log_paths_distinguishes_no_commits_from_failure(repo):
