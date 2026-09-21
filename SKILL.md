@@ -34,6 +34,12 @@ So the two registers are different on purpose:
   unexpired lock; the state-writing commands (`--handoff`, bare `checkpoint.py`)
   **WARN by name and continue at exit 0**. That asymmetry is the design, not a
   gap: hard enforcement needs a server, which this protocol refuses to require.
+- **Counted locally, and last-writer-wins:** `--status` prints
+  `Checkpoints : N` from machine-local, untracked `runtime/STATUS.json`, and two
+  concurrent checkpoints race one read-modify-write with no arbitration. Measured
+  on one host: 8 concurrent checkpoint writers left `checkpoint_count` at 1 or 2
+  every time, each exiting 0, so 6-7 of the 8 updates were lost. Read the number
+  as a per-machine heartbeat, never as a ledger of how many checkpoints happened.
 
 The honest differentiator is **path-scoped independent review in settings where
 CODEOWNERS and Gerrit structurally cannot exist**: no forge admin rights (forked
@@ -175,7 +181,10 @@ from the skill repo.
 - `scripts/sync_verify.py` — config-driven health check, in this order:
   `install layout`, `git usable` / `git repository`, `config readable`,
   `registered project checks`, `required <file>` (+ `required-file floor`),
-  `protocol version readable`, `budget <file>` (+ `cap opt-out <file>`),
+  `protocol version readable` (a stamp that disagrees with the installed scripts
+  prints the FAIL `protocol version matches installed scripts` **instead of** that
+  PASS, so a healthy run and a skewed run each show one protocol-version line),
+  `budget <file>` (+ `cap opt-out <file>`),
   `budget DECISIONS active entries`, `secret ignored: <file>`,
   `secret mirror <a> vs <b>`, then `extra_checks`. Check 0 is booked as a PASS,
   not left silent: a report that never mentions `install layout` did not run the
@@ -198,7 +207,7 @@ passed", not "nothing was skipped".
 
 | Command | 0 | 1 | 2 |
 |---|---|---|---|
-| `sync_verify.py` | every check that ran passed (named `[SKIP]`s allowed) | any `[FAIL]`, or a run in which not one check produced a `[PASS]` | no verdict: `ai_common.py` missing, install root unresolvable, config unusable |
+| `sync_verify.py` | every check that ran passed (named `[SKIP]`s allowed) | any `[FAIL]`, or a run in which not one check produced a `[PASS]` | no verdict: `ai_common.py` missing, install root unresolvable, or config unusable — an unreadable file, a non-object, or any `malformed:` refusal (wrong-typed key, a path that escapes the checkout, a `budgets` value over 10000 lines, `decisions_max_active_entries` over 2000 entries, a timeout over 86400 s). An out-of-range cap therefore stops the whole run; it does not degrade to one `[SKIP]` |
 | `checkpoint.py --validate` | every listed file present and non-empty | a file missing or empty, or an empty declared list | no verdict: an unreadable required file or config |
 | `checkpoint.py --lock` / `--unlock` | acquired / released | conflict with another holder, refused checkout layout, a record that cannot be parsed, or a lock that is not yours to release | usage error: `--force` without `--reason`, `--unlock` without `--agent` |
 | `checkpoint.py --handoff` / bare / `--status` / `--prime` | done (a held lock owned by someone else is a `WARN`, still exit 0) | refused checkout layout; or the tracked lock record is unparseable (treated as HELD) | no verdict: `ai_common.py` missing or root unresolvable |

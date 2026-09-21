@@ -87,6 +87,15 @@ before commit. That is enforcement of the mechanically decidable — omission. I
 cannot detect fabrication: nothing here binds a name to an event that did not
 happen.
 
+The cap has to be capable of failing, so a value no file can reach is refused as
+a config error rather than accepted: a `budgets` value above 10,000 lines, a
+`decisions_max_active_entries` above 2,000, or a timeout above 86,400 seconds
+aborts the **whole run at exit 2 with no verdict**, and it is not one `[SKIP]`
+line. `null` is the only documented deliberate decline — it prints
+`[SKIP] cap opt-out <file>` and keeps the rest of the run answering. A project
+that legitimately wants a budget no human would read is expected to name the
+decline with `null`, not to write a huge number.
+
 ## Protocol version
 
 `.ai/protocol/VERSION` is the **protocol** version, not the skill's release
@@ -94,7 +103,11 @@ version, and wave 1a does not treat the two as the same number. `init_sync.py`
 compares the stamp with its own `PROTOCOL_VERSION` before writing anything: a
 newer or unparseable stamp is refused with `VERSION MISMATCH: …` and exit 1,
 including under `--force`/`--clobber`; an older one is reported as an upgrade.
-`sync_verify.py` prints `protocol version readable` for the file it finds.
+`sync_verify.py` prints `protocol version readable` for the file it finds, and
+that PASS now carries a second witness: when the stamp and the protocol the
+installed `.ai/scripts/` implement disagree, it prints the FAIL
+`protocol version matches installed scripts` instead, naming which side is ahead
+and what to re-run.
 Wave 1b's `--migrate` is meant to read that stamp rather than assume it.
 
 ## Advisory writer lock
@@ -113,6 +126,14 @@ Wave 1b's `--migrate` is meant to read that stamp rather than assume it.
   against a live or expired record (exit 2 without it, exit 1 if it is not
   yours) — and the lock file is **never deleted**, so git history is the audit
   trail (pattern borrowed from mcp_agent_mail's persisted lease artifacts).
+  Wave 1a put the same layout gate on the release that `--lock` already had: a
+  linked worktree, a relocated `.ai`, an install below the repository root, or a
+  layout git cannot describe is refused at exit 1. Without it, releasing inside a
+  worktree exited 0 and wrote `released_at` into THAT copy's tracked record while
+  the checkout that took the pen kept holding its own, so the next machine pulled
+  a "released" that was never released. `--force --reason` still overrides, and
+  says plainly that the release lands in this worktree's record only — the other
+  machine cannot see it.
 - What the lock does not do: `--handoff`, the bare checkpoint, `--status` and
   `--prime` do not stop for another holder. The state-writing commands print a
   named `WARN <command>: the writer lock is held by <name> …` and continue at
@@ -168,6 +189,15 @@ never block, never write state files — hooks remind, the agent writes.
 }
 ```
 
+- `budgets`: `{"<repo-relative path>": <max lines>}`, and a key that escapes the
+  checkout is refused (`malformed: config key 'budgets' keys must be
+  repo-relative paths inside the checkout`). Values must be line-count integers
+  or `null`; above the 10,000-line ceiling the run aborts at exit 2 (see **Line
+  budgets**). The same shape layer rejects a non-repo-relative `decisions_file`,
+  an out-of-range `decisions_max_active_entries` / `check_timeout` /
+  `git_check_timeout`, and a non-integer budgets value: four `malformed:`
+  message families, all of them exit-2 "the verifier cannot answer at all", none
+  of them a per-line SKIP.
 - `secret_files`: each must be git-ignored (`git check-ignore` must succeed).
 - `secret_mirrors`: pairs of env files whose KEY NAMES must be identical sets
   (e.g. a canonical `.env` and a harness-specific mirror). Presence is checked

@@ -16,7 +16,7 @@ says so next to it.
 
 | Figure | Value | Measured at |
 |---|---|---|
-| Test suite, `python -m pytest tests/ -n 8 -o addopts=""` | `324 passed, 3 skipped in 24.92s`, no warnings block | `d5aee6e` |
+| Test suite, `python -m pytest tests/ -n 8 -o addopts=""` | `324 passed, 3 skipped`, no warnings block — no elapsed time is quoted here, because the one that was (`24.92s`) reproduced on no second run: re-runs measured 20.4-21.7 s at that revision and 22-28 s since, so a single figure is host load, not evidence | `d5aee6e` (counts); lane Y re-measured `340 passed, 3 skipped in 28.25s` at `ef749b9` |
 | Fresh install into an empty git repo, then `sync_verify.py` | `== 18/19 checks passed, 1 skipped ==`, rc 0 | `d5aee6e` |
 | Same install cloned to a second absolute path | `== 18/19 checks passed, 1 skipped ==`, rc 0 | `d5aee6e` |
 | Tracked text still claiming the caps count tokens | 0 files — the two template hits were swept after this row was measured | `c288a52` |
