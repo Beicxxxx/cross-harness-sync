@@ -161,12 +161,39 @@ def decode(raw: bytes | None) -> str:
     return raw.decode("utf-8", "surrogateescape")
 
 
+# The PROTOCOL version these scripts implement, and the number
+# `.ai/protocol/VERSION` is stamped with. It lives HERE, in the one module the
+# installer ships, because lane Z finding 7 is precisely the hole a constant
+# that is NOT installed leaves: while it lived only in `init_sync.py` nothing in
+# an installed tree could cross-check the stamp, so `99.99.99` printed a PASS in
+# a tree whose own scripts refused to upgrade it. One copy, read by the
+# installer, the verifier, and any companion record the wave-1b migration writes.
+PROTOCOL_VERSION = "2.1.0"
+
+
 def protect_stdio() -> None:
-    """Force UTF-8 on both streams; consoles may not support what we print."""
+    """Force UTF-8 on both streams; consoles may not support what we print.
+
+    Lane Z finding 5: the utf-8 fast path used to `continue`, leaving a stream
+    at `errors="strict"`, so an evidence string carrying surrogate escapes from
+    `decode(..., "surrogateescape")` raised on the way OUT and the verifier lost
+    a whole check section. It is reconfigured to `backslashreplace` now: the
+    bytes still reach the operator, as visible backslash escapes, rather
+    than as the silent replacement character the old errors=replace path
+    would have left behind.
+    the `?` that `errors="replace"` would have left behind.
+    """
     for name in ("stdout", "stderr"):
         stream = getattr(sys, name)
         enc = (getattr(stream, "encoding", None) or "").lower()
-        if stream is None or enc.startswith("utf-8"):
+        if stream is None:
+            continue
+        if enc.startswith("utf-8"):
+            try:
+                if getattr(stream, "errors", "") == "strict":
+                    stream.reconfigure(errors="backslashreplace")
+            except (AttributeError, ValueError, OSError):
+                pass
             continue
         buf = getattr(stream, "buffer", None)
         if buf is None:

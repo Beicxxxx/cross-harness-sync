@@ -487,8 +487,29 @@ def check_protocol_version() -> None:
                f"{PROTOCOL_VERSION_FILE} holds no comparable version: {exc} - "
                "init_sync refuses to install over this until the file is fixed")
         return
+    # Lane Z finding 7 (LOW/MEDIUM): "readable" was the whole question, so
+    # `99.99.99` printed `[PASS]` while every later `--scripts-only` -- the
+    # documented upgrade path -- refuses the tree as a downgrade. There was no
+    # second witness because PROTOCOL_VERSION lived only in init_sync.py, which
+    # is deliberately not installed; it is in ai_common.py now, so the stamp is
+    # checked against the version the scripts standing in this tree implement.
+    from ai_common import PROTOCOL_VERSION as BUILT, compare_version
+    if stamped != BUILT:
+        ahead = compare_version(stamped, BUILT) > 0
+        why = ("it is NEWER than the installed scripts, so init_sync.py's "
+               "upgrade path refuses this tree as a downgrade until the stamp "
+               "is corrected -- the install can advertise a protocol nobody can "
+               "honour AND block the only command that could fix it" if ahead
+               else "the installed scripts implement a newer protocol, so this "
+                    "install is half-upgraded: re-run init_sync.py "
+                    "--scripts-only to rewrite the stamp with the scripts")
+        record("protocol version matches installed scripts", False,
+               f"{PROTOCOL_VERSION_FILE} reads {stamped} but the installed "
+               f".ai/scripts/ implement {BUILT}: {why}")
+        return
     record("protocol version readable", True,
-           f"{stamped} ({PROTOCOL_VERSION_FILE})")
+           f"{stamped} ({PROTOCOL_VERSION_FILE}; matches the {BUILT} these "
+           "scripts implement)")
 
 
 def check_line_budgets(cfg: dict, nulled: set | None = None) -> None:

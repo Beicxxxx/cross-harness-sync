@@ -78,7 +78,15 @@ TEMPLATES = SKILL_DIR / "templates"
 # whole of wave 1a because nothing compared it with anything (D22) — a constant
 # nobody reads is a constant that drifts, which is why the comparison below is
 # the fix and this number is only its subject.
-PROTOCOL_VERSION = "2.1.0"
+# Lane Z finding 7: this used to be the only copy of the number, in the one
+# script that is NOT installed -- which is why an installed tree could not
+# cross-check its own `protocol/VERSION`. The constant moved to
+# `ai_common.py`, which ships with the scripts, and both this installer and the
+# verifier read it from there, so a stamp and the code it describes cannot be
+# edited apart. Imported by path because `init_sync.py` runs from the skill
+# checkout, where `scripts/` is its own directory.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from ai_common import PROTOCOL_VERSION  # noqa: E402
 
 # `check_version_match`'s fourth answer, as a constant so `main()` can tell
 # "nothing to compare yet" from a verdict without re-reading the sentence.
