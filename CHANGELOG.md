@@ -4,8 +4,8 @@
 
 Wave 1b ships the governance surface of spec §6 and the migration of spec §8 on
 top of wave 1a's correctness fixes. Canonical defect count for this release
-line, stated once and used everywhere: **27 found, 26 fixed in wave 1a, D14
-fixed in wave 1b**. The spec's §5 table
+line, stated once and used everywhere: 27 found, 26 fixed in wave 1a, D14 fixed in wave 1b.
+The spec's §5 table
 (`docs/superpowers/specs/2026-09-21-cross-harness-sync-v2.1-design.md`) is the
 only authority for that number; no count in a commit message on this branch is
 quotable.
