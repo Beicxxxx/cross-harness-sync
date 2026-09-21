@@ -858,13 +858,23 @@ def main() -> int:
             print(line)
             if line.startswith("AGENTS.md: ERROR"):
                 rc = 1
-            for line in raise_agents_budget_for_block(root):
-                print(line)
-                if line.startswith("ERROR"):
-                    rc = 1
-            for line in warn_agents_over_budget(root):
-                print(line)
             print(write_claude_pointer(root))
+        # Lane Z finding 3 (MEDIUM): these two lived inside the `else`, so
+        # `--no-agents-block` skipped the cap arithmetic while leaving the
+        # managed block in the file. With `--clobber` the config also came back
+        # from the template at 65, under a 66-line AGENTS.md: the run exited 0
+        # printing the "no FAILED line" promise and verification was red
+        # forever at rc 1. The cap has to follow what this run actually left in
+        # AGENTS.md, not which flags were set -- and both calls are already
+        # no-ops when no managed block is present (`managed_block_present()`
+        # for the raise, a missing file/cap for the warning), so running them
+        # on the `--no-agents-block` path costs a repo without a block nothing.
+        for line in raise_agents_budget_for_block(root):
+            print(line)
+            if line.startswith("ERROR"):
+                rc = 1
+        for line in warn_agents_over_budget(root):
+            print(line)
 
     # V-4: this block is a promise about what happens NEXT, and it used to print
     # whatever the run had actually achieved — i.e. "should be all green" after
