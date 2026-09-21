@@ -139,10 +139,14 @@ def test_an_install_that_declares_no_decision_log_is_a_skip_not_a_red(
     match = SUMMARY_RE.fullmatch(summary[0])
     assert match, summary[0]
     passed, total, skipped = match.groups()
-    # Two SKIPs, both named: the absent decision log (B3a) and lane S2 finding
-    # 2's `registered project checks`, a SKIP because the shipped template
-    # registers no `extra_checks` and no `secret_mirrors`.
-    assert skipped == "2", summary[0]
+    # Five SKIPs, all named: the absent decision log (B3a), lane S2 finding 2's
+    # `registered project checks` (the template registers no `extra_checks` and
+    # no `secret_mirrors`), and wave 1b's three governance ones — `path
+    # coverage` (no `protected_paths`), `pin violation` (no authorization
+    # record), `role policy integrity` (no SHA pinned). A fresh install carries
+    # no governance anchors, so all three are the spec-7 defaults rather than a
+    # machine that failed to look; a sixth skip is still red.
+    assert skipped == "5", summary[0]
     assert int(passed) < int(total), summary[0]
     assert "FAILED:" not in res.lines, res.lines
 
@@ -341,8 +345,12 @@ def test_a_silent_extra_check_is_a_named_skip_not_a_pass(ai_repo, sv):
     match = SUMMARY_RE.fullmatch(summary[0])
     assert match, summary[0]
     passed, total, skipped = match.groups()
-    assert skipped == "1", summary[0]
-    assert int(passed) == int(total) - 1, summary[0]
+    # Wave 1b's baseline: this silent child's own skip plus the three named
+    # governance ones (`path coverage`, `pin violation`, `role policy
+    # integrity`); `registered project checks` PASSes because an extra check IS
+    # registered here. Four skipped records, each one named by the run.
+    assert skipped == "4", summary[0]
+    assert int(passed) == int(total) - 4, summary[0]
 
 
 def test_a_silent_failing_child_is_still_a_fail(ai_repo, sv):
