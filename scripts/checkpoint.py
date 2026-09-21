@@ -8,6 +8,17 @@ Usage:
     python .ai/scripts/checkpoint.py --prime            # Session-start injection
     python .ai/scripts/checkpoint.py --handoff          # Archive handoff, mark handed-off
     python .ai/scripts/checkpoint.py --validate         # Required files exist & non-empty
+    python .ai/scripts/checkpoint.py --review-prompt
+                                        # The reviewer's read set in ONE command:
+                                        # the active authorization, the diff from
+                                        # the recorded governance window, and
+                                        # sync_verify.py's own output -- exactly
+                                        # these three blocks and nothing else
+                                        # (spec 6.4). Reads only, writes nothing,
+                                        # runs the verifier once as a child. rc 0
+                                        # means the prompt was produced, NOT that
+                                        # the change passed; rc 2 means block 3
+                                        # could not be produced at all
     python .ai/scripts/checkpoint.py --lock --agent X # Acquire advisory writer lock
     python .ai/scripts/checkpoint.py --unlock --agent X# Release the writer lock
     python .ai/scripts/checkpoint.py --lock --agent X --force --reason "<why>"
@@ -66,9 +77,11 @@ from typing import NamedTuple
 # second copy of the wrong-root path this removes (see scripts/ai_common.py).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
-    from ai_common import (DEFAULT_REQUIRED_FILES, REQUIRED_FILE_FLOOR,
-                           RepoError, checkout_layout, protect_stdio,
-                           resolve_roots, with_required_file_floor,
+    from ai_common import (AUTHORIZATIONS_SUBDIR, DEFAULT_REQUIRED_FILES,
+                           REQUIRED_FILE_FLOOR, RepoError, SHA_HEX_LEN,
+                           checkout_layout, commit_exists, decode,
+                           parse_governance_block, protect_stdio, resolve_roots,
+                           run_argv, run_git, with_required_file_floor,
                            worktree_listing)
 except ImportError:
     print("[FAIL] install layout: ai_common.py is missing from .ai/scripts/ -- "
@@ -90,6 +103,26 @@ DEFAULT_TTL_SECONDS = 4 * 3600
 # How long a concurrent checkpoint on this machine may keep this one waiting:
 # 8 tries doubling from 10ms is ~0.7s, then the error is real and propagates.
 RETRY_ON_SHARING = 8
+
+# --review-prompt (spec 6.4): the reviewer's whole read set, in three blocks.
+# The headers are the contract a reviewer greps for, so they are constants and
+# not f-string fragments scattered through the command.
+REVIEW_HEADERS = ("== REVIEW PROMPT: AUTHORIZATION ==",
+                  "== REVIEW PROMPT: DIFF ==",
+                  "== REVIEW PROMPT: VERIFY ==")
+# Each named degradation is a PREFIX a test can look for. A block that could not
+# be filled says which one it is; it never says nothing, and never says PASS.
+NO_ACTIVE_AUTH = "[NO ACTIVE AUTHORIZATION]"
+DIFF_UNAVAILABLE = "[DIFF UNAVAILABLE"
+VERIFY_HALT = "[VERIFY HALT"
+# The window `--review-prompt` diffs from when config records none. HEAD~1 is a
+# GUESS about scope, so the block prints that word beside it (spec 4: a
+# degradation is named, and an unlabelled guess is a quieter version of one).
+REVIEW_WINDOW_FALLBACK = "HEAD~1"
+# sync_verify's own documented default for `check_timeout`, repeated here as the
+# cap on the CHILD this command launches: the number that governs a child this
+# command starts must not come from a key the child may not have read.
+REVIEW_VERIFY_TIMEOUT = 600
 
 
 def _set_paths(ai_dir: Path) -> None:
@@ -713,6 +746,357 @@ def cmd_validate(args):
     sys.exit(0 if all_ok else 1)
 
 
+def _review_config():
+    """`(cfg, notes)` — `.ai/sync_config.json` read HERE, not imported from elsewhere.
+
+    `--review-prompt` needs three keys (`authorizations_dir`,
+    `governance.window_start_commit`, `check_timeout`). The obvious move is to
+    call `sync_verify.load_config`, and that is the one move this command must
+    not make: the verifier is the process this command is about to SHELL OUT to,
+    so importing its semantics would (a) tie the writer to a file it does not
+    own, (b) inherit its merge policy silently, and (c) leave two copies of the
+    truth when the child is installed next to this script rather than beside it.
+    So the raw JSON is read here and only the needed keys are asked for.
+
+    What it cannot do is read the config and stay quiet about not having read it
+    (D4's law): every fallback is returned as a NOTE line the caller prints
+    inside block 1, so "governed by a default nobody configured" is on screen.
+    """
+    path = AI_DIR / "sync_config.json"
+    rel = path.relative_to(AI_DIR).as_posix()
+    if not path.is_file():
+        return {}, [f"config: {rel} is not installed, so every key below fell "
+                    "back to its documented default"]
+    try:
+        cfg = json.loads(path.read_bytes().decode("utf-8-sig"))
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        return {}, [f"config: {rel} unreadable "
+                    f"({type(exc).__name__}: {exc}); every key below fell back "
+                    "to its documented default"]
+    if not isinstance(cfg, dict):
+        return {}, [f"config: {rel} holds {type(cfg).__name__}, not a JSON "
+                    "object; every key below fell back to its documented default"]
+    return cfg, []
+
+
+def _review_rel(path):
+    """A path the reviewer can act on: repo-relative, forward slashes."""
+    try:
+        return path.relative_to(ROOT).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _review_authorizations_dir(cfg):
+    """`(dir, note)` — the configured home of the records, or the default one.
+
+    `authorizations_dir` is shared with `sync_verify.py` (B1 reads the same key),
+    and its documented value is repo-relative (`.ai/state/authorizations`). The
+    two spellings a project actually writes -- repo-relative and
+    install-relative -- are both tried before falling back, and a value that
+    resolves to nothing is NAMED rather than silently replaced with the default.
+    """
+    default = AI_DIR / AUTHORIZATIONS_SUBDIR
+    raw = cfg.get("authorizations_dir")
+    if not isinstance(raw, str) or not raw.strip():
+        return default, None
+    cand = Path(raw.strip())
+    if cand.is_absolute():
+        return (cand, None) if cand.is_dir() else (default,
+               f"authorizations: `authorizations_dir` names {raw!r}, which is "
+               f"not a directory here; the default {_review_rel(default)} was "
+               "used instead")
+    for probe in (ROOT / cand, AI_DIR / cand):
+        if probe.is_dir():
+            return probe, None
+    return default, (f"authorizations: `authorizations_dir` names {raw!r}, "
+                     f"which is not a directory here; the default "
+                     f"{_review_rel(default)} was used instead")
+
+
+def _review_records(auth_dir):
+    """`[(path, text, fields, err)]` -- every record file, index aside.
+
+    `INDEX.md` is the directory's index (the `DECISIONS_INDEX.md` idiom spec 6
+    keeps) and `.gitkeep` is a placeholder for a directory git cannot otherwise
+    carry; neither is an authorization, and counting the index as one would make
+    a fresh install look like a live stage. A file that cannot be READ is
+    returned with `text=None` and the reason, because "no authorization" and "an
+    authorization I could not open" are different facts (B6/1's shape, one
+    command over).
+    """
+    out = []
+    if not auth_dir.is_dir():
+        return out
+    for path in sorted(auth_dir.glob("*.md")):
+        if path.name.upper() == "INDEX.MD" or not path.is_file():
+            continue
+        try:
+            text = path.read_bytes().decode("utf-8", "surrogateescape")
+        except OSError as exc:
+            out.append((path, None, None, f"{type(exc).__name__}: {exc}"))
+            continue
+        fields, err = parse_governance_block(text)
+        out.append((path, text, fields, err))
+    return out
+
+
+def _record_state(fields):
+    """`('accepted'|'declined'|'expired'|'legacy', detail)` for one record.
+
+    `accepted` is the verdict B1's swarm boundary counts (spec 6: `verdict` is a
+    required governance key), so the two commands agree on what "active" means.
+    An `expires_at` that cannot be parsed is EXPIRED, never open-ended -- D10's
+    rule applied one file over, because a record whose expiry nobody can read is
+    the one shape a stale authorization survives as. No `expires_at` at all is
+    `n/a`: this protocol scopes an authorization to a stage, not to a TTL, so
+    silence is the honest answer and it is printed as one.
+    """
+    if fields is None:
+        return "legacy", "governance: absent"
+    verdict = str(fields.get("verdict", "")).strip().lower()
+    if verdict != "accepted":
+        return "declined", f"verdict: {fields.get('verdict') or '(no verdict key)'}"
+    raw = fields.get("expires_at")
+    if raw is None or not str(raw).strip() or str(raw).strip() in ("n/a", "NOT_REPORTED"):
+        return "accepted", "expires: n/a (the record states no expiry)"
+    stamp = parse_ts(str(raw))
+    if stamp is None:
+        return "expired", f"expiry unparseable: {raw!r}"
+    if stamp <= now_dt():
+        return "expired", f"expired {raw}"
+    return "accepted", f"expires: {raw}"
+
+
+def _review_authorization_block(cfg, notes):
+    """Block 1: the active authorization's full text, or the named reason there is none.
+
+    One accepted record is shown whole. Zero is `[NO ACTIVE AUTHORIZATION]` plus
+    why each other record failed to qualify -- never a crash and never an empty
+    block, because a reviewer who sees nothing cannot tell "unauthorized" from
+    "the tool broke". More than one is spec 6's N1 shape (concurrent swarms are
+    out of scope), so all of them are printed and the ambiguity is named instead
+    of being resolved by whichever sort order this machine uses.
+    """
+    lines = []
+    for note in notes:
+        lines.append(f"  NOTE: {note}")
+    auth_dir, dir_note = _review_authorizations_dir(cfg)
+    where = _review_rel(auth_dir)
+    lines.append(f"authorizations: {where}")
+    if dir_note:
+        lines.append(f"  NOTE: {dir_note}")
+    records = _review_records(auth_dir)
+    if not records:
+        lines.append(f"{NO_ACTIVE_AUTH} {where} holds no authorization record, "
+                     "so this change has no documented scope. Read the diff "
+                     "against the task, and treat an authorization-free "
+                     "protected-path change as the failure 6.3's coverage walk "
+                     "names.")
+        return lines
+    buckets = {}
+    for path, text, fields, err in records:
+        if text is None:
+            buckets.setdefault("unreadable", []).append((path, None, err))
+        elif err:
+            buckets.setdefault("malformed", []).append((path, text, err))
+        else:
+            state, detail = _record_state(fields)
+            buckets.setdefault(state, []).append((path, text, detail))
+    live = buckets.get("accepted", [])
+    if live:
+        if len(live) > 1:
+            lines.append(f"[AMBIGUOUS AUTHORIZATION] {len(live)} accepted "
+                         f"records in {where}: "
+                         + ", ".join(_review_rel(p) for p, _t, _d in live)
+                         + ". One stage is one authorization, so all are "
+                         "printed and the reviewer -- not this command -- "
+                         "decides which covers the change.")
+        for path, text, detail in live:
+            lines.append(f"-- active authorization: {_review_rel(path)} "
+                         f"({detail}) --")
+            lines.append(text.rstrip("\n"))
+        return lines
+    lines.append(f"{NO_ACTIVE_AUTH} {where} holds "
+                 f"{len(records)} record(s) and none of them is a non-expired "
+                 "accepted authorization")
+    for state, wording in (("expired", "expired"), ("declined", "not accepted"),
+                           ("malformed", "governance block invalid"),
+                           ("unreadable", "unreadable"),
+                           ("legacy", "governance: absent")):
+        for path, _text, detail in buckets.get(state, []):
+            lines.append(f"  {wording}: {_review_rel(path)} ({detail})")
+    legacy = buckets.get("legacy", [])
+    if len(legacy) == 1:
+        path, text, _detail = legacy[0]
+        # A pre-governance record is the only case where showing an unaccepted
+        # file helps: its Scope and Editable files sections are still the best
+        # description of what was asked for. Shown, and named as unverified.
+        lines.append(f"-- legacy record shown without an accepted verdict "
+                     f"(governance: absent, so tier/reviewer are unverified): "
+                     f"{_review_rel(path)} --")
+        lines.append(text.rstrip("\n"))
+    return lines
+
+
+def _review_window(cfg):
+    """`(window, lines)` — the base the diff runs from, recorded or confessed.
+
+    `governance.window_start_commit` is written by `init_sync.py --migrate`
+    (spec 8) and read by B1's coverage walk; this is the third reader of the one
+    key. An unset key falls back to `HEAD~1` and SAYS so, because a fallback
+    window is a guess about what is under review -- and a guess that arrives
+    unlabelled is how a reviewer approves a diff they never saw.
+    """
+    gov = cfg.get("governance")
+    raw = gov.get("window_start_commit") if isinstance(gov, dict) else None
+    value = raw.strip() if isinstance(raw, str) else ""
+    if value and value.upper() != "NO_HISTORY" and all(
+            c in "0123456789abcdefABCDEF" for c in value) \
+            and len(value) == SHA_HEX_LEN:
+        return value, [f"window: {value} (config "
+                       "governance.window_start_commit)"]
+    why = ("is unset" if not value
+           else f"reads {raw!r}, which names no commit id")
+    return REVIEW_WINDOW_FALLBACK, [
+        f"window: {REVIEW_WINDOW_FALLBACK} -- FALLBACK. Config key "
+        f"governance.window_start_commit {why}, so the last commit is the best "
+        "this command can offer. This is a guess about what is under review, "
+        "not a recorded window; `init_sync.py --migrate` records one."]
+
+
+def _review_diff_block(cfg):
+    """Block 2: the change under review -- `--stat` and the patch, or the named halt.
+
+    Three-valued like every history query here (spec 6): the window commit is
+    probed with `commit_exists` before anything is diffed, because `rc 0` from
+    `git diff` on a wrong base is not the same fact as `git diff` on the right
+    one -- and a shallow clone answers 128 for the first and the second alike.
+    UNKNOWN and FALSE both halt the block with a name; neither prints an empty
+    diff, which is the shape that reads as "nothing to review".
+    """
+    window, lines = _review_window(cfg)
+    if all(c in "0123456789abcdefABCDEF" for c in window) \
+            and len(window) == SHA_HEX_LEN:
+        exists = commit_exists(ROOT, window)
+        if exists != "TRUE":
+            lines.append(f"{DIFF_UNAVAILABLE}] the existence probe on "
+                         f"{window} answered {exists}, so this clone cannot "
+                         "confirm the base the diff would run from. NOTHING "
+                         "WAS DIFFED: a shallow clone or an absent object, not "
+                         "an empty change.")
+            return lines
+    spec = f"{window}...HEAD"
+    stat = run_git(ROOT, ["diff", spec, "--stat"])
+    patch = run_git(ROOT, ["diff", spec])
+    for label, res in (("--stat", stat), ("patch", patch)):
+        if not res.ok:
+            reason = ("timed out" if res.timed_out
+                      else f"exited rc {res.rc}")
+            # git puts the actionable `fatal:` FIRST and follows it with usage
+            # noise, so the last stderr line is the least useful thing there.
+            detail = " | ".join(ln.strip() for ln in
+                                decode(res.stderr).strip().splitlines()[:2])
+            lines.append(f"{DIFF_UNAVAILABLE}] `git diff {spec}` could not "
+                         f"answer for the {label} ({reason})"
+                         + (f": {detail}" if detail else "")
+                         + ". Nothing here says the change is empty; the diff "
+                           "was simply not obtainable.")
+            return lines
+    lines.append(f"-- git diff {spec} --stat --")
+    lines.append(stat.out().rstrip("\n")
+                 or f"(stat empty: {window} and HEAD have no file differing "
+                    "between them)")
+    lines.append(f"-- git diff {spec} --")
+    lines.append(patch.out().rstrip("\n") or "(empty patch)")
+    return lines
+
+
+def _review_verify_block(cfg):
+    """Block 3: `sync_verify.py`'s raw output, embedded verbatim.
+
+    The ONLY place the verifier runs for a review: the documented cost spec 6.4
+    is paying down is a reviewer re-running the executor's full suite, and the
+    way this command stays cheap is by running nothing twice. So there is no
+    re-implementation of a check here -- the child's stdout and stderr go out as
+    bytes-decoded-to-text, plus its exit code, which is the line that keeps
+    `rc 0` on THIS command from being read as a verdict about the change.
+    """
+    raw = cfg.get("check_timeout")
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+        timeout = REVIEW_VERIFY_TIMEOUT
+        lines = [f"  NOTE: config `check_timeout` is absent or unusable "
+                 f"({type(raw).__name__}), so the documented default "
+                 f"{REVIEW_VERIFY_TIMEOUT}s caps the child"]
+    else:
+        timeout = raw
+        lines = []
+    script = AI_DIR / "scripts" / "sync_verify.py"
+    lines.insert(0, f"verify child: {sys.executable} {_review_rel(script)} "
+                    f"(timeout {timeout}s)")
+    if not script.is_file():
+        lines.append(f"{VERIFY_HALT}] {_review_rel(script)} is not installed, "
+                     "so no check output exists to embed. This block is not a "
+                     "pass; re-run init_sync.py to install the verifier.")
+        return lines, True
+    res = run_argv(ROOT, [sys.executable, str(script)], timeout=timeout)
+    if res.rc == -1 and not res.timed_out:
+        lines.append(f"{VERIFY_HALT}] the verifier could not be launched: "
+                     f"{decode(res.stderr).strip()}")
+        return lines, True
+    if res.timed_out:
+        lines.append(f"{VERIFY_HALT}] the verifier passed its own {timeout}s "
+                     "timeout; the output below is PARTIAL and is not a run.")
+    if res.stdout:
+        lines.append(decode(res.stdout).rstrip("\n"))
+    if res.stderr:
+        lines.append("-- verifier stderr --")
+        lines.append(decode(res.stderr).rstrip("\n"))
+    lines.append(f"-- verify child exit rc={res.rc}"
+                 + (" (timed out)" if res.timed_out else "") + " --")
+    return lines, res.timed_out
+
+
+def cmd_review_prompt(args):
+    """Print exactly {authorization, diff, verify} and nothing else (spec 6.4).
+
+    The honest review path has to be the cheap one or reviewers take the cheap
+    one instead: read scope is hard, and the recorded cost in this repo's own
+    review template is a reviewer re-running the executor's full suite. So this
+    command assembles the three things a reviewer must read -- what was
+    authorized, what changed, what the checks said -- into one output, and adds
+    no fourth block, no summary of its own and no verdict.
+
+    It reads, and writes nothing: no state file, no lock, no cache. That is why
+    it is dispatched beside `--validate` rather than through
+    `_guard_state_writes` -- the same reasoning as B6/3 there, and the reason a
+    reviewer can run it on a tree another agent holds.
+
+    Exit codes are about the PROMPT, not the change: 0 = all three blocks
+    carried content or a named reason; 2 = block 3 could not be produced at all,
+    which is the one failure this command cannot honestly paper over with the
+    verifier's absence. A `[NO ACTIVE AUTHORIZATION]` or `[DIFF UNAVAILABLE]`
+    block is a complete answer to a question and still exits 0 -- rc 0 here is
+    never evidence that anything passed.
+    """
+    _require_paths()
+    cfg, notes = _review_config()
+    verify_lines, verify_halted = _review_verify_block(cfg)
+    blocks = [_review_authorization_block(cfg, notes),
+              _review_diff_block(cfg),
+              verify_lines]
+    for index, (header, body) in enumerate(zip(REVIEW_HEADERS, blocks)):
+        if index:
+            print()
+        print(header)
+        print("\n".join(body))
+    # Nothing follows block 3, including the explanation of why it halted: that
+    # explanation is the `[VERIFY HALT` line inside the block, and a fourth
+    # trailing note would be the "and nothing else" promise broken by the very
+    # command that makes it.
+    sys.exit(2 if verify_halted else 0)
+
+
 def install_layout():
     """This checkout's `(kind, detail)`, read from the two directions that lie.
 
@@ -1157,6 +1541,13 @@ def main():
     group.add_argument("--unlock", action="store_true",
                        help="Release the advisory writer lock "
                             "(--agent <name> is required against a live lock)")
+    group.add_argument("--review-prompt", action="store_true",
+                       help="Print the reviewer's whole read set and nothing "
+                            "else: the active authorization, the diff since the "
+                            "recorded governance window, and sync_verify.py's "
+                            "own output. Reads only; runs the verifier once, as "
+                            "a child. rc 0 means the prompt was produced, NOT "
+                            "that the change passed (spec 6.4)")
 
     args = parser.parse_args()
 
@@ -1164,6 +1555,13 @@ def main():
         cmd_status(args)
     elif args.prime:
         cmd_prime(args)
+    elif args.review_prompt:
+        # Ungated like --validate, and for the same reason: this command writes
+        # no state, so the lock it must not skip is nothing's. Routing it here
+        # rather than letting it fall through is also load-bearing -- without
+        # this branch the flag is parsed, accepted, and silently becomes the
+        # bare-checkpoint default, which WRITES state.
+        cmd_review_prompt(args)
     elif args.validate:
         # B6/3: --validate writes nothing, and its documented rc 1 means "state
         # files missing or empty" (usage block above, SKILL.md). The F3 gate made
