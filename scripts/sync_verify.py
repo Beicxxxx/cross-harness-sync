@@ -1062,28 +1062,50 @@ def _section_bullets(text: str, heading: str) -> list:
     return out
 
 
+def _sha_header(line: str) -> bool:
+    """Is this line a `%H` commit id, or a path that merely looks like one?
+
+    Two constraints, both measured on this host rather than assumed. `git log
+    --pretty=format:%H --name-only -z` glues the id to its own commit's FIRST
+    path and puts every later path in a record of its own, so a header line is
+    always the first line of a MULTI-LINE record; a single-line record is a path,
+    not a commit. And `%H` always prints lower case. Requiring both is what stops
+    a real top-level file named `deadbeef…` (40 hex chars) from being read as the
+    start of a new commit -- which is exactly what the old "40 chars, all hex,
+    upper case allowed" sniffing did to such a file listed after another path in
+    one commit: the name was swallowed as a sha, its path vanished from the walk,
+    and coverage printed a PASS over the touch it never saw. The residual
+    ambiguity runs the safe way: a path that loses its header is re-parented to
+    the previous commit and still counted, so a wrong answer here can only cost a
+    FAIL naming an odd sha, never a green.
+    """
+    return (len(line) == ai_common.SHA_HEX_LEN
+            and all(c in "0123456789abcdef" for c in line))
+
+
 def _walk_touches(records):
     """`(sha, rel_path)` pairs out of `ai_common.log_paths` RECORDS.
 
-    Each element of that list is one commit's block -- `"<sha>\\n<first path>"`
-    then bare `"<path>"` blocks, because `-z` terminates records, not lines --
-    so iterating it as bare paths would attribute one path per commit and
-    UNDER-COUNT coverage. A block that does not start with a commit id is a
-    continuation block and belongs to the last sha seen, which is the
-    fail-closed direction: a path is never dropped, only re-parented.
+    An element of that list is NOT a bare path: the first record of a commit is
+    `"<sha>\\n<first path>"` and each later path of the same commit arrives as
+    its own single-line `"<path>"` record, because `-z` terminates records, not
+    lines. So ONLY the first line of a multi-line record may be read as the
+    commit header and every line after it is a path; anything else is a path too,
+    re-parented to the last sha seen. Dropping a path would under-count coverage,
+    and under-counted coverage is the fail-open this walk exists to close, so the
+    continuation branch keeps every line.
     """
     out = []
     current = ""
     for rec in records:
         head, sep, rest = rec.partition("\n")
-        if len(head) == ai_common.SHA_HEX_LEN and \
-                all(c in "0123456789abcdefABCDEF" for c in head):
+        if sep and _sha_header(head):
             current = head
-            body = rest.split("\n") if sep else []
+            lines = rest.split("\n")
         else:
-            body = rec.split("\n")
-        for raw in body:
-            if raw and raw.strip():
+            lines = rec.split("\n")
+        for raw in lines:
+            if raw.strip():
                 out.append((current, raw.replace("\\", "/")))
     return out
 
@@ -1179,8 +1201,8 @@ def check_coverage_walk(cfg: dict) -> None:
 def check_pin_violation(cfg: dict) -> None:
     """spec 6.1: the only proposed check whose falsifiable fact lies entirely
     inside the repo -- a pin on a fast-changing state file."""
-    records, dir_absent = _authorization_records(cfg)
-    if dir_absent or not records:
+    records, _absent = _authorization_records(cfg)
+    if not records:
         record("pin violation", None, "SKIP(no-authorizations)")
         return
     unreadable = [r for r in records if r["text"] is None]
@@ -1255,17 +1277,17 @@ def check_swarm_boundary(cfg: dict) -> None:
     mandates one live authorization per stage, yet two accepted records used to
     verify green because every other check reads one file at a time.
 
-    The count that IS decidable breaks the boundary first, so a blockless legacy
-    record cannot be used to hide a second accepted one.
+    The count that IS decidable breaks the boundary first, so a blockless or
+    verdict-less record cannot be used to hide a second accepted one.
     """
-    records, dir_absent = _authorization_records(cfg)
-    if dir_absent or not records:
+    records, _absent = _authorization_records(cfg)
+    if not records:
         record("swarm boundary", True,
                f"0 accepted authorizations: no stage record in "
                f"{_authorization_dir_label(cfg)}, so nothing is live and "
                f"nothing can be concurrent")
         return
-    broken, legacy, accepted = [], [], []
+    broken, legacy, undecided, accepted = [], [], [], []
     for rec in records:
         if rec["text"] is None:
             broken.append(f"{rec['rel']} (unreadable: {rec['read_err']})")
@@ -1273,6 +1295,15 @@ def check_swarm_boundary(cfg: dict) -> None:
             broken.append(f"{rec['rel']} ({rec['gov_err']})")
         elif rec["fields"] is None:
             legacy.append(rec["rel"])
+        elif not str(rec["fields"].get("verdict", "") or "").strip():
+            # A block that parsed but names no verdict is not a decidable record
+            # either. Leaving it out of every bucket used to print
+            # `PASS 0 accepted authorization(s) of 1 record(s)` -- a green booked
+            # on the very file whose status is unknown, which is the fail-open
+            # spec 4 forbids ("a degradation may produce a named WARN/SKIP,
+            # never PASS"), so it is carried as an undecided name instead.
+            undecided.append(f"{rec['rel']} (its `## Governance` block names no "
+                             f"`verdict:`)")
         elif _verdict(rec) == "accepted":
             accepted.append(rec["rel"])
     if len(accepted) > 1:
@@ -1287,13 +1318,15 @@ def check_swarm_boundary(cfg: dict) -> None:
                f"be parsed, so the accepted count is not decidable and cannot "
                f"be certified either way: " + "; ".join(broken))
         return
-    if legacy:
+    if legacy or undecided:
         record("swarm boundary", None,
-               f"SKIP(no-governance-block: {', '.join(sorted(legacy))}): a "
-               f"legacy record with no `## Governance` block is a named WARN "
-               f"(spec 6), carries no verdict, and is therefore not counted as "
-               f"accepted -- so the concurrency question stays open here "
-               f"rather than booking a PASS")
+               f"SKIP(no-verdict: {', '.join(sorted(legacy + undecided))}): a "
+               f"record with no `## Governance` block, or with a block that "
+               f"names no `verdict:`, is a legacy or incomplete stage record "
+               f"(spec 6 names it, it never PASSes), carries no verdict, and is "
+               f"therefore not counted as accepted -- so the concurrency "
+               f"question stays open here rather than booking a PASS over the "
+               f"file whose status is unknown")
         return
     record("swarm boundary", True,
            f"{len(accepted)} accepted authorization(s) of {len(records)} "

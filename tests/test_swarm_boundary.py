@@ -7,10 +7,10 @@ below is the whole point of the check.
 
 A record with no `## Governance` block is the spec-6 legacy degradation: it is
 named as a WARN/SKIP and never counted as accepted, so it also makes the
-concurrency count undecidable rather than quietly PASSing.
+concurrency count undecidable rather than quietly PASSing. A block that parses
+but names no `verdict:` is the same hole wearing better clothes, and it is named
+too.
 """
-import json
-
 from helpers import run_python
 
 
@@ -26,13 +26,6 @@ def _auth(repo, name, verdict="accepted", editable=("src/app.py",)):
     (adir / f"{name}.md").write_text(text, encoding="utf-8")
 
 
-def _clear(repo):
-    adir = repo / ".ai" / "state" / "authorizations"
-    if adir.is_dir():
-        for stale in adir.glob("*.md"):
-            stale.unlink()
-
-
 def test_two_accepted_authorizations_are_a_named_fail(ai_repo, sv):
     _auth(ai_repo, "stage-a")
     _auth(ai_repo, "stage-b")
@@ -40,8 +33,13 @@ def test_two_accepted_authorizations_are_a_named_fail(ai_repo, sv):
     assert res.rc == 1, res.stdout + res.stderr
     fails = [ln for ln in res.lines if ln.startswith("[FAIL] swarm boundary:")]
     assert len(fails) == 1, res.lines
-    assert "2" in fails[0], fails[0]
-    assert "swarm" in fails[0].lower() or "accepted" in fails[0], fails[0]
+    # The exact count phrase and BOTH record names: `"2" in line` was satisfied
+    # by any line carrying the digit 2 anywhere — a window sha, a byte count, a
+    # "1 more" tail — so it never proved the boundary was the thing that broke.
+    assert "2 concurrent accepted authorizations" in fails[0], fails[0]
+    assert "stage-a.md" in fails[0], fails[0]
+    assert "stage-b.md" in fails[0], fails[0]
+    assert "out of scope" in fails[0], fails[0]
 
 
 def test_one_accepted_authorization_passes_naming_the_count(ai_repo, sv):
@@ -50,7 +48,7 @@ def test_one_accepted_authorization_passes_naming_the_count(ai_repo, sv):
     assert res.rc == 0, res.stdout + res.stderr
     passes = [ln for ln in res.lines if ln.startswith("[PASS] swarm boundary:")]
     assert len(passes) == 1, res.lines
-    assert "1" in passes[0], passes[0]
+    assert "1 accepted authorization(s) of 1 record(s)" in passes[0], passes[0]
 
 
 def test_no_records_at_all_passes_with_zero(ai_repo, sv):
@@ -62,7 +60,10 @@ def test_no_records_at_all_passes_with_zero(ai_repo, sv):
     assert res.rc == 0, res.stdout + res.stderr
     passes = [ln for ln in res.lines if ln.startswith("[PASS] swarm boundary:")]
     assert len(passes) == 1, res.lines
-    assert "0" in passes[0], passes[0]
+    assert passes[0] == ("[PASS] swarm boundary: 0 accepted authorizations: "
+                         "no stage record in .ai/state/authorizations, so "
+                         "nothing is live and nothing can be concurrent"), \
+        passes[0]
 
 
 def test_declined_and_pending_records_are_not_accepted(ai_repo, sv):
@@ -113,3 +114,33 @@ def test_a_broken_governance_block_halts_the_count(ai_repo, sv):
     fails = [ln for ln in res.lines if ln.startswith("[FAIL] swarm boundary:")]
     assert len(fails) == 1, res.lines
     assert "broken.md" in fails[0], fails[0]
+
+
+def test_a_block_that_names_no_verdict_is_never_a_zero_pass(ai_repo, sv):
+    """The other face of the legacy hole: a `## Governance` block that parses
+    cleanly — no duplicate key, no placeholder — but carries no `verdict:` line.
+
+    `parse_governance_block` returns it as a well-formed dict, so the record fell
+    through `broken`, `legacy` and `accepted` without joining any of them and the
+    check printed `PASS 0 accepted authorization(s) of 1 record(s)`: a green
+    booked by the one file whose status is unknown, and a hiding place for a
+    second accepted record. Spec 4 allows a degradation to be only a named
+    WARN/SKIP, so an undecided record is named and never counted.
+    """
+    adir = ai_repo / ".ai" / "state" / "authorizations"
+    adir.mkdir(parents=True, exist_ok=True)
+    (adir / "no-verdict.md").write_text(
+        "# Authorization — no verdict\n\n## Editable files\n\n- `src/app.py`\n\n"
+        "## Governance\n\n```governance\n"
+        "tier: T2\nexecutor: harness-a/model-1\n"
+        "reviewer: harness-b/model-2\n```\n", encoding="utf-8")
+    res = run_python(sv, cwd=ai_repo)
+    assert res.rc == 0, res.stdout + res.stderr
+    assert not any(ln.startswith("[PASS] swarm boundary:")
+                   for ln in res.lines), res.lines
+    skips = [ln for ln in res.lines if ln.startswith("[SKIP] swarm boundary:")]
+    assert len(skips) == 1, res.lines
+    assert "no-verdict.md" in skips[0], skips[0]
+    assert "no-verdict:" in skips[0], skips[0]
+    assert "0 accepted" not in skips[0], skips[0]
+
