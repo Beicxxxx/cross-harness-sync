@@ -142,6 +142,24 @@ DEFAULT_CONFIG = {
 # walks the SAME list from the SAME config key: with only the constant shared, a
 # project override still made the verifier and `--validate` disagree, which is
 # lane V's residual and the same defect class as D23.
+#
+# WHY the floor is not configurable (finding 3; this replaces an older
+# justification that lane V's own commit falsified -- it claimed nothing else
+# covered `ROLE_POLICY.md` and `protocol/VERSION`, and `--validate` now walks
+# both, which is exactly why they no longer need that argument). The surviving
+# reason is narrower and holds on its own: a config edit must never be able to
+# un-check a safety file. `required_files` merges by REPLACE, so without a floor
+# one line in `.ai/sync_config.json` drops the L0 startup trio (`CURRENT.md`,
+# `TASK.md`, `BLOCKERS.md`), the tier rules `ROLE_POLICY.md` or the
+# `protocol/VERSION` stamp from BOTH enforcement commands at once, and the
+# governance layer the config is supposed to sit inside of stops being checked by
+# anything. The floor is exactly those five: the optional tail it deliberately
+# does NOT carry (DECISIONS.md, DECISIONS_INDEX.md, LATEST.md) is covered by the
+# `budget DECISIONS` SKIP naming its own absence, so a project may opt out of a
+# decision log and `tests/test_subprocess_hardening.py` pins that as the deal.
+# `tests/test_validate_parity.py` is the agreement pin: it goes red the moment the
+# two commands stop walking one list, so neither can drift into "not in my list,
+# therefore not required".
 
 # The name the installer owns (D18 prunes it, D27 raises it), so it can never be
 # a code DEFAULT budget — but when the file is PRESENT it must carry a cap or an
@@ -595,11 +613,15 @@ def check_secret_mirrors(cfg: dict) -> None:
     # D6: mirrored secrets are git-IGNORED by design, so a second machine that
     # cloned the repo legitimately has neither side on disk. Recording that as a
     # FAIL made close-out unreachable there — the only way to go green was to
-    # commit a secret, which is the failure this check exists to prevent. Both
-    # absences are therefore a named SKIP, and the two shapes are named apart:
-    # "nothing mirrored on this machine" and "one side is here, the other is not"
-    # are different things for a human to act on. What stays a FAIL is the only
-    # case with evidence behind it: both sides present and disagreeing.
+    # commit a secret, which is the failure this check exists to prevent. ONLY
+    # that both-absent branch is a named SKIP. Lane T7 also skipped the
+    # one-side-present case, and that went one branch too far: spec 4 lets an
+    # absent file skip only once its absence is provably covered elsewhere, and
+    # here nothing covers it. Exactly one side on disk is the single shape that
+    # carries evidence of local drift — half a mirror, or a typo in
+    # `secret_mirrors`, where a wrong path is indistinguishable from an absent
+    # one — so it is a FAIL that names the missing side, at rc 1. What was
+    # always a FAIL and stays one: both sides present and disagreeing.
     for pair in cfg["secret_mirrors"]:
         a, b = ROOT / pair[0], ROOT / pair[1]
         name = f"secret mirror {pair[0]} vs {pair[1]}"
@@ -609,8 +631,12 @@ def check_secret_mirrors(cfg: dict) -> None:
         if not (a.exists() and b.exists()):
             here = pair[0] if a.exists() else pair[1]
             there = pair[1] if a.exists() else pair[0]
-            record(name, None, f"SKIP(present on this machine: {here}; "
-                               f"absent: {there})")
+            record(name, False, f"present on this machine: {here}; "
+                                f"absent: {there} - a mirror with one side "
+                                f"missing is local drift (or a wrong path in "
+                                f"secret_mirrors), not a per-machine "
+                                f"difference: create the other side or "
+                                f"delete the entry")
             continue
         ka, kb = keys(a), keys(b)
         record(name, ka == kb,
@@ -705,14 +731,18 @@ def main() -> int:
         print(f"[FAIL] install layout: {exc}")
         return 2
     print(f"== sync_verify: project root {ROOT} ==")
-    # Pre-flight (D11, D12), recorded only when it FAILS, and that is a
-    # deliberate departure from the brief's snippet: the two early-return
-    # branches below end with `== 0/1 checks passed ==` to say out loud that
-    # nothing else ran, and two PASS lines booked first would turn those honest
-    # verdicts into `1/2` and `2/3`. Those literals are pinned in
-    # tests/test_install_layout.py:53 and tests/test_config_errors.py:115, which
-    # are lane S1's files, not this lane's. So: a precondition that held prints
-    # nothing, and one that did not is named and stops the run.
+    # Pre-flight (D11, D12). A precondition that FAILED is named and stops the
+    # run; a precondition that HELD used to print nothing at all, and that was
+    # finding 6: check 0 had exactly one `record()` call and it was the FAIL, so
+    # a `17/18 checks passed` report carried zero evidence the layout gate had
+    # run -- the exact silence this wave's own new sentences (--prime, the
+    # managed block, SYNC_PROMPT, installer step 3) say is not clean. The two
+    # EARLY-RETURN branches below still end in `== 0/1 checks passed ==` to say
+    # out loud that nothing else ran, which is why the passing record is booked
+    # one line later, after the config read that can also stop the run: those
+    # literals are pinned in tests/test_install_layout.py:53 and
+    # tests/test_config_errors.py:115, and a run that died at an unreadable
+    # config still names its single FAIL rather than padding the tally.
     if not git_available():
         # Before this, a machine with no git got seven `rc=128` lines and no
         # explanation, or (with the layout gate) one FAIL about a tree git could
@@ -754,6 +784,11 @@ def main() -> int:
         return _summarise()
     try:
         cfg, nulled = load_config()
+        # The gate held, so book it: the kind git gave and its witness detail,
+        # which is the same string the FAIL branch prints. `normal` is only
+        # reachable when BOTH probes agreed, so this PASS is an assertion, not a
+        # default -- a `could not determine` answer is the FAIL above it.
+        record("install layout", True, f"normal: {layout_detail}")
         # as_posix(): the evidence line is read by agents on the other machines
         # too, and `.ai\sync_config.json` is not the path they wrote in config.
         record("config readable", True, CONFIG_PATH.relative_to(ROOT).as_posix())

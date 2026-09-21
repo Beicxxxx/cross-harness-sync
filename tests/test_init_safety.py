@@ -234,7 +234,15 @@ def test_scripts_only_on_an_uninstalled_repo_installs_scripts(repo):
     assert read(repo, ".ai/state/CURRENT.md") == "# mine\n"
     assert not (repo / "AGENTS.md").exists(), res.lines
     assert not (repo / "CLAUDE.md").exists(), res.lines
-    assert not (repo / ".gitignore").exists(), res.lines
+    # Item 1's trade, pinned here so this test does not keep the old promise
+    # alive: `--scripts-only` now DOES write `.gitignore`, because the same run
+    # writes `.ai/runtime/.gitkeep` and a tree with no `!.ai/runtime/.gitkeep`
+    # exception drops that placeholder at `git add -A` -- which is D16 surviving
+    # on exactly the upgrade path existing users are told to run. What the flag
+    # still must not create is the user's side of an install.
+    assert "!.ai/runtime/.gitkeep" in (repo / ".gitignore").read_text("utf-8"), \
+        res.lines
+    assert not (repo / "AGENTS.md").exists(), res.lines
 
 
 # --------------------------------------------------------------------------

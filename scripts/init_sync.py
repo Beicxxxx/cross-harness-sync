@@ -37,9 +37,17 @@ Flags:
     --clobber        overwrite edited state too (implies --force). Prints a
                      warning telling you to commit first, because this is the
                      one path that can destroy work.
-    --scripts-only   refresh `.ai/scripts/` and `.ai/protocol/VERSION` and
-                     nothing else: no state, config, template, AGENTS.md,
-                     CLAUDE.md or .gitignore is read, written or created.
+    --scripts-only   the upgrade path. It refreshes `.ai/scripts/*.py` and
+                     `.ai/protocol/VERSION`, creates the tracked `.gitkeep`
+                     placeholders for the empty protocol directories, and
+                     appends the `.gitignore` exception that makes the runtime
+                     placeholder addable (D16's fix has to reach this flag or it
+                     only ever works on a fresh install). What it never touches
+                     is anything the user wrote: no state file, no
+                     `sync_config.json`, no template, no AGENTS.md, no CLAUDE.md
+                     is read or created. Each script whose bytes differ from the
+                     shipped copy is named with a `NOTE replaced:` line, which
+                     also says whether it looks like a local edit.
     --no-agents-block  do not touch AGENTS.md — and, because that file then
                      does not exist, write no CLAUDE.md pointer to it and drop
                      its line budget from sync_config.json, so
@@ -681,15 +689,20 @@ def main() -> int:
     parser.add_argument("--force", action="store_true",
                         help="Overwrite existing files that are still "
                              "untouched templates; edited state and config are "
-                             "kept (see --clobber)")
+                             "kept (see --clobber). Implied by --scripts-only.")
     parser.add_argument("--clobber", action="store_true",
                         help="Overwrite edited state files too (implies "
                              "--force); commit first, this is the one path "
                              "that can destroy work")
     parser.add_argument("--scripts-only", action="store_true",
-                        help="Refresh .ai/scripts/ and protocol/VERSION only; "
-                             "leave state, config, AGENTS.md, CLAUDE.md and "
-                             ".gitignore alone")
+                        help="The upgrade path: refresh .ai/scripts/ and "
+                             ".ai/protocol/VERSION, create the tracked .gitkeep "
+                             "placeholders for the empty protocol directories, "
+                             "and append the .gitignore exception that makes "
+                             "them addable. Writes no state file, no "
+                             "sync_config.json, no template, no AGENTS.md and "
+                             "no CLAUDE.md; each script it replaces is named "
+                             "with a NOTE replaced: line.")
     parser.add_argument("--no-agents-block", action="store_true",
                         help="Do not touch AGENTS.md")
     args = parser.parse_args()
@@ -719,10 +732,13 @@ def main() -> int:
     # repo it printed `SKIP (exists)` three times, wrote no VERSION, and exited 0
     # having changed nothing — the upgrade path wave 1a depends on was a no-op
     # wearing a success code, the same interface/silence class as the "all green"
-    # promise. Refreshing is safe as this flag's DEFAULT because the only things
-    # it can reach are the installer's own: with --scripts-only the state, config,
-    # template, AGENTS.md, CLAUDE.md and .gitignore paths below are never read,
-    # written or created, so no caller work is ever overwritten by it.
+    # promise. Refreshing is safe as this flag's DEFAULT because what it can
+    # reach is the installer's own output: no state file, `sync_config.json`,
+    # template, AGENTS.md or CLAUDE.md is opened by it, and the two paths it
+    # does write (`.gitignore` and the `.gitkeep` placeholders) only ever gain
+    # lines. Note that `.gitignore` IS on that list: an earlier draft of this
+    # text claimed the flag created nothing, which stopped being true the moment
+    # D16's fix had to reach the upgrade path too.
     force = args.force or args.clobber or args.scripts_only
     # With --clobber nothing is protected; copy_file keeps its original meaning
     # of "overwrite this destination".
@@ -740,9 +756,12 @@ def main() -> int:
               "recoverable.")
 
     if args.scripts_only:
-        print("scripts-only: state files, handoff, sync_config.json, "
-              ".ai/templates/, AGENTS.md, CLAUDE.md and .gitignore are left "
-              "exactly as they are")
+        print("scripts-only: state files, handoff, sync_config.json and "
+              ".ai/templates/ are left exactly as they are. This run refreshes "
+              ".ai/scripts/ and .ai/protocol/VERSION, creates the tracked "
+              "placeholders for the empty protocol directories, and appends the "
+              ".gitignore exception those placeholders need - no file the user "
+              "wrote is read, replaced or created.")
     else:
         for rel_src, rel_dst in FILE_MAP:
             line = copy_file(TEMPLATES / rel_src, root / rel_dst, force,
@@ -751,13 +770,44 @@ def main() -> int:
             if line.startswith("ERROR"):
                 rc = 1
 
+    # D22/this lane: the stamp as it stands BEFORE anything is written is the
+    # second witness for the replacement notice below. Two files can differ from
+    # the shipped copy for two reasons -- the install is older, or somebody
+    # edited it -- and the only thing here that records which version last wrote
+    # these bytes is VERSION itself.
+    version = root / ".ai/protocol/VERSION"
+    prior_stamp = (_read_text(version) or "").strip()
     for rel_src, rel_dst in SCRIPT_MAP:
-        line = copy_file(SKILL_DIR / "scripts" / rel_src, root / rel_dst, force)
+        src = SKILL_DIR / "scripts" / rel_src
+        dst = root / rel_dst
+        try:
+            before = dst.read_bytes() if dst.exists() else None
+        except OSError:
+            before = None
+        line = copy_file(src, dst, force)
         print(line)
         if line.startswith("ERROR"):
             rc = 1
+            continue
+        # Adjudication 4 (finding 5): the behaviour is right -- replacing the
+        # installer's own scripts is the only way this flag's promise can be
+        # true, and it stays one command, no `--force` needed. The silence was
+        # not: a fail-closed tool must not swap bytes it did not author without
+        # naming it, and must not call an older version a local edit either.
+        if before is not None and before != src.read_bytes():
+            if prior_stamp == PROTOCOL_VERSION:
+                why = (f"this install's stamp already reads {PROTOCOL_VERSION}, "
+                       "so the copy being replaced looks locally modified "
+                       "(hand-edited, not an older version)")
+            else:
+                why = (f"this install's stamp reads {prior_stamp or 'nothing'}, "
+                       "not "
+                       f"{PROTOCOL_VERSION}, so an older shipped version and a "
+                       "local edit cannot be told apart here")
+            print(f"NOTE replaced: {rel_dst} (its bytes differed from the "
+                  f"shipped copy - {why}) - overwritten; `git diff` after this "
+                  "run names every line that went")
 
-    version = root / ".ai/protocol/VERSION"
     if force or not version.exists():
         version.parent.mkdir(parents=True, exist_ok=True)
         _write_text(version, PROTOCOL_VERSION + "\n")
@@ -782,11 +832,20 @@ def main() -> int:
             _write_text(path, "")
             print(f"wrote: {path}")
 
+    # Item 1: this loop ran on EVERY path, `--scripts-only` included, while the
+    # `.gitignore` exception that lets `.ai/runtime/.gitkeep` be added at all sat
+    # behind `if not args.scripts_only:`. On any tree scaffolded before that
+    # exception existed, the upgrade flag therefore wrote a placeholder `git add
+    # -A` silently dropped -- D16 surviving on the very path existing users are
+    # told to run. The two now share a branch: whatever the placeholder loop
+    # creates, `update_gitignore()` has already made addable. It is append-only
+    # per D17, and an up-to-date tree just prints `already up to date`.
+    line = update_gitignore(root)
+    print(line)
+    if line.startswith("ERROR"):
+        rc = 1
+
     if not args.scripts_only:
-        line = update_gitignore(root)
-        print(line)
-        if line.startswith("ERROR"):
-            rc = 1
         if args.no_agents_block:
             line = drop_agents_md_budget(root)
             print(line)
