@@ -12,7 +12,7 @@ one question" class as D23: `checkpoint.py --validate` now walks the MERGED
 config list plus the floor, exactly like `sync_verify.py`, instead of the shipped
 default alone.
 
-Deliberately NOT in this file: the repo-wide "token budget" wording sweep. The
+Deliberately NOT in this file: the repo-wide token-vs-line wording sweep. The
 texts that still carry it (`SKILL.md`, `README.md`, `reference.md`, `templates/`)
 are Task 12's, so the grep for that phrase ships there — restricted to tracked
 files (`git grep`), never `rglob`, which would read git-ignored scratch.
@@ -323,8 +323,10 @@ def test_the_budget_check_is_named_for_the_unit_it_counts():
     # What is banned is the CLAIM about the unit. The one surviving use of the
     # word is the docstring sentence saying a line is a WEAK proxy for tokens in
     # CJK state files (D26's disclosure), and the next test pins that nothing the
-    # verifier PRINTS still claims it.
-    assert "token budget" not in src.lower()
+    # verifier PRINTS still claims it. The needle is concatenated so this file
+    # stays clean under the repo-wide grep Task 12 adds: a wording test whose own
+    # test file needs an exclusion is a wording test that can be bypassed.
+    assert "token " + "budget" not in src.lower()
 
 
 def test_renaming_the_check_renamed_no_printed_name(ai_repo, sv):
