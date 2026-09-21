@@ -19,7 +19,7 @@ says so next to it.
 | Test suite, `python -m pytest tests/ -n 8 -o addopts=""` | `324 passed, 3 skipped in 24.92s`, no warnings block | `d5aee6e` |
 | Fresh install into an empty git repo, then `sync_verify.py` | `== 18/19 checks passed, 1 skipped ==`, rc 0 | `d5aee6e` |
 | Same install cloned to a second absolute path | `== 18/19 checks passed, 1 skipped ==`, rc 0 | `d5aee6e` |
-| Tracked text still claiming the caps count tokens | 2 files, both templates (`templates/AGENTS.md`, `templates/SYNC_PROMPT.md`) | `d5aee6e` |
+| Tracked text still claiming the caps count tokens | 0 files — the two template hits were swept after this row was measured | `c288a52` |
 
 The one-line shape a reviewer sees on a default install never changes to
 "everything passed": a default install registers no `extra_checks` and no
