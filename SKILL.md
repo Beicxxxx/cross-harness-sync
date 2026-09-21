@@ -45,9 +45,14 @@ The honest differentiator is **path-scoped independent review in settings where
 CODEOWNERS and Gerrit structurally cannot exist**: no forge admin rights (forked
 patches, self-hosted forges, private repos whose branch protection you do not
 own), and authors that are LLM agents with no forge identity to be a code owner
-of. The coverage walk that would act on that (`protected_paths` in config, the
-git-log pass over it) is **wave 1b and is not in this release**; see
-`CHANGELOG.md`.
+of. The coverage walk that acts on that — `protected_paths` in config, the
+`git log` pass over it, an accepted authorization's `## Editable files` list as
+the covering record — ships in wave 1b as the `path coverage` check. It makes
+omission **verifiable**: a skipped or forgotten review stays in history for
+anyone who re-runs the verifier. It cannot detect a fabricated record, because
+nothing binds a recorded name to an actual model invocation, and it halts with
+a named FAIL rather than a certificate when history is shallow or git cannot
+answer. See `CHANGELOG.md`.
 
 ## When to use
 
@@ -75,10 +80,15 @@ Then fill in every `<placeholder>` (remote URL, commit identity, project red
 lines), declare project-specific checks in `.ai/sync_config.json`, run
 `python .ai/scripts/sync_verify.py` until `FAILED:` is absent and every line
 reads `[PASS]` or a named `[SKIP]`, then commit and push. A default install
-registers no project checks, so it ends `== 18/19 checks passed, 1 skipped ==`
-at exit 0 (measured at `fc9d7bf`): that SKIP is expected, and it is not green —
-nothing in this protocol can be green, only named. `rc == 0` is never sufficient;
-read the lines.
+registers no project checks and declares no protected paths, so it ends
+`== 20/24 checks passed, 4 skipped ==` at exit 0 (measured at `3546c08`). The
+four skips are `registered project checks`, `path coverage`
+(`SKIP(no-protected-paths)`), `pin violation` (`SKIP(no-authorizations)`) and
+`role policy integrity` (`SKIP(no-sha-pinned)`), and each names which reason it
+took. The same install after `python scripts/init_sync.py <repo> --migrate`
+reads `== 21/24 checks passed, 3 skipped ==`. Neither figure is a failure to fix
+and neither is green — nothing in this protocol can be green, only named.
+`rc == 0` is never sufficient; read the lines.
 
 `init_sync.py` is idempotent: existing files it did not write are kept
 (`KEEP (edited)`), `--force` refreshes those still untouched since their
@@ -86,17 +96,26 @@ template, `--clobber` overwrites those too, and an existing `AGENTS.md` gets a
 marker-delimited managed block (`BEGIN/END CROSS-HARNESS-SYNC`) replaced in
 place on re-runs.
 
-**Upgrading from a v2.0 install — read this before adopting wave 1a.** Wave 1a
-without wave 1b's `--migrate` **breaks both entry scripts on every existing v2.0
-install**: `checkpoint.py` and `sync_verify.py` now hard-exit `2` unless
-`.ai/scripts/ai_common.py` is present, and v2.0 never installed that file. The
-workaround that exists today is one command per install —
-`python scripts/init_sync.py <repo> --scripts-only`, which refreshes
-`.ai/scripts/` and `protocol/VERSION`, creates the tracked `.gitkeep`
-placeholders and the `.gitignore` exception they need, and writes no state,
-config, template, `AGENTS.md` or `CLAUDE.md` — and it is not a migration: it
-carries no `MIGRATION.json`, no window-start commit, and no reconciliation of
-customized files.
+**Upgrading from a v2.0 install.** Wave 1a alone **broke both entry scripts on
+every existing v2.0 install**: `checkpoint.py` and `sync_verify.py` hard-exit
+`2` unless `.ai/scripts/ai_common.py` is present, and v2.0 never installed that
+file. Wave 1b's `--migrate` is the upgrade:
+
+```bash
+python scripts/init_sync.py /path/to/repo --migrate
+```
+
+It sets the governance config keys, pins the SHA-256 of `ROLE_POLICY.md`,
+records the window-start commit, installs the authorization index and template,
+writes `.ai/protocol/MIGRATION.json` plus a `MIGRATION.md` journal naming what a
+revert cannot undo, and commits the result. It refuses at exit 2 writing nothing
+when git cannot be asked what HEAD is, or while another agent holds the writer
+lock, and it takes its own `init-sync-migrate` lock while it runs; a second run
+verifies the recorded state and writes nothing. Where `.ai/scripts/` is not in
+HEAD, the migration preserves the installed scripts and emits `.new` sidecars
+with a `WARN` rather than clobbering them. `--scripts-only` stays available as
+the refresh-only path — no `MIGRATION.json`, no window-start commit, no
+reconciliation of customized files — so prefer `--migrate`.
 
 **Install boundaries (refused, on purpose).** The scripts locate `.ai/` from
 their own path and refuse to work where that answer is not
@@ -138,8 +157,12 @@ exit 0 while someone else holds it.
 - New decision = ONE line in `DECISIONS_INDEX.md` + ≤ 15 lines in `DECISIONS.md`.
 - Handoff = `.ai/handoff/LATEST.md`, fixed 6 sections (Done / Not done /
   Evidence pointers / Warnings / Next step / Must-read list), ≤ 80 lines.
-- One stage = ONE authorization `.md` (scope + editable files + pinned hashes +
-  stop boundary). Template: `.ai/templates/AUTHORIZATION.md`.
+- One stage = ONE authorization `.md` in `.ai/state/authorizations/` (scope +
+  editable files + pinned hashes + stop boundary), plus a fenced governance
+  block carrying `tier`, `executor`, `reviewer` and `verdict`; `verdict:
+  accepted` is what makes the record live, and two live records are a FAIL. That
+  directory is the home the coverage walk reads. Template:
+  `.ai/templates/AUTHORIZATION.md`.
 - Never pin frequently-changing state files as authorization baselines.
 - Layered reading: L0 (the three files) at startup; L1 (the task's
   authorization + named docs) when executing; L2 archives are retrieval-only
@@ -148,7 +171,11 @@ exit 0 while someone else holds it.
   files, which this protocol permits; real token accounting is a wave-2
   measurement, not a wave-1 claim.
 - Review tiers T1/T2/T3 and hard rules (reviewer ≠ author, cross-family review,
-  red-before-green): `.ai/state/ROLE_POLICY.md`. Recorded, not enforced.
+  red-before-green): `.ai/state/ROLE_POLICY.md`. Recorded, not enforced — the
+  verifier proves the file is present and that it digests to the
+  `role_policy_sha256` pinned in `.ai/sync_config.json`, so editing the
+  governance document means a config diff a human reads; it never gates on model
+  family (rule R5).
 
 **Close out** — always, in order:
 
@@ -171,12 +198,16 @@ from the skill repo.
   `[FAIL] install layout: ai_common.py is missing from .ai/scripts/` if it is
   absent, so copying "just the two scripts" is a broken install, not a leaner one.
 - `scripts/checkpoint.py` — `--status`, `--prime`, `--validate`, `--handoff`,
-  `--lock` / `--unlock` (TTL advisory lock), `--agent`, `--ttl`, `--reason`.
+  `--lock` / `--unlock` (TTL advisory lock), `--review-prompt`, `--agent`,
+  `--ttl`, `--reason`.
   Overrides: `--force` takes a conflicting lock over (always with `--reason`,
   exit 2 without it) and is the only escape from a refused checkout layout;
   `--discard-lock`, with `--force`, abandons a lock record that cannot be parsed
-  (an unreadable record is HELD, never free). Mechanical only; never writes
-  semantic content. `--validate` answers from the same required-file list the
+  (an unreadable record is HELD, never free). `--review-prompt` prints exactly
+  the active authorization, the diff and the verify output — the reviewer's read
+  scope in one command, under the banners `== REVIEW PROMPT: AUTHORIZATION ==`,
+  `== REVIEW PROMPT: DIFF ==`, `== REVIEW PROMPT: VERIFY ==`. Mechanical only;
+  never writes semantic content. `--validate` answers from the same required-file list the
   verifier uses, plus the floor.
 - `scripts/sync_verify.py` — config-driven health check, in this order:
   `install layout`, `git usable` / `git repository`, `config readable`,
@@ -186,7 +217,9 @@ from the skill repo.
   PASS, so a healthy run and a skewed run each show one protocol-version line),
   `budget <file>` (+ `cap opt-out <file>`),
   `budget DECISIONS active entries`, `secret ignored: <file>`,
-  `secret mirror <a> vs <b>`, then `extra_checks`. Check 0 is booked as a PASS,
+  `secret mirror <a> vs <b>`, then the governance checks — `path coverage`,
+  `pin violation`, `role policy integrity`, `swarm boundary` — and then
+  `extra_checks`. Check 0 is booked as a PASS,
   not left silent: a report that never mentions `install layout` did not run the
   gate, and a report that mentions it did.
 - `scripts/init_sync.py` — scaffold the `.ai/` tree into a repo, from the skill
@@ -194,7 +227,10 @@ from the skill repo.
   prints `KEEP (edited)` for those the caller wrote in; `--clobber` overwrites
   those too; `--scripts-only` is the upgrade path (see above) and implies
   `--force` because it can only reach the installer's own files;
-  `--no-agents-block` leaves `AGENTS.md` alone and drops its budget line.
+  `--no-agents-block` leaves `AGENTS.md` alone and drops its budget line;
+  `--migrate` is the governance upgrade described under "Upgrading from a v2.0
+  install", and exits 2 with nothing written when it cannot ask git what HEAD
+  is.
 
 All scripts locate `.ai/` from their own path and refuse the layouts named under
 **Install boundaries** above.

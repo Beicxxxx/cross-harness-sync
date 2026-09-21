@@ -8,8 +8,12 @@ server, no database, no daemon.
 
 **What it proves:** omission, not fabrication. The verifier can show that a
 required state file, a line budget, a secret-ignore rule or a tracked
-placeholder is missing; it cannot show that a review happened or that a recorded
-agent identity is honest. Budgets, required files and the floor are enforced
+placeholder is missing, and — since wave 1b — that a commit touching a declared
+protected path is covered by no accepted authorization's editable-file list. It
+cannot show that a review happened or that a recorded agent identity is honest:
+a governance record naming executor and reviewer is verifiable against omission
+only, and the review it describes is one **by a different model**, not a
+mechanically checked one. Budgets, required files and the floor are enforced
 (checked every run); the role policy, review tiers and writer discipline are
 recorded, not enforced — the state-writing commands warn by name and continue at
 exit 0 while another agent holds the advisory lock.
@@ -78,26 +82,37 @@ python .ai/scripts/sync_verify.py   # no FAILED line; a named [SKIP] is legal, s
 git add -A && git commit && git push
 ```
 
-A default install registers no project checks, so its verifier ends
-`== 18/19 checks passed, 1 skipped ==` at exit 0 (measured at `fc9d7bf`). That
-`[SKIP]` is the correct shape, not a failure to fix, and exit 0 is never
-sufficient on its own: read the lines.
+A default install registers no project checks and declares no protected paths,
+so its verifier ends `== 20/24 checks passed, 4 skipped ==` at exit 0 (measured
+at `3546c08`); after `python scripts/init_sync.py <repo> --migrate` pins the
+role policy and records the coverage window, the same install ends
+`== 21/24 checks passed, 3 skipped ==`. Those `[SKIP]` lines are the correct
+shape, not a failure to fix, and exit 0 is never sufficient on its own: read
+the lines.
 
 `init_sync.py` is idempotent: files it did not write are kept (`KEEP (edited)`),
 `--force` refreshes the ones still untouched since their template, `--clobber`
 overwrites those too, and a pre-existing `AGENTS.md` gets a marker-delimited
 managed block instead of being replaced.
 
-**Upgrading from v2.0 — wave 1a breaks existing installs.** `checkpoint.py` and
-`sync_verify.py` now hard-exit `2` unless `.ai/scripts/ai_common.py` is present,
-and v2.0 never installed that file, so a v2.0 install runs neither script until
-it is refreshed. Until wave 1b's `--migrate` lands, run
-`python scripts/init_sync.py <repo> --scripts-only` on each existing install: it
-refreshes `.ai/scripts/` and `protocol/VERSION`, creates the tracked `.gitkeep`
-placeholders plus the `.gitignore` exception they need, names every script it
-replaces, and writes no state, config, template, `AGENTS.md` or `CLAUDE.md`. It
-is a refresh, not a migration — no `MIGRATION.json`, no window-start commit, no
-reconciliation of customized files.
+**Upgrading from v2.0.** Wave 1a broke existing installs — `checkpoint.py` and
+`sync_verify.py` hard-exit `2` unless `.ai/scripts/ai_common.py` is present, and
+v2.0 never installed that file. Wave 1b's `--migrate` is the upgrade:
+
+```bash
+python scripts/init_sync.py /path/to/your/repo --migrate
+```
+
+It sets the governance config keys, pins the SHA-256 of `ROLE_POLICY.md`,
+records the window-start commit, installs the authorization index and template,
+writes `.ai/protocol/MIGRATION.json` and a `MIGRATION.md` journal naming what a
+revert cannot undo, and commits the result; re-running it verifies and writes
+nothing. It refuses at exit 2, writing nothing, when git cannot be consulted or
+when another agent holds the writer lock. `--scripts-only` remains the
+refresh-only path (no `MIGRATION.json`, no window-start commit, no
+reconciliation), and when `.ai/scripts/` is not in HEAD a migration preserves
+the old scripts and emits `.new` sidecars plus a `WARN` instead of clobbering
+them.
 
 **Boundaries that are refusals, not bugs:** a linked git worktree, a `.ai`
 reached through a symlink or Windows junction, an install below the repository
@@ -112,9 +127,12 @@ writers who share one checkout's history — two worktrees are not two machines.
 ├── SYNC_PROMPT.md        # first prompt for every newly joined agent
 ├── sync_config.json      # budgets, secrets, project-specific extra_checks
 ├── state/                # CURRENT.md / TASK.md / BLOCKERS.md  (L0 startup reads)
-│                         # ROLE_POLICY.md · DECISIONS.md + DECISIONS_INDEX.md
+│   │                     # ROLE_POLICY.md · DECISIONS.md + DECISIONS_INDEX.md
+│   └── authorizations/   # one .md per stage (editable files + pins + a
+│                         # governance block); INDEX.md is its index
 ├── handoff/              # LATEST.md (6-section template) · NEXT_PROMPT.md
-├── protocol/VERSION      # protocol version (not the skill version)
+├── protocol/             # VERSION (protocol version, not the skill version) +
+│                         # MIGRATION.json/.md written by `--migrate`
 ├── runtime/              # machine-local; WRITER_LOCK.json is tracked (travels via git)
 └── scripts/              # ai_common.py · checkpoint.py · sync_verify.py (three; they hard-exit 2 without the first)
 ```
@@ -142,8 +160,13 @@ writers who share one checkout's history — two worktrees are not two machines.
 
 Review tiers (T1 ordinary / T2 protected / T3 irreversible gate), cross-family
 review, red-before-green, and the single-writer rule are **recorded** in
-`.ai/state/ROLE_POLICY.md`; no shipped script gates on them. Details, hook
-snippets, and configuration: [reference.md](reference.md).
+`.ai/state/ROLE_POLICY.md`, which the verifier requires and digests against the
+SHA-256 pinned in `.ai/sync_config.json`; no shipped script gates on the tiers
+themselves, and none gates on model family. What wave 1b adds is that the
+*omission* side is verifiable: an uncovered protected-path commit, a forbidden
+state-file pin, and more than one accepted authorization live at once each print
+a named `[FAIL]`. Details, hook snippets, and configuration:
+[reference.md](reference.md).
 
 ## Why not Beads / Memory Bank / agent-mail?
 

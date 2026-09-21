@@ -17,6 +17,9 @@ customizing, or debugging the protocol — not during normal operation.
 │   ├── ROLE_POLICY.md        # T1/T2/T3 review tiers, hard rules R1–R7
 │   ├── DECISIONS.md          # ≤20 active entries, ≤15 lines each
 │   ├── DECISIONS_INDEX.md    # ≤110 lines, one line per decision
+│   ├── authorizations/       # one .md per stage — the canonical home the
+│   │   └── INDEX.md          # coverage walk, pin check and swarm gate read;
+│   │                         # required, and never counted as a stage record
 │   └── archive/              # L2: retrieval-only history
 ├── handoff/
 │   ├── LATEST.md             # ≤80 lines, fixed 6 sections
@@ -24,7 +27,11 @@ customizing, or debugging the protocol — not during normal operation.
 │   └── archive/              # timestamped past handoffs
 ├── templates/
 │   └── AUTHORIZATION.md      # one stage = one authorization file
-├── protocol/VERSION          # PROTOCOL version (a semver stamp), not the skill's release version
+├── protocol/
+│   ├── VERSION               # PROTOCOL version (a semver stamp), not the skill's release version
+│   ├── MIGRATION.json        # written by `init_sync.py --migrate`: from, to,
+│   │                         # started, completed, files_touched[]
+│   └── MIGRATION.md          # the journal — names what a revert cannot undo
 ├── runtime/                  # machine-local, gitignored EXCEPT the lock
 │   ├── STATUS.json           # written only by checkpoint.py
 │   └── WRITER_LOCK.json      # advisory lock; tracked so it travels via git
@@ -227,9 +234,20 @@ never block, never write state files — hooks remind, the agent writes.
 ## Role policy (summary — full text in templates/ROLE_POLICY.md)
 
 **Recorded, not enforced.** The policy is installed as a required file, so the
-verifier can prove it is *missing*; nothing in wave 1a can prove a review
-happened, who performed it, or which model family they belonged to. The
-`protected_paths` coverage walk that would name uncovered commits is wave 1b.
+verifier can prove it is *missing*, and wave 1b adds `role policy integrity`:
+the file must digest to the `role_policy_sha256` pinned in
+`.ai/sync_config.json`, so rewriting the governance document shows up as a
+config diff a human reads. Neither check proves a review happened, who
+performed it, or which model family they belonged to — `executor`, `reviewer`,
+`executor_family` and `reviewer_family` are recorded and never gated (rule R5).
+What wave 1b does make **verifiable** is omission: `path coverage` walks
+`git log` over `protected_paths` in `governance.window_start_commit..HEAD` and
+names every touch that no accepted authorization's `## Editable files` covers;
+`pin violation` refuses a pin on `CURRENT.md` / `TASK.md` / `BLOCKERS.md` /
+`LATEST.md`; `swarm boundary` refuses more than one accepted authorization live
+at once. None of them detects a fabricated record, and every history question is
+three-valued — a shallow or indeterminate history halts with a named `[FAIL]`
+instead of certifying coverage.
 
 - **T1 ordinary**: no LLM review. **T2 protected** (freeze/hash/authorization/
   fail-closed paths): one cross-family reviewer, diff + hashes + targeted

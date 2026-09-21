@@ -1,5 +1,138 @@
 # Changelog
 
+## v2.1.0 — wave 1b (governance + migration), 2026-09-21
+
+Wave 1b ships the governance surface of spec §6 and the migration of spec §8 on
+top of wave 1a's correctness fixes. Canonical defect count for this release
+line, stated once and used everywhere: **27 found, 26 fixed in wave 1a, D14
+fixed in wave 1b**. The spec's §5 table
+(`docs/superpowers/specs/2026-09-21-cross-harness-sync-v2.1-design.md`) is the
+only authority for that number; no count in a commit message on this branch is
+quotable.
+
+### What is now shipped
+
+- **`.ai/state/authorizations/` has a canonical home.** `init_sync.py` installs
+  `INDEX.md` there, the required-file list names it, and `reference.md`'s layout
+  diagram has a slot for it — the three holes spec §6 recorded for v2.0, which
+  mandated "one stage = one authorization file" while giving instances nowhere
+  to live.
+- **Omission coverage walk** (`path coverage`): `protected_paths` comes from
+  config, and every commit in `governance.window_start_commit..HEAD` that
+  touches one must appear in some ACCEPTED authorization's own
+  `## Editable files` list. Two `git log` passes (non-merge `--full-history`,
+  merge `-m --first-parent`), `-z` raw bytes, and every history question
+  three-valued — `UNKNOWN` halts at a named FAIL instead of borrowing the line
+  an empty log would have printed. What this makes **verifiable** is *omission*:
+  a skipped or forgotten review survives in history for anyone who re-runs the
+  verifier. It does not detect a fabricated record, because nothing binds a
+  recorded name to an actual model invocation.
+- **Pin violation** (`pin violation`) — spec §6.1: an authorization that pins
+  `CURRENT.md`, `TASK.md`, `BLOCKERS.md` or `LATEST.md` is a FAIL. This is the
+  rule that came out of a real stall, and the only new check whose falsifiable
+  fact lies entirely inside the repo.
+- **Role-policy SHA integrity** (`role policy integrity`):
+  `.ai/state/ROLE_POLICY.md` is digested against the `role_policy_sha256`
+  pinned in `.ai/sync_config.json`, so rewriting the governance document now
+  requires a config edit — a diff a human actually reads. No digest pinned is
+  the named `SKIP(no-sha-pinned)`, never a PASS. Anchor-string grepping was
+  rejected for the reason spec §6.2 gives: it stays green while the rule body
+  is rewritten.
+- **N1 swarm gate** (`swarm boundary`): more than one ACCEPTED authorization
+  live in the window is a FAIL that names the files, because one stage = one
+  live authorization. The gate **names and refuses the configuration in the
+  report**; it does not prevent concurrent writes by an agent that never takes
+  the writer lock, which is and stays advisory.
+- **`checkpoint.py --review-prompt`**: the reviewer's read scope as one command —
+  the active authorization, the diff, and the verify output, under the banners
+  `== REVIEW PROMPT: AUTHORIZATION ==`, `== REVIEW PROMPT: DIFF ==`,
+  `== REVIEW PROMPT: VERIFY ==`, and nothing else.
+- **`init_sync.py --migrate`** (spec §8): the config keys, the role-policy pin,
+  the window anchor, the authorization index, a `.ai/protocol/MIGRATION.json`
+  record and a `.ai/protocol/MIGRATION.md` journal naming what a revert cannot
+  undo, committed under `chore(cross-harness-sync-migrate)`. A re-run verifies
+  and writes nothing.
+- **D14**: `fnmatch` case/separator normalisation behind the new config key
+  `protected_paths_case`, so a protected-path list means the same thing on a
+  case-insensitive host as on a case-sensitive one. The matcher the deferral
+  was waiting for now exists, which is what made the fix load-bearing.
+
+### Measured at `3546c08` on this host (Windows nt, Python 3.14.5)
+
+Every figure below was produced in one foreground session on 2026-09-21. Full
+output is in `.superpowers/sdd/2026-09-21-cross-harness-sync-v2.1-wave1b-governance-migration/evidence/`,
+and `b4-final-facts.md` beside it lists each number used in the docs.
+
+| Figure | Value |
+|---|---|
+| `python -m pytest tests/ -n 8 -o addopts=""` | `450 passed, 5 skipped in 43.29s` |
+| Fresh install into a temp git repo, then `sync_verify.py` | `== 20/24 checks passed, 4 skipped ==`, rc 0; the `[PASS]` lines hand-counted to 20, the `[SKIP]` lines to 4 |
+| The same repo carrying a **genuine v2.0.0 install** (scaffolded by the `e692e73` installer and committed), after `--migrate` | `== 21/24 checks passed, 3 skipped ==`, rc 0 — `role policy integrity` flips from SKIP to PASS |
+| A second `--migrate` on that repo | rc 0: `already migrated (2.0.0 -> 2.1.0); verifying the recorded state and writing nothing.` then 5 `[PASS] migrate verify …` lines; `git rev-parse HEAD` unchanged and `git rev-list --count HEAD` 3 → 3 |
+| That v2.0 install verified **before** any upgrade | `== 14/14 checks passed ==` — ten checks fewer than v2.1, and not one `[SKIP]` line |
+| Seeded: a commit touching `src/core/*`, zero authorizations | `[FAIL] path coverage: 1 uncovered of 1 protected touches: <0b30785e src/core/engine.py> …`, rc 1 |
+| Seeded: an ACCEPTED authorization whose list names a different path | the same `[FAIL] path coverage:` line, rc 1 — a record being present is not the same as it covering |
+| Seeded: an authorization that pins `CURRENT.md` | `[FAIL] pin violation: 1 forbidden pin(s): … pins CURRENT.md …`, rc 1 |
+| Seeded: two ACCEPTED authorizations live at once | `[FAIL] swarm boundary: 2 concurrent accepted authorizations (…): SKILL.md declares concurrent swarms out of scope, and one stage = one live authorization`, rc 1 |
+| Shallow history | a real `git clone --depth 1 file://…` **on this nt host**: `[FAIL] path coverage: shallow/indeterminate history (true): the bounded walk cannot certify coverage of window f2b030fe..HEAD`, rc 1 |
+| `is_shallow → UNKNOWN` | not reproducible with a real clone here; measured through B1's monkeypatched parametrization `tests/test_coverage_walk.py::test_the_shallow_or_indeterminate_halt_is_pinned_on_this_host[TRUE-True]` / `[UNKNOWN-True]` / `[FALSE-False]`, 3 passed. B1's real-clone test `test_a_real_shallow_clone_halts_the_walk` skips on this host with `posix-only test, running on nt` and is CI-gated; the manual clone above is the host-local substitute. |
+| Dogfood in a throwaway clone of this repo (§10.D) | `== 23/24 checks passed, 1 skipped ==` with `[PASS] path coverage: 0 protected touches covered`, `[PASS] pin violation: 1 authorization record(s), no state file pinned`, `[PASS] role policy integrity: .ai/state/ROLE_POLICY.md digests to the pinned 03f80ef0…`, `[PASS] swarm boundary: 1 accepted authorization(s) of 1 record(s) in the window` |
+
+A default install is `== 20/24 checks passed, 4 skipped ==`, not 24/24. The four
+named skips are `registered project checks`, `path coverage`
+(`SKIP(no-protected-paths)`), `pin violation` (`SKIP(no-authorizations)`) and
+`role policy integrity` (`SKIP(no-sha-pinned)`), and each says which of the two
+possible reasons it took. `rc == 0` remains a verdict you may not stop reading
+at.
+
+### Release notes
+
+**A genuine v2.0.0 install's first `--migrate` is not a silent refresh, and
+what it prints depends on whether the install is in HEAD.** Both branches
+measured:
+
+- `.ai/scripts/` committed and byte-identical to the released v2.0 blobs → the
+  scripts are refreshed and each replacement is named, e.g. `NOTE replaced:
+  .ai/scripts/checkpoint.py (HEAD is the released v2.0.0 blob, so no hand edit
+  is in the line being overwritten) - \`git diff HEAD^
+  .ai/scripts/checkpoint.py\` names what went`. No `.new` sidecar.
+- `.ai/scripts/` not in HEAD — never committed, or hand-edited; from inside the
+  repo the two cannot be told apart — is the fail-safe branch: one
+  `[WARN] preserved customised script:` line per script, the shipped copy
+  written beside it as `.ai/scripts/checkpoint.py.new` and
+  `sync_verify.py.new`, and the install left running the OLD verifier. Its
+  report then stays `== 14/14 checks passed ==` after a migration that exited 0
+  — ten v2.1 checks never ran, including all four governance checks. Review the
+  sidecars and replace them by hand, then re-run `--migrate`; read
+  `MIGRATION.md`, which names what a revert cannot undo.
+
+**`--migrate` exits 2 when git is unreachable** instead of guessing whether the
+tree is a repository: `MIGRATE REFUSED: git could not be asked what this tree's
+HEAD is, so this run cannot tell a repository from a plain directory - and the
+two answers send the migration in opposite directions`, with the actionable line
+`` `git` is not on PATH, so this tree's history cannot be read at all `` and
+`Nothing was written: this run made no change to the install, the index, the
+config, or the history.` The same refusal (rc 2, nothing written) applies while
+another agent holds the writer lock: `--migrate` takes its own
+`init-sync-migrate` lock identity, so the agent holding the pen blocks the
+migration on purpose.
+
+### Limitation F7 — the version witness is self-referential
+
+`.ai/protocol/VERSION` and the `PROTOCOL_VERSION` constant compiled into the
+installed `checkpoint.py` / `sync_verify.py` are two files in the same tree an
+agent can edit. Editing the stamp and the installed constant **together**
+re-certifies the `protocol version matches installed scripts` line: there is no
+signing key and nothing outside the checkout to corroborate against. The same
+applies across the whole governance surface — `executor:` and `reviewer:` are
+recorded strings, and `role_policy_sha256` only proves the document matches the
+digest the config itself carries, so pinning and record can be edited as a pair.
+A cross-model review of this protocol's own history is therefore
+**corroborating, not proof**: it catches omission and accident, and it cannot
+catch a coordinated edit. Spec §2 and §11 state this as the design stance; §11's
+open risk is precisely that closing it needs something outside the repo (an
+optional attestation with keys and an operator), which wave 1 excludes.
+
 ## v2.1.0 — wave 1a (defect fixes), 2026-09-21
 
 Wave 1a is a correctness release: it fixes defects in the v2.0 scripts rather
@@ -65,7 +198,7 @@ installed that file. The blast radius is wider than the plan originally said —
 `checkpoint.py` too, not only `sync_verify.py` — and it includes private repos
 the owner never re-runs the installer on.
 
-The workaround that exists today is one command per install:
+The wave-1a-era workaround was one command per install:
 
 ```bash
 python scripts/init_sync.py <repo> --scripts-only
@@ -78,7 +211,8 @@ with a `NOTE replaced:` line, and touches no state file, no `sync_config.json`,
 no template, no `AGENTS.md` and no `CLAUDE.md`. It needs no `--force` and leaves
 `.gitignore` consistent — but it is a refresh, **not** a migration: no
 `MIGRATION.json`, no window-start commit, no reconciliation of hand-customized
-scripts, no authorization-directory discovery. Those are wave 1b's `--migrate`.
+scripts, no authorization-directory discovery. Those are exactly what wave 1b's
+`--migrate` now ships — see the wave-1b section above.
 
 ### What changed (user-visible)
 
@@ -153,18 +287,19 @@ report read clean, in the quickstart, in the managed block installed into every
 with the gate that can actually be met: no `FAILED:` line, a named `[SKIP]`
 acceptable, silence not.
 
-### What is deliberately deferred to wave 1b
+### What wave 1a deferred — and what has since landed
 
-- **`--migrate`** (§8): the migration record, the window-start commit,
-  customized-script reconciliation, authorization-directory discovery. Until
-  then the breaking change above stands.
-- **D14** — `fnmatch` case/separator normalisation. Deferred because the
-  glob-matching code it applies to (`protected_paths`) does not exist yet;
-  fixing a matcher nobody calls would be a number, not a fix.
-- **The `protected_paths` coverage walk** (§6.2) and `checkpoint.py
-  --review-prompt`. This is the headline scope of the project — path-scoped
-  independent review where CODEOWNERS and Gerrit structurally cannot exist — and
-  it is *not in this release*. Do not read the release notes as if it were.
+- **Shipped by wave 1b** (see the section above for each one's measured
+  output): **`--migrate`** (§8) with its migration record, window-start commit,
+  customized-script reconciliation and authorization-directory discovery;
+  **D14**, the `fnmatch` case/separator normalisation, which needed the
+  `protected_paths` matcher to exist first; and **the `protected_paths` coverage
+  walk** (§6) plus `checkpoint.py --review-prompt` — the headline scope of the
+  project, path-scoped independent review where CODEOWNERS and Gerrit
+  structurally cannot exist. The two install rows in the table at the top of
+  this section are wave-1a measurements of the wave-1a tree; a wave-1b default
+  install prints `== 20/24 checks passed, 4 skipped ==`, and the same install
+  after `--migrate` prints `== 21/24 checks passed, 3 skipped ==`.
 - **Cross-machine verification.** The two-clone acceptance in
   `tests/test_second_machine.py` varies git author identity, HOME, and a
   registered `secret_mirrors` pair across a push/pull on one host; it is not
@@ -184,9 +319,11 @@ acceptable, silence not.
 state file, a line budget, a secret-ignore rule or a tracked placeholder is
 missing; those go red on every run until fixed, and that part is enforced. It
 cannot prove a review happened, that a recorded agent identity is honest, or that
-a handoff describes work that occurred. The role policy, the T1/T2/T3 review
-tiers and writer discipline are **recorded** — installed, existence-checked, and
-nothing more. A future coverage walk over declared paths would still be bounded
-by repository history availability, and would still be unable to bind a recorded
-name to a model invocation without a server; that limit is the design stance,
-not a missing feature.
+a handoff describes work that occurred. The T1/T2/T3 review tiers and writer
+discipline are **recorded** — installed, existence-checked, digested against the
+pinned `role_policy_sha256`, and nothing more. The wave-1b coverage walk over
+declared paths is bounded by repository history availability — a shallow or
+indeterminate history halts with a named FAIL rather than certify coverage —
+and it remains unable to bind a recorded name to a model invocation without a
+server, or to survive a coordinated edit of the record and its witness (limitation
+F7 above). That limit is the design stance, not a missing feature.
