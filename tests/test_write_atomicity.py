@@ -15,6 +15,7 @@ transiently, so both go through one bounded retry.
 import importlib.util
 import json
 import os
+import re
 import shutil
 import sys
 from concurrent.futures import ThreadPoolExecutor
@@ -122,6 +123,35 @@ def test_concurrent_status_writes_leave_valid_json(tmp_path):
     already refused it. The fixture is therefore a real repository, which is what
     every other state-writing test in this suite already runs against; the local
     import keeps this file's import block untouched.
+
+    WHAT THIS TEST DELIBERATELY DOES NOT PROVE: that eight concurrent checkpoints
+    make eight checkpoints. `runtime/STATUS.json` is machine-local, untracked and
+    last-writer-wins by design — `checkpoint.py`'s `_write_json_if_unchanged`
+    names it as the one state file outside compare-and-write, and the read-modify-
+    write in `cmd_checkpoint` has no arbitration. Measured over 5 rounds of this
+    exact fixture at `ef749b9` (Windows, cp936 console): final
+    `checkpoint_count` = 1, 2, 2, 2, 1 with every rc 0 each round, i.e. 6-7 of
+    the 8 updates lost per round. Losing updates locally is the expected
+    behaviour, so this test does not assert `== 8` — that would pin a property
+    the design does not offer — and it no longer asserts the `>= 1` floor it
+    used to carry, which could not fail: if any writer succeeded the survivor is
+    `>= 1`, and if none did the all-rc-0 assertion below fires first.
+
+    What it does assert is the atomicity law the fix was for, per process rather
+    than across them: each writer emits exactly one complete record for itself
+    (`--agent`/`--task` name it, `Checkpoint #N` prints the count it computed),
+    and the file left on disk is ONE writer's own complete result — its
+    `checkpoint_count`, `active_agent` and `current_task` all belong to the same
+    writer, so a value assembled from two partial writes fails the cross-check
+    even when it still parses.
+
+    Sensitivity, measured in a copy (probes in `lane-Y-report.md`): the
+    misattribution mutant (the survivor carries a count and an agent no single
+    writer produced) turns this test RED; the earlier mutants of this class —
+    `write_json` back to a plain in-place write (RED 3/3) and to
+    copy+unlink-instead-of-`os.replace` — are caught at the all-rc-0 gate or not
+    at all at this payload size, so the cross-check is the last line of defence
+    rather than the only one. The `>= 1` floor it replaces was not even that.
     """
     from helpers import make_repo
     root = make_repo(tmp_path)
@@ -136,19 +166,45 @@ def test_concurrent_status_writes_leave_valid_json(tmp_path):
 
     def one(i):
         # run_python, not a hand-rolled subprocess: the hermetic env is applied
-        # for us and cannot be forgotten here.
-        results.append(run_python(ai / "checkpoint.py", ["--agent", f"a{i}"],
-                                  cwd=root))
+        # for us and cannot be forgotten here. Each writer signs its own record
+        # so the survivor can be traced back to the process that wrote it.
+        results.append((i, run_python(ai / "checkpoint.py",
+                                      ["--agent", f"a{i}", "--task", f"t{i}"],
+                                      cwd=root)))
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         list(pool.map(one, range(8)))
 
-    data = json.loads(target.read_text("utf-8-sig"))
-    assert data["checkpoint_count"] >= 1, data
-    failed = [f"rc={r.rc} stderr-tail:\n{r.stderr.strip()[-500:]}"
-              for r in results if r.rc]
+    failed = [f"a{i}: rc={r.rc} stderr-tail:\n{r.stderr.strip()[-500:]}"
+              for i, r in results if r.rc]
     assert not failed, f"{len(failed)} of {len(results)} writers failed:\n{failed}"
-    assert any("Checkpoint #" in r.stdout for r in results), \
-        [r.stdout + r.stderr for r in results]
+    assert len(results) == 8, results
+
+    # Per-process distinctness: one writer, one record, one count of its own.
+    # `any(...)` over the eight stdouts — what this used to be — is always true
+    # once every rc is 0, so it proved nothing; this fails if any writer prints
+    # nothing, prints the record twice, or prints a count that is not its own.
+    own_record = {}
+    for i, r in results:
+        marks = re.findall(r"^Checkpoint #(\d+) at ", r.stdout, re.M)
+        assert len(marks) == 1, (f"writer a{i} emitted {len(marks)} checkpoint "
+                                 f"records, expected exactly 1", r.stdout)
+        own_record[f"a{i}"] = {"checkpoint_count": int(marks[0]),
+                              "current_task": f"t{i}"}
+
+    data = json.loads(target.read_text("utf-8-sig"))
+    survivor = data.get("active_agent")
+    assert survivor in own_record, (f"the surviving STATUS.json names "
+                                    f"{survivor!r}, which is not one of this "
+                                    f"run's writers", data, own_record)
+    expected = own_record[survivor]
+    assert data["checkpoint_count"] == expected["checkpoint_count"], (
+        f"torn result: the file pairs {survivor}'s identity with checkpoint "
+        f"#{data['checkpoint_count']}, but {survivor} printed "
+        f"#{expected['checkpoint_count']}", data, own_record)
+    assert data.get("current_task") == expected["current_task"], (
+        f"torn result: the file pairs {survivor}'s identity with task "
+        f"{data.get('current_task')!r}, not {expected['current_task']!r}",
+        data, own_record)
     temps = [p.name for p in target.parent.iterdir() if p.name.endswith(".tmp")]
     assert temps == [], f"write_json leaked temp files: {temps}"

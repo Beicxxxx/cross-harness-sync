@@ -200,10 +200,24 @@ def test_verifier_outside_a_repository_prints_only_ascii(installed_without_git):
 
 def test_lock_refusal_outside_a_repository_prints_only_ascii(
         installed_without_git):
+    """The refusal is prose, and it has to still BE a refusal to count here.
+
+    This test used to assert only "wrote something" + ASCII, which the acquire
+    path satisfies just as well: switching the layout gate off makes `--lock`
+    print "Writer lock acquired" and stay green, so nothing here pinned the
+    refusal at all. The rc and the marker are now asserted, the same way the
+    sibling verifier test above asserts its own refusal ran.
+    """
     repo = installed_without_git
     res = run_python(repo / ".ai" / "scripts" / "checkpoint.py",
                      ["--lock", "--agent", "lane-h"], cwd=repo)
-    assert res.stdout.strip(), "the refusal wrote nothing"
+    out = res.stdout
+    assert res.rc == 1, f"the lock was not refused (rc {res.rc}):\n{out[:400]}"
+    assert "REFUSED" in out, f"the refusal did not run: {out[:400]!r}"
+    assert "outside-repo" in out or "not determined" in out, (
+        f"the refusal did not name the layout it refused: {out[:400]!r}")
+    assert not (repo / ".ai" / "runtime" / "WRITER_LOCK.json").exists(), \
+        "a refused --lock still wrote a lock record"
     _assert_output_is_ascii(res, "checkpoint.py --lock outside a repository")
 
 

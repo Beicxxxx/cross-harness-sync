@@ -444,6 +444,13 @@ def test_verifier_surfaces_a_raw_nonascii_path(walked, sv):
 def test_text_capture_goes_blind_on_a_byte_the_host_codec_rejects():
     """Same shape as the codec test below: the crash is the finding.
 
+    HOST PROBE, NOT A FIX PIN. The `text=True` capture built here is this test's
+    own (`LEGACY_KW`), never a shipped script's, so no revert of any file under
+    `scripts/` can redden it — it documents CPython's blindness, which is D5's
+    premise. The D5 evidence is `test_verifier_surfaces_a_raw_nonascii_path`
+    above, which a revert of `run_argv` back to `text=True` does turn red. Do
+    not count this one among the fixes.
+
     This test asserts that the legacy `text=True` capture goes BLIND — rc 0
     with `stdout is None` — which can only happen because the reader thread
     died in this process, and pytest reports that death as
@@ -475,6 +482,12 @@ def test_text_capture_goes_blind_on_a_byte_the_host_codec_rejects():
 @pytest.mark.parametrize("codec", ["cp936", "shift_jis", "big5"])
 def test_the_hazard_does_not_depend_on_the_host_codepage(monkeypatch, codec):
     """The reader-thread crash IS the assertion, not something suppressed.
+
+    HOST PROBE, NOT A FIX PIN: like the test above, this exercises `text=True`
+    that the test itself passes to `subprocess.run`, so no revert of a shipped
+    file can redden it. It exists to show the blindness is the codec-independent
+    shape of D5, not a quirk of this console. D5's pin stays
+    `test_verifier_surfaces_a_raw_nonascii_path`.
 
     With `text=True` and a child byte the host codec rejects, CPython's
     subprocess _readerthread dies inside THIS process. pytest surfaces that as

@@ -155,7 +155,16 @@ def test_the_raise_is_idempotent_across_reinstalls(repo):
 
 def test_no_budget_change_when_the_full_template_is_installed(repo):
     """No block was added, so nothing may be excused: a repo with no AGENTS.md
-    gets the template (59 lines) under the shipped 65-line cap."""
+    gets the template (61 lines, measured from `templates/agents.md` at
+    `ef749b9`) under the shipped 65-line cap.
+
+    Nothing pins that 61 — deliberately. The protection is indirect and it is
+    real: this test installs the shipped template and requires `[PASS] budget
+    AGENTS.md` at rc 0, so any edit that pushes the template past the 65-line
+    default turns a permanent red on every install, with 4 lines of headroom.
+    A literal length assertion here would only add a second thing to update
+    when the template legitimately changes.
+    """
     res = scaffold(repo)
     assert res.rc == 0, res.stdout + res.stderr
     assert budgets(repo).get("AGENTS.md") == OWN_AGENTS_CAP, budgets(repo)
