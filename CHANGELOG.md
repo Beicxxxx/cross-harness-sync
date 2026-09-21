@@ -57,7 +57,7 @@ quotable.
   case-insensitive host as on a case-sensitive one. The matcher the deferral
   was waiting for now exists, which is what made the fix load-bearing.
 
-### Measured at `3546c08` on this host (Windows nt, Python 3.14.5)
+### Measured at `3546c08` and re-measured at HEAD, on this host (Windows nt, Python 3.14.5)
 
 Every figure below was produced in one foreground session on 2026-09-21, and
 each one is re-measurable from a clone: the log-by-log detail is in
@@ -68,7 +68,7 @@ which is gitignored and therefore is not evidence a reader can reach.
 
 | Figure | Value |
 |---|---|
-| `python -m pytest tests/ -n 8 -o addopts=""` | `450 passed, 5 skipped in 43.29s` at `3546c08`; `479 passed, 5 skipped in 47.19s` at this commit (29 test cases added for the three false-greens below, each red-first), with the same 5 POSIX-only skips |
+| `python -m pytest tests/ -n 8 -o addopts=""` | `450 passed, 5 skipped` at `3546c08`. The first fix commit for the three false-greens below, `9937e0a`, measured **`2 failed, 477 passed, 5 skipped`**: the tracked evidence file it added quoted the two D25/D26 grep patterns verbatim and tripped the two wording guards that scan `docs/` outside `docs/superpowers/` (see §6 of that file for why the patterns cannot be typed here). At HEAD, after that and the `void-check-unavailable` fix: `480 passed, 5 skipped`, same 5 POSIX-only skips, 30 test cases added for the three false-greens plus one more for the arm the re-review caught, each red-first |
 | Fresh install into a temp git repo, then `sync_verify.py` | `== 20/24 checks passed, 4 skipped ==`, rc 0; the `[PASS]` lines hand-counted to 20, the `[SKIP]` lines to 4. Re-measured at this commit after the B5 fixes: the same line, the same rc |
 | The same repo carrying a **genuine v2.0.0 install** (scaffolded by the `e692e73` installer and committed), after `--migrate` | `== 21/24 checks passed, 3 skipped ==`, rc 0 — `role policy integrity` flips from SKIP to PASS |
 | A second `--migrate` on that repo | rc 0: `already migrated (2.0.0 -> 2.1.0); verifying the recorded state and writing nothing.` then 5 `[PASS] migrate verify …` lines; `git rev-parse HEAD` unchanged and `git rev-list --count HEAD` 3 → 3 |
@@ -78,6 +78,7 @@ which is gitignored and therefore is not evidence a reader can reach.
 | Seeded: an authorization that pins `CURRENT.md` | `[FAIL] pin violation: 1 forbidden pin(s): … pins CURRENT.md …`, rc 1 |
 | Seeded: two ACCEPTED authorizations live at once | `[FAIL] swarm boundary: 2 concurrent accepted authorizations (…): SKILL.md declares concurrent swarms out of scope, and one stage = one live authorization`, rc 1 |
 | Shallow history | a real `git clone --depth 1 file://…` **on this nt host**: `[FAIL] path coverage: shallow/indeterminate history (true): the bounded walk cannot certify coverage of window f2b030fe..HEAD`, rc 1 |
+| The void check itself cannot answer (`git ls-files` fails on a governed tree whose window is quiet) | `[WARN] path coverage: the registered set could not be matched against the tracked files (…)` then `[SKIP] path coverage: SKIP(void-check-unavailable): …`, and no `[PASS] path coverage:` line at all. Before this commit's fix the same tree printed `[PASS] path coverage: 0 protected touches covered`, rc 0 — the degradation-reading-as-a-verdict shape §4 forbids, caught by the re-review of the commit that fixed the two above rather than by its author |
 | `is_shallow → UNKNOWN` | not reproducible with a real clone here; measured through B1's monkeypatched parametrization `tests/test_coverage_walk.py::test_the_shallow_or_indeterminate_halt_is_pinned_on_this_host[TRUE-True]` / `[UNKNOWN-True]` / `[FALSE-False]`, 3 passed. B1's real-clone test `test_a_real_shallow_clone_halts_the_walk` skips on this host with `posix-only test, running on nt` and is CI-gated; the manual clone above is the host-local substitute. |
 | Dogfood in a throwaway clone of this repo (§10.D) | `== 23/24 checks passed, 1 skipped ==` with `[PASS] path coverage: 0 protected touches covered`, `[PASS] pin violation: 1 authorization record(s), no state file pinned`, `[PASS] role policy integrity: .ai/state/ROLE_POLICY.md digests to the pinned 03f80ef0…`, `[PASS] swarm boundary: 1 accepted authorization(s) of 1 record(s) in the window` |
 

@@ -15,7 +15,9 @@ Host for all rows: Windows nt, Python 3.14.5, pytest 9.1.1, xdist 3.8.0, git
 | F1 | `python -m pytest tests/ -n 8 -o addopts=""` at `3546c08` | `450 passed, 5 skipped` |
 | F2 | same command, after the wave-1b doc edits at `3546c08` | `450 passed, 5 skipped` (elapsed differed; elapsed is host load and is not quoted as a fact) |
 | F3 | `python -m pytest tests/test_coverage_walk.py::test_the_shallow_or_indeterminate_halt_is_pinned_on_this_host tests/test_coverage_walk.py::test_a_real_shallow_clone_halts_the_walk -n 0 -o addopts="" -v -rs` | `[TRUE-True] PASSED`, `[UNKNOWN-True] PASSED`, `[FALSE-False] PASSED`, `test_a_real_shallow_clone_halts_the_walk SKIPPED` (`posix-only test, running on nt`), `3 passed, 1 skipped` |
-| F4 | B5 fixes, same command as F1 | `479 passed, 5 skipped in 47.19s` (`created: 8/8 workers`, `8 workers [484 items]`): 450 → 479 is the 29 red-first cases §5 lists, and the 5 skips are the same POSIX-only set as F1 |
+| F4 | same command, at `9937e0a` (the first fix wave for the three false-greens in §5) | **`2 failed, 477 passed, 5 skipped`** — the two failures were `test_no_milestones_references_remain` and `test_d26_unit_claim_is_clean_outside_templates`, and this file caused both: it quoted the two grep patterns verbatim, and `docs/evidence/` is scanned by both guards. Recorded rather than edited away because a published number that hides a red run is the thing §4 is about |
+| F5 | same command, at HEAD after the §5 I-2c fix and the de-quoting of §6 below | `480 passed, 5 skipped` (`42-49s` depending on host load): 450 → 480 is the 29 red-first cases §5 lists for I-1/I-2/I-4 plus the one case for I-2c, and the 5 skips are the same POSIX-only set as F1 |
+
 
 The 5 skips at F1/F2 are the POSIX-only tests named by their markers; the count
 `450` is test FUNCTIONS, so a parametrized case counts once per parameter set
@@ -94,11 +96,25 @@ foreground session on this host.
 | I-2 | `protected_paths: ["SRC/*"]`, `protected_paths_case: "case-insensitive"`, commit touching `src/engine.py`, no covering authorization: `[PASS] path coverage: 0 protected touches covered`, rc 0 | `[FAIL] path coverage: 1 uncovered of 1 protected touches: <… src/engine.py>`, rc 1 — the candidate set now goes to git as `:(icase)SRC/*`. Pinned by `test_case_insensitive_policy_reaches_the_candidate_set` (red pre-fix) with `test_case_insensitive_policy_covers_once_the_record_says_so` as the green control |
 | I-2b | a protected set matching no tracked file at all: `[PASS] path coverage: 0 protected touches covered`, rc 0 | `[WARN] path coverage: no tracked file matches any registered protected_paths pattern(s) …` plus `SKIP(void-protected-set)`. Pinned by `test_a_protected_set_matching_no_tracked_file_is_a_named_warn` (red pre-fix) with `test_a_protected_set_that_does_match_tracked_files_books_the_pass` as the control that still books the PASS |
 | I-4 | two flat accepted records + one nested: `sync_verify` counted **3** (`[FAIL] swarm boundary: 3 concurrent accepted authorizations (…, sub/nested-stage.md)`) while `--review-prompt` printed `[AMBIGUOUS AUTHORIZATION] 2 accepted records`. Measured directly on the pre-fix `HEAD` scripts copied into a throwaway install | both readers now use `ai_common.authorization_records()`: the verifier counts 2 and the prompt names the same 2, and the nested record counts for nothing in either. Pinned by `tests/test_review_prompt.py::test_the_verifier_and_the_review_prompt_see_the_same_records` plus `tests/test_authorization_records.py::test_the_record_walk_is_flat_and_keeps_the_index_out` |
+| I-2c | found by the re-review of the wave that fixed I-1/I-2, not by its implementer: when the void check itself could not answer (a `git ls-files` that times out or cannot read the index) the walk printed its `[WARN]` and fell through to `[PASS] path coverage: 0 protected touches covered`, rc 0 — a degradation reading as a verdict, which 4 forbids and `_protected_set_is_void`'s own docstring disclaims | `[WARN] …` plus `SKIP(void-check-unavailable): …`, and the line is never booked as a PASS. Pinned by `test_an_indeterminate_void_check_cannot_book_the_pass`, mutation-checked by reverting the arm: the test then fails on exactly `[PASS] path coverage: 0 protected touches covered`. `test_a_protected_set_that_does_match_tracked_files_books_the_pass` is the unpatched control that still earns the PASS |
+
 
 ## 6. The greps, stated as measured
 
-`git grep -n "MILESTONES" -- .` returns 7 lines and `git grep -n "token budget"
--- .` returns 5. All 12 are inside `docs/superpowers/` — the prose that names the
-defect (D25/D26) and the §10.E acceptance line. A repo-wide grep is therefore NOT
-empty and no doc claims it is; 0 hits exist in any shipped surface (`scripts/`,
-`templates/`, `SKILL.md`, `README.md`, `reference.md`, `CHANGELOG.md`).
+Two greps decide whether D25 and D26 are fixed. Neither can be typed verbatim into
+a tracked document without becoming its own hit — the same reason
+`tests/test_version_and_naming.py` builds its pattern as `"MILE" + "STONES"` and
+`tests/test_doc_wording.py` as `"token " + "budget"` — so they are named here by
+what they match: the status file D25 deleted, and the two-word name the caps
+carried before D26 renamed them to line budgets.
+
+Measured on this tree, `git grep -n <pattern> -- .` returns 7 lines for the first
+and 5 for the second. All 12 are inside `docs/superpowers/` — the prose that names
+each defect and the §10.E acceptance line, which is the only place a copy of the
+patterns has to live. That leaves 0 hits in every shipped surface (`scripts/`,
+`templates/`, `SKILL.md`, `README.md`, `reference.md`, `CHANGELOG.md`), and 0 in
+this file, which the two enforcing guards (`test_no_milestones_references_remain`,
+`test_d26_unit_claim_is_clean_outside_templates`) do scan: both exclude
+`docs/superpowers/` and neither excludes `docs/evidence/`, which is why this
+section describes the patterns instead of quoting them. A repo-wide grep is
+therefore NOT empty and no doc claims it is.

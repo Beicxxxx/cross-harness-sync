@@ -1234,6 +1234,19 @@ def check_coverage_walk(cfg: dict) -> None:
             print(f"[WARN] path coverage: the registered set could not be "
                   f"matched against the tracked files ({void_why}), so this "
                   f"line certifies coverage of nothing it confirmed exists")
+            # Re-review NEW-1: this arm printed the WARN and then fell through to
+            # the PASS two blocks below, so a `git ls-files` that timed out or
+            # could not read the index produced
+            # `[PASS] path coverage: 0 protected touches covered` at rc 0 -- the
+            # shape 4 forbids, and the reverse of what `_protected_set_is_void`
+            # 's docstring promises. Not knowing whether the registered set is
+            # empty is a different fact from the window being quiet, and only the
+            # second one would be a pass.
+            record("path coverage", None,
+                   f"SKIP(void-check-unavailable): {void_why} -- the walk saw "
+                   f"no protected touch and the registered set could not be "
+                   f"shown non-empty either, so this line is not evidence")
+            return
         elif void:
             print(f"[WARN] path coverage: no tracked file matches any of the "
                   f"{len(paths)} protected_paths pattern(s), so the walk has no "

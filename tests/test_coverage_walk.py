@@ -575,3 +575,50 @@ def test_a_protected_set_that_does_match_tracked_files_books_the_pass(ai_repo, s
                for ln in res.lines), res.lines
 
 
+def test_an_indeterminate_void_check_cannot_book_the_pass(ai_repo, sv_mod,
+                                                          monkeypatch, capsys):
+    """If git cannot say whether the protected set is empty, the walk does not get
+    to answer "covered" either.
+
+    Final-review re-review NEW-1: this arm printed its `[WARN]` and fell through
+    to the PASS below it, so a `git ls-files` that timed out or could not read the
+    index booked `[PASS] path coverage: 0 protected touches covered` at rc 0 —
+    spec 4's forbidden shape, and the same empty-window that the void-set test
+    above SKIPs by name. The control is that same tree unpatched, which DOES pass:
+    only the probe's answer changed.
+    """
+    (ai_repo / "src").mkdir()
+    (ai_repo / "src" / "engine.py").write_text("x = 1\n", encoding="utf-8")
+    git(ai_repo, "add", "-A")
+    git(ai_repo, "commit", "-q", "-m", "the governed file, landed before the window")
+    window = git(ai_repo, "rev-parse", "HEAD")
+    cfg = sv_mod.load_config(sv_mod.AI_DIR / "sync_config.json")[0]
+    cfg["protected_paths"] = ["src/*"]
+    cfg["protected_paths_case"] = "case-sensitive"
+    cfg["governance"] = {"window_start_commit": window}
+    sv_mod.RESULTS.clear()
+
+    real_run_git = sv_mod.ai_common.run_git
+
+    def failing_ls_files(root, args, **kw):
+        if args and args[0] == "ls-files":
+            return sv_mod.ai_common.GitResult(
+                rc=128, stdout=b"",
+                stderr=b"unable to read index: simulated", timed_out=False)
+        return real_run_git(root, args, **kw)
+
+    monkeypatch.setattr(sv_mod.ai_common, "run_git", failing_ls_files)
+
+    sv_mod.check_coverage_walk(cfg)
+
+    printed = capsys.readouterr().out.splitlines()
+    assert not [ln for ln in printed if ln.startswith("[PASS] path coverage:")], \
+        printed
+    assert any(ln.startswith("[WARN] path coverage:") for ln in printed), printed
+    assert len(sv_mod.RESULTS) == 1, sv_mod.RESULTS
+    name, ok, evidence = sv_mod.RESULTS[0]
+    assert (name, ok) == ("path coverage", None), sv_mod.RESULTS
+    assert "void-check-unavailable" in evidence, evidence
+    assert "unable to read index" in evidence, evidence
+
+
