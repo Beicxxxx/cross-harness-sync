@@ -9,7 +9,7 @@ Before any work, in order:
    harnesses (`CLAUDE.md` is only a pointer to it). Follow its L0/L1/L2 layered
    reading rules and token budgets.
 3. Startup reads are exactly three files: `.ai/state/CURRENT.md`, `TASK.md`,
-   `BLOCKERS.md`. Do NOT read DECISIONS / MILESTONES / handoff archives in full;
+   `BLOCKERS.md`. Do NOT read DECISIONS / handoff archives in full;
    retrieve single entries via `DECISIONS_INDEX.md` or grep.
    Shortcut: `python .ai/scripts/checkpoint.py --prime` shows lock status and
    the read list.

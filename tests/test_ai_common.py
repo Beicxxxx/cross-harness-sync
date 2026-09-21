@@ -459,7 +459,13 @@ def test_status_sweep(ai_repo, cp):
 def test_prime_sweep(ai_repo, cp):
     res = run_python(cp, ["--prime"], cwd=ai_repo)
     assert res.rc == 0, res.stdout + res.stderr
-    assert "== SESSION PRIME (cross-harness-sync v2.0.0) ==" in res.stdout, res.stdout
+    stamped = (ai_repo / ".ai" / "protocol" / "VERSION").read_text("utf-8").strip()
+    assert stamped and stamped != "unknown", res.stdout
+    # Lane T11 (D22): this line pinned the literal `v2.0.0`, i.e. the number
+    # the defect was about. The header now has to agree with the install's
+    # OWN stamp, which is the fact worth keeping true.
+    header = f"== SESSION PRIME (cross-harness-sync v{stamped}) ==  "
+    assert header.rstrip() in res.stdout, res.stdout
     assert "READ NOW (L0, in order, nothing else at startup):" in res.stdout, res.stdout
 
 

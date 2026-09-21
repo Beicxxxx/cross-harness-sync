@@ -111,7 +111,7 @@ def test_a_null_budget_entry_is_an_explicit_opt_out():
 def test_the_nulled_set_is_the_only_trace_an_opt_out_learns_about():
     """Finding 5: the checks read the MERGED dict, in which a declined cap and a
     cap that was never there look identical. `nulled` is what lets
-    `check_token_budgets` tell a considered act from a deleted template line."""
+    `check_line_budgets` tell a considered act from a deleted template line."""
     merged, nulled = sync_verify.merge_config(
         {"budgets": {"AGENTS.md": 65, "a": 1}},
         {"budgets": {"AGENTS.md": None, "b": 5}})

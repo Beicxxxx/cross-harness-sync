@@ -439,7 +439,7 @@ def test_the_import_refusal_carries_only_ascii_characters():
 
 def test_a_run_that_declines_every_cap_leaves_only_skip_traces(ai_repo, sv):
     """Finding 1 (HIGH): `{"budgets": {<each floor name>: null}}` measured ZERO
-    token budgets and printed five `[PASS] cap opt-out ...` lines -- the same
+    line budgets and printed five `[PASS] cap opt-out ...` lines -- the same
     line count as a healthy run -- at rc 0. Spec 4: a degradation may be a WARN
     or a SKIP, never a PASS."""
     cfg = json.loads((ai_repo / _CONFIG_REL).read_text("utf-8"))
@@ -490,7 +490,7 @@ def test_a_check_that_raises_is_named_and_the_rest_of_the_run_survives(ai_repo, 
     # The OS error for "read a directory" is host-dependent
     # (`IsADirectoryError` on POSIX, `PermissionError [WinError 5]` here), so
     # the pin is that the crash was CONTAINED AND NAMED, not its class name.
-    assert any(ln.startswith("[FAIL] token budgets check:")
+    assert any(ln.startswith("[FAIL] line budgets check:")
                and "check raised" in ln for ln in res.lines), res.lines
     assert [ln for ln in res.lines if "checks passed" in ln], res.lines
     assert any(ln.startswith("[PASS] registered project checks:")

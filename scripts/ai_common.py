@@ -55,6 +55,71 @@ DEFAULT_REQUIRED_FILES = [
     ".ai/protocol/VERSION",
 ]
 
+# The governance floor under the required-file list, living next to the list it
+# protects. `required_files` merges by REPLACE — which is what lets a repo with
+# no decision log say so — and a replace is also one key away from dropping the
+# files nothing else checks. Spec 4 lets a check be skipped only after proving
+# necessity elsewhere, and at this HEAD nothing else covers these five:
+# `protocol/VERSION` is in no other list at all. So the floor is unioned back in
+# after the merge, and unlike the rest of that key it is NOT configurable: config
+# may add requirements and may drop the optional tail (DECISIONS, DECISIONS_INDEX,
+# LATEST), nothing more.
+#
+# It moved here from `sync_verify.py` with `with_required_file_floor()` below,
+# because `checkpoint.py --validate` has to union the same floor over the same
+# config key or the two commands answer different questions again (lane V's
+# residual). `sync_verify.REQUIRED_FILE_FLOOR` still resolves.
+REQUIRED_FILE_FLOOR = (
+    ".ai/state/CURRENT.md",
+    ".ai/state/TASK.md",
+    ".ai/state/BLOCKERS.md",
+    ".ai/state/ROLE_POLICY.md",
+    ".ai/protocol/VERSION",
+)
+
+
+def with_required_file_floor(declared: list[str]) -> tuple[list[str], list[str]]:
+    """`(to_walk, floor_only)` — the one place the floor is unioned in.
+
+    Both enforcement commands walk `config["required_files"]` with
+    `REQUIRED_FILE_FLOOR` restored after the replace policy, in the same order
+    (declared entries first, restored floor entries second), so one deleted file
+    cannot be a FAIL to one of them and an silence to the other. `floor_only` is
+    returned separately because the verifier has to NAME the act of narrowing
+    coverage, and a caller that only walks files can ignore it.
+    """
+    entries = list(declared)
+    floor_only = [rel for rel in REQUIRED_FILE_FLOOR if rel not in entries]
+    return entries + floor_only, floor_only
+
+
+def parse_version(raw) -> tuple[int, int, int]:
+    """`X.Y.Z` as an int tuple, or `ValueError`. Never `None`.
+
+    D22 exists because there was no such thing: `PROTOCOL_VERSION` was a string
+    nobody compared, and comparing version STRINGS gets `2.10.0` wrong by putting
+    it below `2.9.0`. Returning an optional here would only move the bug — the
+    caller would have to remember to check, which is the fail-open shape D5
+    exists to end — so a stamp this tool cannot read raises and every caller has
+    to say what it will do about it.
+    """
+    text = (raw or "").strip().lstrip("vV") if isinstance(raw, str) else ""
+    parts = text.split(".")
+    if len(parts) != 3:
+        raise ValueError(f"not an X.Y.Z version: {raw!r}")
+    out = []
+    for part in parts:
+        if not part.isdigit():
+            raise ValueError(f"not an X.Y.Z version: {raw!r}")
+        out.append(int(part))
+    return out[0], out[1], out[2]
+
+
+def compare_version(a, b) -> int:
+    """-1 / 0 / 1 for `a` older / equal / newer than `b`, numerically."""
+    left, right = parse_version(a), parse_version(b)
+    return (left > right) - (left < right)
+
 # git's own "which repository am I working on" variables. A git hook exports
 # them, and any child git process that inherits one answers about the OUTER
 # repository no matter which directory it was started in — the same

@@ -174,7 +174,11 @@ def test_validate_walks_the_shared_list_and_nothing_else(ai_repo, cp):
     for entry, line in zip(ai_common.DEFAULT_REQUIRED_FILES, walked):
         assert entry.rsplit("/", 1)[-1] in line, (entry, line)
     src = (SCRIPTS / "checkpoint.py").read_text("utf-8")
-    body = _code_lines(src, "def cmd_validate", "\ndef install_layout")
+    # Lane T11: the window starts at the helper, not at `cmd_validate`. The
+    # config read moved one function up, and a window that began at
+    # `cmd_validate` would scan a body that no longer names the constant while
+    # the law it pins (imported, never restated) still held two lines earlier.
+    body = _code_lines(src, "def _declared_required_files", "\ndef install_layout")
     assert "DEFAULT_REQUIRED_FILES" in body, body
     assert "STATE_DIR /" not in body and "PROTOCOL_DIR /" not in body, (
         "cmd_validate is back to spelling paths out instead of importing them")
@@ -184,15 +188,24 @@ def test_an_empty_shared_list_is_refused_not_certified(cp, monkeypatch):
     """§4's emptiness law, applied to the command that just learned to import.
 
     `--validate` reads one list, so a list that came back empty would let it
-    certify a tree it never looked at. Monkeypatched at the module boundary
-    because no shipped constant is allowed to be empty.
+    certify a tree it never looked at.
     """
     mod = _load_installed(cp)
     mod._set_paths(cp.parent.parent)
-    monkeypatch.setattr(mod, "DEFAULT_REQUIRED_FILES", [])
+    # RE-SCOPED in lane T11, with the reason stated instead of the assertion
+    # deleted: patching the shipped CONSTANT no longer reaches the verdict, and
+    # that IS the fix. Once `--validate` reads `config["required_files"]` the way
+    # the verifier does (lane V's residual), the constant is only the fallback
+    # for a repo that has no config at all, so the derivation is the seam that
+    # still answers "may an empty list certify a tree?". The law survives; its
+    # code moves from 2 to 1, because an empty declaration walks the floor and
+    # lands on the same rc the verifier prints for its `required-file list` FAIL
+    # -- two commands, one answer, which is what D23 was about.
+    monkeypatch.setattr(mod, "_declared_required_files",
+                        lambda: ([], [], None))
     with pytest.raises(SystemExit) as exc:
         mod.cmd_validate(None)
-    assert exc.value.code == 2, exc.value.code
+    assert exc.value.code == 1, exc.value.code
 
 
 # --------------------------------------------------------------------------

@@ -66,8 +66,10 @@ from typing import NamedTuple
 # second copy of the wrong-root path this removes (see scripts/ai_common.py).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
-    from ai_common import (DEFAULT_REQUIRED_FILES, RepoError, checkout_layout,
-                           protect_stdio, resolve_roots, worktree_listing)
+    from ai_common import (DEFAULT_REQUIRED_FILES, REQUIRED_FILE_FLOOR,
+                           RepoError, checkout_layout, protect_stdio,
+                           resolve_roots, with_required_file_floor,
+                           worktree_listing)
 except ImportError:
     print("[FAIL] install layout: ai_common.py is missing from .ai/scripts/ -- "
           "re-run init_sync.py so the shared primitives are copied in")
@@ -537,7 +539,7 @@ def cmd_prime(args):
     print("  3. .ai/state/BLOCKERS.md")
     print("If continuing prior work, also read: .ai/handoff/LATEST.md")
     print()
-    print("Do NOT read in full: DECISIONS.md, MILESTONES.md, handoff/archive/.")
+    print("Do NOT read in full: DECISIONS.md, handoff/archive/, state/archive/.")
     print("Retrieve single entries via .ai/state/DECISIONS_INDEX.md or grep.")
     print()
     print("Before writing any state file:")
@@ -587,18 +589,76 @@ def cmd_handoff(args):
           "(--unlock --agent <name>), commit, and push.")
 
 
+def _declared_required_files():
+    """`(declared, notes, unusable)` — the list THIS project declared, not the
+    shipped default.
+
+    Lane V's residual, and the same defect class as D23: V-1 replaced this
+    command's private seven-path list with `ai_common.DEFAULT_REQUIRED_FILES`,
+    which fixed the reviewer's measurement, but it left `--validate` reading a
+    CONSTANT while `sync_verify.py` reads `config["required_files"]` with
+    `REQUIRED_FILE_FLOOR` unioned back in after the key's REPLACE policy. So one
+    legal config line — a repo that keeps no decision log, or one that adds an
+    authorization record — made the two enforcement commands answer different
+    questions again, the residual being quieter than the original because it
+    needs an override to exist.
+
+    Only the one key is read: `required_files` merges by REPLACE, so no other
+    default participates in its value, and the floor union is shared through
+    `ai_common.with_required_file_floor` rather than re-derived here. Shape is
+    checked before use — a `required_files` holding a STRING would otherwise be
+    iterated character by character (lane S2 finding 4's shape, one command
+    deeper) — and `notes` carries whatever the read had to say about itself.
+    """
+    path = AI_DIR / "sync_config.json"
+    if not path.is_file():
+        return list(DEFAULT_REQUIRED_FILES), [
+            f"  CONFIG:  {path.relative_to(AI_DIR)} is not installed, so the "
+            "built-in default required-file list was used (sync_verify.py "
+            "reports the same fact as `[FAIL] config readable` and stops)"], None
+    try:
+        cfg = json.loads(path.read_bytes().decode("utf-8-sig"))
+    except (OSError, UnicodeDecodeError, ValueError) as exc:
+        return None, [f"  CONFIG:  {path.relative_to(AI_DIR)}: "
+                      f"{type(exc).__name__}: {exc}"], "the config cannot be read"
+    if not isinstance(cfg, dict):
+        return None, [f"  CONFIG:  {path.relative_to(AI_DIR)} holds "
+                      f"{type(cfg).__name__}, not a JSON object"], \
+            "the config is not an object"
+    if "required_files" not in cfg:
+        return list(DEFAULT_REQUIRED_FILES), [
+            "  CONFIG:  no `required_files` key in .ai/sync_config.json, so the "
+            "built-in default list was used (the same list sync_verify.py "
+            "merges over its own defaults)"], None
+    declared = cfg["required_files"]
+    if not isinstance(declared, list) or not all(
+            isinstance(item, str) and item.strip() for item in declared):
+        return None, [f"  CONFIG:  `required_files` must be a list of path "
+                      f"strings, got {type(declared).__name__}"], \
+            "`required_files` is not a list of paths"
+    return list(declared), None, None
+
+
 def cmd_validate(args):
     _require_paths()
-    # Finding V-1, the last surviving copy of D23: this used to be seven
-    # hardcoded paths under STATE_DIR / HANDOFF_DIR / PROTOCOL_DIR, and they
-    # drifted from `ai_common.DEFAULT_REQUIRED_FILES` — which is why deleting
-    # `.ai/state/ROLE_POLICY.md` left `--validate` printing "All state files
-    # present and non-empty." at rc 0 while `sync_verify.py` reported
-    # `[FAIL] required .ai/state/ROLE_POLICY.md` at rc 1. Two answers to one
-    # question, one of them false. Now the same imported list, in the same order
-    # the verifier reports it, resolved against THIS install's `.ai`.
+    # Finding V-1, then lane V's residual on top of it. V-1 made this command
+    # import the shared list instead of restating one; this makes it import the
+    # shared CONFIG KEY, which is the thing a project is allowed to change. The
+    # floor union and the emptiness law are applied to the derived list rather
+    # than to a constant, so "this command checked nothing" cannot survive by
+    # pointing at a default nobody configured.
+    declared, notes, unusable = _declared_required_files()
+    for line in notes or []:
+        print(line)
+    if unusable:
+        print("\nValidation not confirmed: the required-file list could not be "
+              f"read ({unusable}), so no verdict was reached about a list this "
+              "command did not have. rc 2 means 'no verdict'; rc 1 still means "
+              "'files missing or empty'.")
+        sys.exit(2)
+    to_walk, _floor_only = with_required_file_floor(declared)
     required_files = []
-    for rel in DEFAULT_REQUIRED_FILES:
+    for rel in to_walk:
         parts = [p for p in str(rel).split("/") if p and p != "."]
         if parts and parts[0] == AI_DIR.name:
             parts = parts[1:]
@@ -607,7 +667,7 @@ def cmd_validate(args):
         # Empty is not "nothing wrong": it is "this command checked nothing", and
         # the verdict it prints would be unearned (same law as the verifier's
         # `required-file floor`, which refuses a declared list of zero).
-        print("Validation refused: the shared required-file list is empty, so "
+        print("Validation refused: no required-file list could be derived, so "
               "this command would certify a tree it never looked at.")
         sys.exit(2)
     all_ok = True
@@ -638,6 +698,16 @@ def cmd_validate(args):
               "denied. rc 2 means 'no verdict'; rc 1 still means 'files missing "
               "or empty'.")
         sys.exit(2)
+    if not declared:
+        # The emptiness law at the code the verifier uses for it: a config that
+        # declares zero required files gets a FAIL line there
+        # (`required-file list`), so an empty declaration may not be certified as
+        # a complete tree here either. The floor entries were still walked, so the
+        # evidence is on screen; only the verdict changes.
+        print("  LIST:    config declares zero required_files; the floor entries "
+              "were walked anyway, and a narrowed list is a recorded act, not a "
+              "clean answer")
+        all_ok = False
     print("\nAll state files present and non-empty." if all_ok
           else "\nSome files are missing or empty.")
     sys.exit(0 if all_ok else 1)

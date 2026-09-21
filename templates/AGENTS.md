@@ -22,8 +22,8 @@ exactly what to read.
 - **L0 startup**: the three files above.
 - **L1 task-level**: the task's single authorization `.md` plus directly named
   design/review docs only.
-- **L2 retrieval-only (never read in full)**: `DECISIONS.md` archive,
-  `MILESTONES.md`, `.ai/handoff/archive/` — locate single entries via
+- **L2 retrieval-only (never read in full)**: the `DECISIONS.md` archive and
+  `.ai/handoff/archive/` — locate single entries via
   `DECISIONS_INDEX.md` or grep.
 - Health check: `python .ai/scripts/sync_verify.py` (budgets, secrets, required files).
 

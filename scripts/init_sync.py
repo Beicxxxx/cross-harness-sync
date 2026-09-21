@@ -22,6 +22,13 @@ the caller has edited unless --clobber):
 After running, fill in every <placeholder> in AGENTS.md / SYNC_PROMPT.md and
 the state files, then commit and push.
 
+Before anything is written, an existing install's `.ai/protocol/VERSION` is
+compared with this script's own PROTOCOL_VERSION (D22). A stamp newer than these
+scripts, or one that does not parse, stops the run with `VERSION MISMATCH:
+<detail>` and exit 1 — `--force` and `--clobber` included, since a downgrade
+would overwrite the only record of the higher number. An older stamp is reported
+as the upgrade path and the install proceeds.
+
 Flags:
     --force          refresh every file that is still an untouched copy of its
                      template (scripts, protocol files and unedited state).
@@ -49,15 +56,64 @@ import sys
 from pathlib import Path
 
 try:
-    from ai_common import protect_stdio
+    from ai_common import compare_version, protect_stdio
 except ImportError:  # imported by path (a test, or a caller off PATH)
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from ai_common import protect_stdio
+    from ai_common import compare_version, protect_stdio
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 TEMPLATES = SKILL_DIR / "templates"
 
-PROTOCOL_VERSION = "2.0.0"
+# The PROTOCOL version, not the skill's marketing version: it is what
+# `.ai/protocol/VERSION` gets stamped with, and what `check_version_match`
+# compares an existing install against. It read "2.0.0" on a v2.1 tree for the
+# whole of wave 1a because nothing compared it with anything (D22) — a constant
+# nobody reads is a constant that drifts, which is why the comparison below is
+# the fix and this number is only its subject.
+PROTOCOL_VERSION = "2.1.0"
+
+# `check_version_match`'s fourth answer, as a constant so `main()` can tell
+# "nothing to compare yet" from a verdict without re-reading the sentence.
+NO_INSTALLED_VERSION = "no existing install"
+
+
+def check_version_match(root: Path) -> tuple[bool, str]:
+    """`(ok, detail)` for installing THESE scripts over what is already there.
+
+    D22's whole point: the two numbers existed and never met. Four answers —
+    no install, a comparable older install (the upgrade path every v2.0 install
+    needs, including the one `--scripts-only` exists to serve), an identical
+    stamp, and a refusal — so a skew is recorded by the tool that could notice
+    it instead of being smoothed over by it.
+
+    The refusal is real in both directions of "newer than these scripts", and
+    `--force` does not buy it: an override that ignores a protocol it cannot
+    read would rewrite `VERSION` to a lower number and take the evidence of the
+    skew with it. The remedy is therefore named as the checkout, never as a
+    flag.
+    """
+    path = root / ".ai" / "protocol" / "VERSION"
+    if not path.exists():
+        return True, NO_INSTALLED_VERSION
+    try:
+        installed = path.read_text(encoding="utf-8-sig").strip()
+        delta = compare_version(installed, PROTOCOL_VERSION)
+    except ValueError as exc:
+        return False, f"unparseable: {exc}"
+    except OSError as exc:
+        return False, (f"{path} cannot be read ({type(exc).__name__}: {exc}); "
+                       "refusing to install over a protocol this tool cannot see")
+    if delta > 0:
+        return False, (f"{installed} is NEWER than these scripts "
+                       f"({PROTOCOL_VERSION}); refusing to downgrade the "
+                       "install. Update the cross-harness-sync checkout "
+                       "(`git pull` in the skill repo, then re-run this "
+                       "installer). Nothing was written.")
+    if delta < 0:
+        return True, (f"{installed} -> {PROTOCOL_VERSION} (upgrade: these "
+                      "scripts are newer than the installed protocol; "
+                      "--scripts-only or --force refreshes it)")
+    return True, f"{installed} (unchanged)"
 
 MANAGED_BEGIN = "<!-- BEGIN CROSS-HARNESS-SYNC v:1 -->"
 MANAGED_END = "<!-- END CROSS-HARNESS-SYNC -->"
@@ -66,7 +122,7 @@ MANAGED_BLOCK = f"""{MANAGED_BEGIN}
 
 0. Session start: `git pull --ff-only`, then read ONLY `.ai/state/CURRENT.md`,
    `TASK.md`, `BLOCKERS.md` (L0). Shortcut: `python .ai/scripts/checkpoint.py --prime`.
-- L2 archives (DECISIONS/MILESTONES/handoff archive) are retrieval-only via
+- L2 archives (DECISIONS/handoff archive) are retrieval-only via
   `.ai/state/DECISIONS_INDEX.md` or grep — never read in full.
 - One active writer: `python .ai/scripts/checkpoint.py --lock --agent <name>`
   before writing state files; review tiers in `.ai/state/ROLE_POLICY.md`.
@@ -643,6 +699,17 @@ def main() -> int:
         print(f"ERROR: {root} is not a directory")
         return 2
 
+    # D22: the version comparison runs BEFORE the banner and before a single
+    # write, because the damage a downgrade does is exactly the overwrite this
+    # function is being asked to authorise. `--force` and `--clobber` do not
+    # reach it: neither means "I want a lower protocol version than the tree I
+    # am installing into", and the file they would rewrite is the only record
+    # that the higher number was ever there.
+    version_ok, version_detail = check_version_match(root)
+    if not version_ok:
+        print(f"VERSION MISMATCH: {version_detail}")
+        return 1
+
     # --clobber is strictly stronger than --force, so it implies it rather than
     # silently doing nothing when it is the only one passed.
     #
@@ -663,6 +730,10 @@ def main() -> int:
     rc = 0
 
     print(f"Scaffolding cross-harness-sync v{PROTOCOL_VERSION} into {root}\n")
+    if version_detail != NO_INSTALLED_VERSION:
+        # The comparison ran and its answer is this line; `no existing install`
+        # stays silent, because the `wrote: .../VERSION` line below says it.
+        print(f"VERSION: {version_detail}")
     if args.clobber:
         print("WARNING: --clobber overwrites edited .ai state and config. Commit "
               "the work first (`git add -A && git commit`) so this stays "

@@ -18,14 +18,21 @@ not hardcoded here. Checks, in order:
      either (or deleting the key) is a named SKIP rather than silence.
   3. Required state files exist and are non-empty (config "required_files",
      default `ai_common.DEFAULT_REQUIRED_FILES`, with `REQUIRED_FILE_FLOOR`
-     unioned back in after the merge).
-  4. Token budgets (per-file line caps from config "budgets", with
-     `BUDGET_FLOOR` naming the files that must carry a cap when present)
-  5. Decision log cap (config "decisions_max_active_entries")
-  6. Secret files are git-ignored (config "secret_files")
-  7. Secret mirror key sets match (config "secret_mirrors": pairs of files
+     unioned back in after the merge — one list, shared with `checkpoint.py
+     --validate` through `ai_common.with_required_file_floor`, so a project
+     override cannot make the two commands disagree).
+  4. The installed protocol stamp parses (`protocol version readable`): a
+     required file holding `nightly` is non-empty and still not a version (D22).
+  5. Line budgets (per-file LINE caps from config "budgets", with `BUDGET_FLOOR`
+     naming the files that must carry a cap when present). The unit is lines —
+     `line_count()` counts `splitlines()` — and D26 is the claim, not the check:
+     a line is a weak proxy for tokens in CJK state files, which this protocol
+     permits.
+  6. Decision log cap (config "decisions_max_active_entries")
+  7. Secret files are git-ignored (config "secret_files")
+  8. Secret mirror key sets match (config "secret_mirrors": pairs of files
      whose KEY NAMES must be identical, e.g. [".env", ".claude/.env"])
-  8. Extra project checks (config "extra_checks": [{"name", "cmd"}]; PASS iff
+  9. Extra project checks (config "extra_checks": [{"name", "cmd"}]; PASS iff
      the command exits 0 AND wrote something — an exit 0 that produced zero
      bytes on both streams is a SKIP, never a pass; e.g. a freeze verifier)
 
@@ -57,9 +64,11 @@ from pathlib import Path
 # UnicodeEncodeError and rc 1 instead of the rc 2 named below.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
-    from ai_common import (DEFAULT_REQUIRED_FILES, RepoError, decode,
-                           git_available, invocation_layout, is_git_repo,
-                           protect_stdio, resolve_roots, run_argv, run_git)
+    from ai_common import (DEFAULT_REQUIRED_FILES, REQUIRED_FILE_FLOOR,
+                           RepoError, decode, git_available,
+                           invocation_layout, is_git_repo, parse_version,
+                           protect_stdio, resolve_roots, run_argv, run_git,
+                           with_required_file_floor)
 except ImportError:
     print("[FAIL] install layout: ai_common.py is missing from .ai/scripts/ -- "
           "re-run init_sync.py so the shared primitives are copied in")
@@ -125,24 +134,14 @@ DEFAULT_CONFIG = {
 
 # No `REQUIRED_FILES` here: D23 was this constant disagreeing with two private
 # copies in checkpoint.py, so the list lives in config with
-# `ai_common.DEFAULT_REQUIRED_FILES` as its single default.
-
-# The governance floor under the required-file list. `required_files` merges by
-# REPLACE, which is what lets a repo with no decision log say so — and a replace
-# is also one key away from dropping the files nothing else checks. Spec 4 lets a
-# check be skipped only after proving necessity elsewhere, and at this HEAD
-# nothing else covers these five: `checkpoint.py --validate` omits
-# `ROLE_POLICY.md`, and `protocol/VERSION` is in no other list at all. So the
-# floor is unioned back in after the merge, and unlike the rest of the key it is
-# NOT configurable: config may add requirements and may drop the optional tail
-# (DECISIONS, DECISIONS_INDEX, LATEST), nothing more.
-REQUIRED_FILE_FLOOR = (
-    ".ai/state/CURRENT.md",
-    ".ai/state/TASK.md",
-    ".ai/state/BLOCKERS.md",
-    ".ai/state/ROLE_POLICY.md",
-    ".ai/protocol/VERSION",
-)
+# `ai_common.DEFAULT_REQUIRED_FILES` as its one default.
+#
+# `REQUIRED_FILE_FLOOR` (imported above, not restated) is the governance floor
+# under that replace-merged key, and `ai_common.with_required_file_floor()` is
+# the one function that unions them. It lives there so `checkpoint.py --validate`
+# walks the SAME list from the SAME config key: with only the constant shared, a
+# project override still made the verifier and `--validate` disagree, which is
+# lane V's residual and the same defect class as D23.
 
 # The name the installer owns (D18 prunes it, D27 raises it), so it can never be
 # a code DEFAULT budget — but when the file is PRESENT it must carry a cap or an
@@ -404,7 +403,7 @@ def check_required_files(required_files: list) -> None:
     # tri-state channel is for the second case. The floor below still runs, so
     # the line is the name of the act, not the only evidence of it.
     declared = list(required_files)
-    floor_only = [rel for rel in REQUIRED_FILE_FLOOR if rel not in declared]
+    to_walk, floor_only = with_required_file_floor(declared)
     if not declared:
         record("required-file list", False,
                "config declares zero required_files; refusing to certify an "
@@ -420,7 +419,7 @@ def check_required_files(required_files: list) -> None:
                f"{floor_only} - these have no necessity check elsewhere, so "
                f"the key's replace policy does not reach them; each one is "
                f"counted by its own `required ...` line below)")
-    for rel in declared + floor_only:
+    for rel in to_walk:
         p = ROOT / rel
         if not p.exists():
             record(f"required {rel}", False, "missing")
@@ -434,7 +433,47 @@ def line_count(path: Path) -> int:
     return len(path.read_text(encoding="utf-8").splitlines())
 
 
-def check_token_budgets(cfg: dict, nulled: set | None = None) -> None:
+# `.ai/protocol/VERSION` is a member of `REQUIRED_FILE_FLOOR`, so its PRESENCE is
+# certified by a check that cannot be configured away. That check asks only for
+# bytes, though: `nightly` satisfies it, and `compare_version` on such a stamp
+# raises. This is the second question, the one D22 says nothing used to ask.
+PROTOCOL_VERSION_FILE = ".ai/protocol/VERSION"
+
+
+def check_protocol_version() -> None:
+    """The installed stamp parses, so the next installer can compare it.
+
+    `init_sync.check_version_match` refuses to proceed past a stamp it cannot
+    parse, which covers the machine that runs the installer and nobody else: an
+    install nobody re-ran, or one whose VERSION was hand-edited afterwards,
+    reaches a second harness with a false stamp and a green report. Verification
+    is where that case has to be caught.
+    """
+    path = ROOT / PROTOCOL_VERSION_FILE
+    if not path.exists():
+        record("protocol version readable", None,
+               "SKIP(file is absent, and `required .ai/protocol/VERSION` is a "
+               "floor entry that names the absence: nothing goes unasked here)")
+        return
+    try:
+        raw = path.read_text(encoding="utf-8-sig")
+    except (OSError, UnicodeDecodeError) as exc:
+        record("protocol version readable", False,
+               f"{PROTOCOL_VERSION_FILE} cannot be read: "
+               f"{type(exc).__name__}: {exc}")
+        return
+    try:
+        stamped = ".".join(str(part) for part in parse_version(raw))
+    except ValueError as exc:
+        record("protocol version readable", False,
+               f"{PROTOCOL_VERSION_FILE} holds no comparable version: {exc} - "
+               "init_sync refuses to install over this until the file is fixed")
+        return
+    record("protocol version readable", True,
+           f"{stamped} ({PROTOCOL_VERSION_FILE})")
+
+
+def check_line_budgets(cfg: dict, nulled: set | None = None) -> None:
     nulled = nulled or set()
     budgets = cfg["budgets"]
     for rel, cap in budgets.items():
@@ -456,7 +495,7 @@ def check_token_budgets(cfg: dict, nulled: set | None = None) -> None:
         if rel in nulled:
             # Lane S2 finding 1 (HIGH), the same shape one edit deeper than the
             # one F5 closed: this recorded `True`, so `{"budgets": {<every floor
-            # name>: null}}` measured ZERO token budgets and still printed five
+            # name>: null}}` measured ZERO line budgets and still printed five
             # `[PASS]` lines with the line count of a healthy run at rc 0. The
             # config edit stays legal — the verdict is the claim the line makes,
             # and a decline claims nothing. Spec 4: WARN or SKIP, never PASS.
@@ -751,7 +790,8 @@ def main() -> int:
     for label, run_check in (
             ("required files",
              lambda: check_required_files(cfg["required_files"])),
-            ("token budgets", lambda: check_token_budgets(cfg, nulled)),
+            ("protocol version", check_protocol_version),
+            ("line budgets", lambda: check_line_budgets(cfg, nulled)),
             ("secrets ignored", lambda: check_secrets_ignored(cfg)),
             ("secret mirrors", lambda: check_secret_mirrors(cfg)),
             ("extra checks", lambda: check_extra(cfg))):
