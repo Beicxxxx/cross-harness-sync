@@ -1,7 +1,10 @@
 # Agents Instructions — <PROJECT NAME>
 
 Canonical instructions for ALL harnesses (Codex, Claude Code, Kimi, GLM, …).
-Keep this file ≤ 65 lines (enforced by `.ai/scripts/sync_verify.py`).
+Keep YOUR rules ≤ 65 lines (enforced by `.ai/scripts/sync_verify.py` against
+`.ai/sync_config.json`). If the skill's managed block is appended here instead of
+this template being copied, it adds 16 lines and `init_sync.py` raises the cap to
+81 (65 + 16) — those 65 lines are still all the file may spend on its own rules.
 
 ## On Session Start (L0 — the ONLY required reads)
 
@@ -14,13 +17,13 @@ Keep this file ≤ 65 lines (enforced by `.ai/scripts/sync_verify.py`).
 Shortcut: `python .ai/scripts/checkpoint.py --prime` prints lock status +
 exactly what to read.
 
-## Layered context (token budget — enforced by `.ai/scripts/sync_verify.py`)
+## Layered context (line budget — enforced by `.ai/scripts/sync_verify.py`)
 
 - **L0 startup**: the three files above.
 - **L1 task-level**: the task's single authorization `.md` plus directly named
   design/review docs only.
-- **L2 retrieval-only (never read in full)**: `DECISIONS.md` archive,
-  `MILESTONES.md`, `.ai/handoff/archive/` — locate single entries via
+- **L2 retrieval-only (never read in full)**: the `DECISIONS.md` archive and
+  `.ai/handoff/archive/` — locate single entries via
   `DECISIONS_INDEX.md` or grep.
 - Health check: `python .ai/scripts/sync_verify.py` (budgets, secrets, required files).
 

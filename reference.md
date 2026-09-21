@@ -17,6 +17,9 @@ customizing, or debugging the protocol — not during normal operation.
 │   ├── ROLE_POLICY.md        # T1/T2/T3 review tiers, hard rules R1–R7
 │   ├── DECISIONS.md          # ≤20 active entries, ≤15 lines each
 │   ├── DECISIONS_INDEX.md    # ≤110 lines, one line per decision
+│   ├── authorizations/       # one .md per stage — the canonical home the
+│   │   └── INDEX.md          # coverage walk, pin check and swarm gate read;
+│   │                         # required, and never counted as a stage record
 │   └── archive/              # L2: retrieval-only history
 ├── handoff/
 │   ├── LATEST.md             # ≤80 lines, fixed 6 sections
@@ -24,11 +27,16 @@ customizing, or debugging the protocol — not during normal operation.
 │   └── archive/              # timestamped past handoffs
 ├── templates/
 │   └── AUTHORIZATION.md      # one stage = one authorization file
-├── protocol/VERSION          # protocol semver
+├── protocol/
+│   ├── VERSION               # PROTOCOL version (a semver stamp), not the skill's release version
+│   ├── MIGRATION.json        # written by `init_sync.py --migrate`: from, to,
+│   │                         # started, completed, files_touched[]
+│   └── MIGRATION.md          # the journal — names what a revert cannot undo
 ├── runtime/                  # machine-local, gitignored EXCEPT the lock
 │   ├── STATUS.json           # written only by checkpoint.py
 │   └── WRITER_LOCK.json      # advisory lock; tracked so it travels via git
 └── scripts/
+    ├── ai_common.py          # shared primitives; both entry scripts hard-exit 2 without it
     ├── checkpoint.py
     └── sync_verify.py
 ```
@@ -66,28 +74,79 @@ completion condition, absolute stop boundary. One stage = ONE file. Never pin
 CURRENT/TASK/BLOCKERS/LATEST — frequently-changing state files are not pinning
 targets (pinning them once caused a stall over a routine state edit).
 
-## Token budgets (defaults in sync_config.json)
+## Line budgets (defaults in sync_config.json)
+
+A line is a weak proxy for tokens in CJK state files, which this protocol
+permits; real token accounting is a wave-2 measurement, not a wave-1 claim.
 
 | File | Cap | Why |
 |---|---|---|
-| `AGENTS.md` | 65 lines | canonical instructions, auto-read by every harness |
+| `AGENTS.md` | 65 lines — 81 after `init_sync.py` appends its 16-line managed block; the installer edits `.ai/sync_config.json` to pay for the block it added, and `--no-agents-block` deletes the row instead | canonical instructions, auto-read by every harness |
 | `.ai/state/CURRENT.md` | 60 | L0 must stay cheap |
 | `.ai/handoff/LATEST.md` | 80 | handoff is skimmed every session |
 | `.ai/handoff/NEXT_PROMPT.md` | 100 | executor prompt |
 | `.ai/state/DECISIONS_INDEX.md` | 110 | one line per decision |
 | `DECISIONS.md` | 20 active `##` entries | archive the rest |
 
-Budgets are enforced by `sync_verify.py`, not by discipline. A file over
-budget must be slimmed before commit.
+Budgets are enforced by `sync_verify.py`, not by discipline: an over-budget or
+uncapped file goes red on every run, and a file over budget must be slimmed
+before commit. That is enforcement of the mechanically decidable — omission. It
+cannot detect fabrication: nothing here binds a name to an event that did not
+happen.
+
+The cap has to be capable of failing, so a value no file can reach is refused as
+a config error rather than accepted: a `budgets` value above 10,000 lines, a
+`decisions_max_active_entries` above 2,000, or a timeout above 86,400 seconds
+aborts the **whole run at exit 2 with no verdict**, and it is not one `[SKIP]`
+line. `null` is the only documented deliberate decline — it prints
+`[SKIP] cap opt-out <file>` and keeps the rest of the run answering. A project
+that legitimately wants a budget no human would read is expected to name the
+decline with `null`, not to write a huge number.
+
+## Protocol version
+
+`.ai/protocol/VERSION` is the **protocol** version, not the skill's release
+version, and wave 1a does not treat the two as the same number. `init_sync.py`
+compares the stamp with its own `PROTOCOL_VERSION` before writing anything: a
+newer or unparseable stamp is refused with `VERSION MISMATCH: …` and exit 1,
+including under `--force`/`--clobber`; an older one is reported as an upgrade.
+`sync_verify.py` prints `protocol version readable` for the file it finds, and
+that PASS now carries a second witness: when the stamp and the protocol the
+installed `.ai/scripts/` implement disagree, it prints the FAIL
+`protocol version matches installed scripts` instead, naming which side is ahead
+and what to re-run.
+Wave 1b's `--migrate` is meant to read that stamp rather than assume it.
 
 ## Advisory writer lock
 
 - Acquire: `checkpoint.py --lock --agent <name> [--ttl 14400] [--reason <id>]`.
-  Refuses (exit 1) if another agent holds an unexpired lock; `--force`
-  overrides but the reason must be recorded in the handoff.
-- Release: `--unlock` marks `released_at` — the lock file is **never deleted**,
-  so git history is the audit trail (pattern borrowed from mcp_agent_mail's
-  persisted lease artifacts).
+  Refuses (exit 1) if another agent holds an unexpired lock, if the checkout is a
+  linked worktree, a symlinked/junctioned `.ai`, not at the repository root, or a
+  layout git cannot describe, and if the tracked record cannot be parsed — an
+  unreadable record is HELD, never free. `--force` overrides, and always requires
+  `--reason "<why>"`: `--force` without it is a usage error, exit 2. `--force`
+  takes a lock OVER; only `--force --discard-lock` abandons an unparseable
+  record, and neither resolves a git conflict. Both the reason and any
+  `forced_layout` kind are written into the record so the next machine can see
+  the takeover.
+- Release: `--unlock --agent <name>` marks `released_at` — the name is required
+  against a live or expired record (exit 2 without it, exit 1 if it is not
+  yours) — and the lock file is **never deleted**, so git history is the audit
+  trail (pattern borrowed from mcp_agent_mail's persisted lease artifacts).
+  Wave 1a put the same layout gate on the release that `--lock` already had: a
+  linked worktree, a relocated `.ai`, an install below the repository root, or a
+  layout git cannot describe is refused at exit 1. Without it, releasing inside a
+  worktree exited 0 and wrote `released_at` into THAT copy's tracked record while
+  the checkout that took the pen kept holding its own, so the next machine pulled
+  a "released" that was never released. `--force --reason` still overrides, and
+  says plainly that the release lands in this worktree's record only — the other
+  machine cannot see it.
+- What the lock does not do: `--handoff`, the bare checkpoint, `--status` and
+  `--prime` do not stop for another holder. The state-writing commands print a
+  named `WARN <command>: the writer lock is held by <name> …` and continue at
+  exit 0 (`--force` over a refused layout adds a second WARN, and says plainly
+  that nothing records the split there). Concurrent many-agent writers are out of
+  scope, not rejected.
 - `WRITER_LOCK.json` is the ONE tracked file under `runtime/` (`.gitignore`
   excepts it) so the lock travels across machines with `git pull`. All other
   runtime files are machine-local.
@@ -133,17 +192,116 @@ never block, never write state files — hooks remind, the agent writes.
   "decisions_file": ".ai/state/DECISIONS.md",
   "secret_files": [".env"],
   "secret_mirrors": [[".env", ".claude/.env"]],
-  "extra_checks": [{ "name": "freeze X", "cmd": ["python", "scripts/freeze_x.py", "--verify"] }]
+  "extra_checks": [{ "name": "freeze X", "cmd": ["python", "scripts/freeze_x.py", "--verify"] }],
+  "protected_paths": [],
+  "protected_paths_case": "case-sensitive",
+  "authorizations_dir": ".ai/state/authorizations",
+  "role_policy_sha256": "",
+  "governance": { "window_start_commit": "" }
 }
 ```
 
+- `budgets`: `{"<repo-relative path>": <max lines>}`, and a key that escapes the
+  checkout is refused (`malformed: config key 'budgets' keys must be
+  repo-relative paths inside the checkout`). Values must be line-count integers
+  or `null`; above the 10,000-line ceiling the run aborts at exit 2 (see **Line
+  budgets**). The same shape layer rejects a non-repo-relative `decisions_file`,
+  an out-of-range `decisions_max_active_entries` / `check_timeout` /
+  `git_check_timeout`, and a non-integer budgets value: four `malformed:`
+  message families, all of them exit-2 "the verifier cannot answer at all", none
+  of them a per-line SKIP. **Compat note for v2.0 installs:** the predicate is
+  the by-component `..` refusal `required_files` already carried, and it is
+  stricter than "resolves inside the checkout" — a key that stays inside the
+  tree but merely *writes* `..` on its way (`docs/../.ai/state/TASK.md`) is now
+  refused at exit 2 where v2.0 accepted it. That is deliberate: a shape layer
+  that admitted a path whose text says "leave the tree" would have to parse the
+  filesystem to know what it was certifying, and the drive-letter and
+  through-a-junction escapes it exists to catch arrive in exactly that spelling.
+  Spell the key by its own path and the check measures as before; a directory
+  named by a well-formed key is now one `[FAIL] budget <key>` line, not the loss
+  of every budget line in the run.
 - `secret_files`: each must be git-ignored (`git check-ignore` must succeed).
 - `secret_mirrors`: pairs of env files whose KEY NAMES must be identical sets
-  (e.g. a canonical `.env` and a harness-specific mirror).
+  (e.g. a canonical `.env` and a harness-specific mirror). Presence is checked
+  too, and it is three-valued: both sides absent is a named
+  `SKIP(no mirrored secrets on this machine)` (mirrored secrets are git-ignored,
+  so a second machine legitimately has none); exactly one side present is a
+  `FAIL` naming the missing side, because a one-sided mirror is local drift or a
+  wrong path in the config, not a per-machine difference; both present must
+  agree on key names.
 - `extra_checks`: project-specific verifiers (freeze manifests, drift checks).
-  PASS iff exit code 0. This is where a project's scientific freezes plug in.
+  PASS iff the command exits 0 AND wrote something: an exit 0 with zero bytes on
+  both streams is a named `SKIP`, and a timeout or an unlaunchable command is a
+  FAIL. `rc == 0` is never sufficient. Both timeouts are configurable
+  (`check_timeout`, `git_check_timeout`). This is where a project's scientific
+  freezes plug in.
+- `protected_paths`: the governed set, as forward-slash glob patterns. The
+  coverage walk (`path coverage`) asks git for the commits in
+  `governance.window_start_commit..HEAD` that touch any of them and FAILs on
+  every touch no ACCEPTED authorization's `## Editable files` covers. Default
+  `[]` — a walk with nothing registered is a named `SKIP(no-protected-paths)`,
+  and spec §4's honest order is one permanently-red week, then `[]`, then zero
+  coverage, never a config line that pretends to govern. Entries must be
+  repo-relative paths inside the checkout: an absolute path, a drive-letter
+  path, or any `..` component is refused at exit 2 (`malformed: config key
+  'protected_paths' entries must be repo-relative paths inside the checkout`),
+  because a pattern that reads another tree's files still prints `[PASS]` about
+  this one. `*` is NOT per-segment: it crosses `/`, so `docs/*.md` also matches
+  `docs/a/b.md`. That direction is the fail-closed one — a nested file cannot
+  slip out of the governed set by sitting deeper than the pattern's author
+  pictured.
+- `protected_paths_case`: the recorded case policy, and exactly two values —
+  `"case-sensitive"` (the default) or `"case-insensitive"`; a third spelling is
+  refused at exit 2, because silently picking one platform's case behaviour is
+  the D14 defect this key exists to end. The direction is which way the pattern
+  folds: under `case-sensitive` `SRC/*` governs only a path spelled `SRC/…`;
+  under `case-insensitive` it governs `src/engine.py` too. The policy applies to
+  BOTH sides of the comparison — the `git log` candidate set is asked with
+  git's own `:(icase)` pathspec magic, and the authorization's editable list is
+  folded by the same rule — so one config file governs the same set of files on
+  a case-insensitive host as on a case-sensitive one.
+- `authorizations_dir`: where the stage records live, repo-relative and inside
+  the checkout (an escaping value is refused at exit 2 like `protected_paths`).
+  The default, and what `init_sync.py` installs and `--migrate` records, is
+  `.ai/state/authorizations`. Both readers share one scan
+  (`ai_common.authorization_records`): FLAT `*.md` in that directory, with
+  `INDEX.md` set aside case-insensitively because an index is not an
+  authorization. A record in a subdirectory is seen by neither command — one
+  agreement, not two near-misses; keep one file per stage in this directory.
+- `role_policy_sha256`: the digest `.ai/state/ROLE_POLICY.md` must hash to. `""`
+  means not pinned and the check is `SKIP(no-sha-pinned)`; anything else must be
+  64 lowercase hex characters or the config is refused at exit 2 (`malformed:
+  config key 'role_policy_sha256' must be empty (not pinned) or 64 lowercase hex
+  characters`), since a truncated or SHA-1 value pins a digest no file can ever
+  match. `init_sync.py --migrate` writes the current digest.
+- `governance.window_start_commit`: the coverage window's lower anchor, and the
+  only `governance` key the migrator writes. Three shapes are legal: `""` (never
+  migrated — `SKIP(no-window: unset)`), the sentinel `NO_HISTORY` (a tree with no
+  commit to anchor on — `SKIP(no-window: NO_HISTORY)`), or a full 40-lowercase-hex
+  commit id. Anything else — `HEAD`, `main`, `HEAD~1`, a short prefix, an
+  uppercased id — is a FAIL naming the anchor, not an empty window: `git log
+  HEAD..HEAD` answers "nothing happened" forever, and the walk would have booked
+  `[PASS] path coverage: 0 protected touches covered` over protected work. Same
+  predicate on both sides (`ai_common.window_is_valid`, used by the writer in
+  §8 and the reader in §6.3).
 
 ## Role policy (summary — full text in templates/ROLE_POLICY.md)
+
+**Recorded, not enforced.** The policy is installed as a required file, so the
+verifier can prove it is *missing*, and wave 1b adds `role policy integrity`:
+the file must digest to the `role_policy_sha256` pinned in
+`.ai/sync_config.json`, so rewriting the governance document shows up as a
+config diff a human reads. Neither check proves a review happened, who
+performed it, or which model family they belonged to — `executor`, `reviewer`,
+`executor_family` and `reviewer_family` are recorded and never gated (rule R5).
+What wave 1b does make **verifiable** is omission: `path coverage` walks
+`git log` over `protected_paths` in `governance.window_start_commit..HEAD` and
+names every touch that no accepted authorization's `## Editable files` covers;
+`pin violation` refuses a pin on `CURRENT.md` / `TASK.md` / `BLOCKERS.md` /
+`LATEST.md`; `swarm boundary` refuses more than one accepted authorization live
+at once. None of them detects a fabricated record, and every history question is
+three-valued — a shallow or indeterminate history halts with a named `[FAIL]`
+instead of certifying coverage.
 
 - **T1 ordinary**: no LLM review. **T2 protected** (freeze/hash/authorization/
   fail-closed paths): one cross-family reviewer, diff + hashes + targeted
@@ -165,7 +323,12 @@ State files may be written in whatever language the team reads fastest, but
 pick ONE per repo and record the choice in AGENTS.md. Timestamps: human-readable
 with explicit timezone and UTC offset, e.g. `2026-08-31 21:21:22
 (Australia/Sydney, UTC+10:00)` — harnesses get timezones wrong often enough
-that the offset must be written out.
+that the offset must be written out. The **offset is the authority**; the zone
+name is opportunistic. `checkpoint.py` prints a zone name only when it is ASCII,
+because on a localized Windows host `tzname()` returns the OS's translated name
+(in a zh locale, a string that mojibakes a legacy console) and an abbreviation
+like `CST` is ambiguous anyway; there the line reads `(UTC+10:00)` and nothing
+is lost.
 
 ## Provenance of borrowed mechanisms
 

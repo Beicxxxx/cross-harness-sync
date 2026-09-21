@@ -34,3 +34,30 @@ JSON+MD+addendum triplets.>
 ## Stop boundary
 
 <Actions that remain unauthorized even after successful completion.>
+
+## Governance
+
+The machine-readable twin of `## Roles`. `.ai/scripts/sync_verify.py` reads the
+fenced block below and ignores the prose, so: one `key: value` per line, a
+repeated key is fatal (audit data has no last-wins), and an unfilled angle
+placeholder is fatal too — which is why this template carries the two sanctioned
+sentinels (`n/a`, `NOT_REPORTED`) for you to replace instead of a bracketed hint.
+`verdict:` is the line that decides whether this record counts as live; drop the
+key and the record is undecided, which the verifier names as
+`SKIP(no-verdict: …)` and never books as a pass.
+
+```governance
+tier: n/a
+executor: NOT_REPORTED
+reviewer: NOT_REPORTED
+verdict: NOT_REPORTED
+red_before_green: n/a
+user_authorized: n/a
+```
+
+- `tier`: `T1`, `T2` or `T3`, per `.ai/state/ROLE_POLICY.md`.
+- `executor` / `reviewer`: the harness and model that filled each role, plus the
+  effort tier. Recorded, never gated on model family (rule R5) — the verifier
+  checks identity, tier consistency, and omission.
+- `red_before_green` / `user_authorized`: `true` or `false`, or `n/a` when the
+  tier does not ask (both are expected at T3).
