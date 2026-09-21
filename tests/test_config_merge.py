@@ -84,7 +84,13 @@ def test_every_governed_key_is_declared_and_replace_is_the_default():
     assert sync_verify.MERGE_POLICY["secret_files"] == sync_verify.MERGE_UNION
     assert sync_verify.MERGE_POLICY["required_files"] == sync_verify.MERGE_REPLACE
     # The brief's DEEP_MERGE_KEYS stays importable, derived from the one table.
-    assert sync_verify.DEEP_MERGE_KEYS == ("budgets",)
+    # Wave 1b adds the second deep key BY CONTRACT (`governance`, so naming
+    # `window_start_commit` cannot delete a sibling anchor the migrator wrote) and
+    # names `protected_paths` as an explicit replace key; the pin therefore names
+    # the whole table instead of freezing wave 1a's single-entry count.
+    assert set(sync_verify.DEEP_MERGE_KEYS) == {"budgets", "governance"}
+    assert sync_verify.MERGE_POLICY["governance"] == sync_verify.MERGE_DEEP
+    assert sync_verify.MERGE_POLICY["protected_paths"] == sync_verify.MERGE_REPLACE
     assert merge({"extra_checks": [{"name": "a", "cmd": ["x"]}]},
                  {"extra_checks": []})["extra_checks"] == []
 

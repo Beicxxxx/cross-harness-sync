@@ -50,6 +50,7 @@ Usage:  python .ai/scripts/sync_verify.py
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import re
 import sys
@@ -65,6 +66,11 @@ from pathlib import Path
 # UnicodeEncodeError and rc 1 instead of the rc 2 named below.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
+    # The MODULE as well as its names: the wave-1b governance checks call the
+    # three-valued history probes (`ai_common.is_shallow`, `ai_common.log_paths`)
+    # and `ai_common.glob_match` by name, so a reader of a check body sees which
+    # primitive answers each halt question instead of trusting a bare import.
+    import ai_common
     from ai_common import (DEFAULT_REQUIRED_FILES, REQUIRED_FILE_FLOOR,
                            RepoError, decode, git_available,
                            invocation_layout, is_git_repo, parse_version,
@@ -131,6 +137,31 @@ DEFAULT_CONFIG = {
     # (A.1).
     "check_timeout": 600,
     "git_check_timeout": 15,
+    # ---- wave 1b governance surface (spec 6, 7) --------------------------------
+    # The paths an authorization has to cover. Default EMPTY, and spec 7 is
+    # explicit that this is not a weakening: with nothing registered the
+    # coverage check reports `SKIP(no-protected-paths)` by name instead of
+    # pretending to govern, which is what keeps the documented failure mode --
+    # "one honest permanently-red week, then `protected_paths: []` and zero
+    # coverage" -- from being the cheap option. Globs are allowed (`*`/`?` do
+    # not make an entry non-repo-relative), and D14's case policy is recorded in
+    # the key below rather than inherited from the host.
+    "protected_paths": [],
+    "protected_paths_case": "case-sensitive",
+    # Where the authorization records live. `ai_common.AUTHORIZATIONS_SUBDIR`
+    # spells the same directory `.ai`-relatively; this key is repo-relative like
+    # every other path key, because `_check_shape` validates it with the same
+    # repo-relative predicate the secret/required lists get.
+    "authorizations_dir": ".ai/state/authorizations",
+    # SHA-256 of `.ai/state/ROLE_POLICY.md`. Empty means "unpinned" and the
+    # integrity check SKIPs by name; a non-empty value must be 64 lowercase hex,
+    # which is what makes "changing the governance document requires a config
+    # edit" a real statement rather than a formatting preference.
+    "role_policy_sha256": "",
+    # Migration's window anchor (`governance.window_start_commit`, spec 8), read
+    # by the coverage walk. DEEP so a project can add a governance namespace
+    # without dropping one the migrator wrote.
+    "governance": {},
 }
 
 # No `REQUIRED_FILES` here: D23 was this constant disagreeing with two private
@@ -204,6 +235,14 @@ MERGE_POLICY = {
     "budgets": MERGE_DEEP,
     "secret_files": MERGE_UNION,
     "required_files": MERGE_REPLACE,
+    # An install shape, like `required_files`: a repo that governs nothing or
+    # keeps its authorization records elsewhere must be able to SAY so in one
+    # key, and a union would leave it permanently red for a question it has
+    # already answered.
+    "protected_paths": MERGE_REPLACE,
+    # A namespace of anchors, not a set: naming `window_start_commit` must not
+    # delete a key the migrator wrote (D3's class, one layer down).
+    "governance": MERGE_DEEP,
 }
 
 # Derived, never re-declared, so the two spellings cannot drift apart.
@@ -223,7 +262,20 @@ KEY_SHAPES = {
     "decisions_max_active_entries": int,
     "check_timeout": int,
     "git_check_timeout": int,
+    "protected_paths": list,
+    "protected_paths_case": str,
+    "authorizations_dir": str,
+    "role_policy_sha256": str,
+    "governance": dict,
 }
+
+# The only two answers D14 can be recorded as. A third spelling would silently
+# pick one platform's case behaviour, which is the defect the key exists to end.
+PROTECTED_PATH_CASES = frozenset(("case-sensitive", "case-insensitive"))
+
+# A `role_policy_sha256` that is not 64 lowercase hex is not a SHA-256, so it
+# cannot pin anything: `""` (unpinned) or this, and nothing between.
+SHA256_RE = re.compile(r"[0-9a-f]{64}")
 
 # Scalars that must be a POSITIVE int, not a JSON boolean posing as one.
 POSITIVE_INT_KEYS = {"decisions_max_active_entries": "entry cap",
@@ -231,7 +283,7 @@ POSITIVE_INT_KEYS = {"decisions_max_active_entries": "entry cap",
                      "git_check_timeout": "seconds timeout"}
 
 # Keys whose list entries are repo-relative paths.
-PATH_LIST_KEYS = ("secret_files", "required_files")
+PATH_LIST_KEYS = ("secret_files", "required_files", "protected_paths")
 
 # Magnitude ceilings for the numbers that ARE the governance layer (lane Z
 # finding 4). Shape alone let six `999999999`s through: every budget line then
@@ -399,6 +451,31 @@ def _check_shape(key: str, val) -> None:
         raise ConfigError(f"malformed: config key {key!r} must be a "
                           f"repo-relative path inside the checkout, got "
                           f"{val!r}")
+    if key == "authorizations_dir" and not _is_repo_relative_path(val):
+        # Same class, one key over: this one retargets the RECORD SOURCE every
+        # governance check reads, so an absolute or escaping path would let one
+        # config line point the verifier at another tree's authorizations and
+        # still print `[PASS] swarm boundary`.
+        raise ConfigError(f"malformed: config key {key!r} must be a "
+                          f"repo-relative path inside the checkout, got "
+                          f"{val!r}")
+    if key == "protected_paths_case" and val not in PROTECTED_PATH_CASES:
+        raise ConfigError(f"malformed: config key {key!r} must be one of "
+                          f"{sorted(PROTECTED_PATH_CASES)}, got {val!r}")
+    if key == "role_policy_sha256" and val != "" \
+            and not SHA256_RE.fullmatch(val.strip()):
+        # `d41d8cd9...` truncated by a copy-paste, or a SHA-1 left by v2.0's
+        # hash habit, would pin a digest no file can ever match: permanently red
+        # at best, and at worst a check that can never be satisfied is a check
+        # that gets deleted. Empty is the honest "unpinned" answer and SKIPs by
+        # name instead.
+        raise ConfigError(f"malformed: config key {key!r} must be empty (not "
+                          f"pinned) or 64 lowercase hex characters, got "
+                          f"{val!r}")
+    if key == "governance":
+        if not all(isinstance(k, str) for k in val):
+            raise ConfigError(f"malformed: config key {key!r} keys must be "
+                              f"strings, got {sorted(map(str, val))}")
     if key in POSITIVE_INT_KEYS and (
             isinstance(val, bool) or not isinstance(val, int) or val <= 0):
         # `true` is an int in Python and `n <= True` passes at 1 entry, so the
@@ -846,6 +923,383 @@ def check_extra(cfg: dict) -> None:
             record(name, res.ok, f"cmd `{label}` rc={res.rc}; {evidence}")
 
 
+# ---------------------------------------------------------------------------
+# Wave 1b: the governance surface (spec 6.1, 6.2, 6.3 and N1).
+#
+# All four read `.ai/state/authorizations/`, the directory v2.0 mandated ("one
+# stage = one authorization file") without ever giving instances a canonical
+# home, so there was nothing for a verifier to open. What is checked is
+# deliberately only what is decidable inside the repo: OMITSION, a forbidden
+# pin, a changed governance document, and more than one live authorization.
+# None of it can detect a fabricated record -- nothing here binds a recorded
+# name to an actual model invocation -- and the docstrings say so rather than
+# claiming "enforced".
+#
+# Every history question is three-valued and UNKNOWN halts (spec 6): a walk
+# that could not run is a FAIL naming why, never the green an empty log would
+# have printed.
+# ---------------------------------------------------------------------------
+
+# The four files the protocol rewrites every few minutes. Pinning one is the
+# real incident spec 6.1 encodes: a routine edit stalled on its own state file.
+PINNED_STATE_FILES = ("CURRENT.md", "TASK.md", "BLOCKERS.md", "LATEST.md")
+
+# `INDEX.md` is the directory's index (the `DECISIONS_INDEX.md` idiom, kept by
+# spec 6), not a stage record. Reading it as one would fabricate a governance
+# record out of a table of contents.
+AUTHORIZATION_INDEX_NAME = "INDEX.md"
+
+
+def _authorization_dir(cfg) -> Path:
+    """The record source. An empty key falls back to the canonical home rather
+    than to "look nowhere", which would turn a config typo into a silent
+    `SKIP(no-authorizations)` on a governed install."""
+    rel = str(cfg.get("authorizations_dir", "") or "").strip()
+    if not rel:
+        return AI_DIR / ai_common.AUTHORIZATIONS_SUBDIR
+    return ROOT / rel
+
+
+def _authorization_dir_label(cfg) -> str:
+    """Where the records were looked for, in the spelling the OTHER machine
+    reads: repo-relative and forward-slashed, or the absolute path if a custom
+    `authorizations_dir` somehow points outside (which `_check_shape` refuses,
+    but an evidence line must never raise on its own formatting)."""
+    adir = _authorization_dir(cfg)
+    try:
+        return adir.relative_to(ROOT).as_posix()
+    except ValueError:
+        return adir.as_posix()
+
+
+def _authorization_records(cfg):
+    """`(records, dir_absent)`; each record is a dict with `rel`, `text`,
+    `read_err`, `fields`, `gov_err`.
+
+    Decoded as BYTES then `surrogateescape` (D5's rule: an odd filename must not
+    kill the reader thread and leave rc 0 with nothing seen), and a parse
+    failure is kept as a string rather than raised: one unreadable audit file
+    must not delete the other three checks' evidence, but it must not be counted
+    as absent either.
+    """
+    adir = _authorization_dir(cfg)
+    if not adir.is_dir():
+        return [], True
+    records = []
+    try:
+        found = sorted(adir.rglob("*.md"))
+    except OSError as exc:
+        return [{"rel": _authorization_dir_label(cfg), "text": None,
+                 "read_err": f"{type(exc).__name__}: {exc}",
+                 "fields": None, "gov_err": None}], False
+    for path in found:
+        if not path.is_file() or path.name == AUTHORIZATION_INDEX_NAME:
+            continue
+        try:
+            rel = path.relative_to(ROOT).as_posix()
+        except ValueError:
+            rel = path.as_posix()
+        text, read_err = None, ""
+        try:
+            text = decode(path.read_bytes())
+        except OSError as exc:
+            read_err = f"{type(exc).__name__}: {exc}"
+        fields, gov_err = (None, None)
+        if text is not None:
+            try:
+                fields, gov_err = ai_common.parse_governance_block(text)
+            except Exception as exc:  # noqa: BLE001 -- never trust a parser
+                gov_err = f"parse raised {type(exc).__name__}: {exc}"
+        records.append({"rel": rel, "text": text, "read_err": read_err,
+                        "fields": fields, "gov_err": gov_err})
+    return records, False
+
+
+def _verdict(record) -> str:
+    """`accepted` / anything else / `""` when the record carries no decidable
+    governance block. A legacy record is never treated as accepted."""
+    if record["text"] is None or record["gov_err"] or record["fields"] is None:
+        return ""
+    return str(record["fields"].get("verdict", "")).strip().lower()
+
+
+def _section_bullets(text: str, heading: str) -> list:
+    """The `- ` bullets under `## <heading>`, each reduced to its leading path.
+
+    The path is the FIRST thing on the bullet: a backtick-quoted span if there is
+    one (the shipped template's shape), else the first whitespace token with a
+    trailing colon removed. That rule is what keeps `## Pinned baselines`' own
+    explanatory bullet -- which NAMES all four state files in prose while telling
+    the reader not to pin them -- from reading as four violations. Coverage
+    (§6.3) and pins (§6.1) are both decided by this one parser, so the two
+    checks cannot disagree about what a record lists.
+    """
+    out = []
+    in_section = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            in_section = stripped[3:].strip().lower() == heading.lower()
+            continue
+        if not in_section or not stripped.startswith("-"):
+            continue
+        token = stripped[1:].strip()
+        if not token:
+            continue
+        if token.startswith("`"):
+            _, tick, tail = token.partition("`")
+            if not tick:
+                continue
+            # Close the span: `partition` hands back everything AFTER the opening
+            # tick, which still carries the closing one. Reading a pattern as
+            # `protected/*`` matches nothing, and a coverage walk that matches
+            # nothing is the fail-open this check exists to close.
+            candidate = tail.partition("`")[0].strip()
+        else:
+            candidate = token.split()[0].rstrip(":").strip()
+        if candidate:
+            out.append(candidate)
+    return out
+
+
+def _walk_touches(records):
+    """`(sha, rel_path)` pairs out of `ai_common.log_paths` RECORDS.
+
+    Each element of that list is one commit's block -- `"<sha>\\n<first path>"`
+    then bare `"<path>"` blocks, because `-z` terminates records, not lines --
+    so iterating it as bare paths would attribute one path per commit and
+    UNDER-COUNT coverage. A block that does not start with a commit id is a
+    continuation block and belongs to the last sha seen, which is the
+    fail-closed direction: a path is never dropped, only re-parented.
+    """
+    out = []
+    current = ""
+    for rec in records:
+        head, sep, rest = rec.partition("\n")
+        if len(head) == ai_common.SHA_HEX_LEN and \
+                all(c in "0123456789abcdefABCDEF" for c in head):
+            current = head
+            body = rest.split("\n") if sep else []
+        else:
+            body = rec.split("\n")
+        for raw in body:
+            if raw and raw.strip():
+                out.append((current, raw.replace("\\", "/")))
+    return out
+
+
+def _case_sensitive(cfg) -> bool:
+    return str(cfg["protected_paths_case"]) != "case-insensitive"
+
+
+def _pin_names_state_file(pin: str, cfg) -> bool:
+    """Does this pinned entry name one of the four fast-changing state files?
+
+    Decided on the LAST component, so `.ai/state/CURRENT.md` and a bare
+    `CURRENT.md` both count, and under `case-insensitive` on the case-folded
+    pair -- a `current.md` pin evading the rule by spelling is the same D14
+    host-dependence the config key exists to record.
+    """
+    name = pin.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+    if not name:
+        return False
+    if _case_sensitive(cfg):
+        return name in PINNED_STATE_FILES
+    return name.lower() in {n.lower() for n in PINNED_STATE_FILES}
+
+
+def check_coverage_walk(cfg: dict) -> None:
+    """spec 6.3: every protected-path touch in the window is covered by an
+    ACCEPTED authorization's own `## Editable files` list.
+
+    Omission only. A commit whose path is listed nowhere is a named FAIL; a walk
+    git could not answer is a named FAIL too; only a run with nothing to govern
+    (no registered paths, no window) skips, and it says which of the two.
+    """
+    paths = list(cfg["protected_paths"])
+    if not paths:
+        record("path coverage", None,
+               "SKIP(no-protected-paths): the install registers nothing to "
+               "govern")
+        return
+    governance = cfg.get("governance") or {}
+    window = str(governance.get("window_start_commit", "") or "")
+    if window in ("", "NO_HISTORY"):
+        record("path coverage", None, f"SKIP(no-window: {window or 'unset'})")
+        return
+    if not is_git_repo(ROOT):
+        record("path coverage", False,
+               "no git repository to walk (see the `git repository` check), so "
+               "coverage cannot be certified")
+        return
+    shallow = ai_common.is_shallow(ROOT)
+    if shallow != "FALSE":
+        # TRUE: history is truncated, so an absent commit is not evidence of an
+        # unreviewed change. UNKNOWN: git could not even answer that. Both halt
+        # (spec 6: `UNKNOWN` halts, and a bounded walk is bounded by history
+        # availability, which is why this may not skip its way to green).
+        record("path coverage", False,
+               f"shallow/indeterminate history ({shallow.lower()}): the bounded "
+               f"walk cannot certify coverage of window {window[:8]}..HEAD")
+        return
+    rev = f"{window}..HEAD"
+    nonmerge, why = ai_common.log_paths(
+        ROOT, ["--no-merges", "--full-history", "--pretty=format:%H", rev],
+        paths)
+    if nonmerge is None:
+        record("path coverage", False, f"walk halted: {why}")
+        return
+    merges, why = ai_common.log_paths(
+        ROOT, ["--merges", "-m", "--first-parent", "--pretty=format:%H", rev],
+        paths)
+    if merges is None:
+        record("path coverage", False, f"walk halted: {why}")
+        return
+    touched = sorted(set(_walk_touches(nonmerge) + _walk_touches(merges)))
+    records, _absent = _authorization_records(cfg)
+    editable = []
+    for rec in records:
+        if _verdict(rec) == "accepted" and rec["text"] is not None:
+            editable += _section_bullets(rec["text"], "Editable files")
+    uncovered = [(sha, rel) for sha, rel in touched
+                 if not ai_common.glob_match(rel, editable,
+                                             case_sensitive=_case_sensitive(cfg))]
+    if uncovered:
+        shown = ", ".join(f"<{sha[:8]} {rel}>" for sha, rel in uncovered[:8])
+        more = f" (+{len(uncovered) - 8} more)" if len(uncovered) > 8 else ""
+        record("path coverage", False,
+               f"{len(uncovered)} uncovered of {len(touched)} protected "
+               f"touches: {shown}{more} -- no accepted authorization's "
+               f"`## Editable files` lists these paths (spec 6.3: this is "
+               f"omission, and a fabricated record would look the same here)")
+        return
+    record("path coverage", True, f"{len(touched)} protected touches covered")
+
+
+def check_pin_violation(cfg: dict) -> None:
+    """spec 6.1: the only proposed check whose falsifiable fact lies entirely
+    inside the repo -- a pin on a fast-changing state file."""
+    records, dir_absent = _authorization_records(cfg)
+    if dir_absent or not records:
+        record("pin violation", None, "SKIP(no-authorizations)")
+        return
+    unreadable = [r for r in records if r["text"] is None]
+    if unreadable:
+        record("pin violation", False,
+               "cannot read the authorization record(s) "
+               + ", ".join(f"{r['rel']} ({r['read_err']})" for r in unreadable)
+               + "; an unreadable pin list is not an empty one")
+        return
+    offenders = [(r["rel"], pin) for r in records
+                 for pin in _section_bullets(r["text"], "Pinned baselines")
+                 if _pin_names_state_file(pin, cfg)]
+    if offenders:
+        record("pin violation", False,
+               f"{len(offenders)} forbidden pin(s): "
+               + "; ".join(f"{rel} pins {pin}" for rel, pin in offenders)
+               + " -- CURRENT/TASK/BLOCKERS/LATEST are rewritten every few "
+                 "minutes, so pinning one stalls the routine edit it names "
+                 "(spec 6.1)")
+        return
+    record("pin violation", True,
+           f"{len(records)} authorization record(s), no state file pinned")
+
+
+def check_role_policy_integrity(cfg: dict) -> None:
+    """spec 6.2: the governance document's SHA-256 is pinned in config, so
+    changing it requires a diff a human reads. Anchor grepping was rejected --
+    `"T1" in text` is satisfied by "R12" -- so this asks one decidable
+    question: do the bytes hash to the promise?"""
+    want = str(cfg["role_policy_sha256"] or "").strip()
+    if not want:
+        record("role policy integrity", None, "SKIP(no-sha-pinned)")
+        return
+    if not SHA256_RE.fullmatch(want):
+        # `_check_shape` refuses this on the way in; the check repeats the rule
+        # because an in-process caller hands this function a dict directly, and
+        # a digest that cannot match anything must fail rather than compare.
+        record("role policy integrity", False,
+               f"config's role_policy_sha256 is not 64 lowercase hex "
+               f"({want!r}), so nothing could satisfy it")
+        return
+    # `AI_DIR / state / ROLE_POLICY.md` is the repo-relative
+    # `.ai/state/ROLE_POLICY.md`; AI_DIR is the resolved one (D19), and
+    # `required .ai/state/ROLE_POLICY.md` (a floor entry) already certifies
+    # presence for the default path. Here the question is identity, not presence.
+    path = AI_DIR / "state" / "ROLE_POLICY.md"
+    rel = ".ai/state/ROLE_POLICY.md"
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        record("role policy integrity", False,
+               f"{rel} is missing while config pins its digest: the pinned "
+               f"document is not on disk to verify")
+        return
+    except OSError as exc:
+        record("role policy integrity", False,
+               f"{rel} could not be read: {type(exc).__name__}: {exc}")
+        return
+    got = hashlib.sha256(raw).hexdigest()
+    if got == want:
+        record("role policy integrity", True,
+               f"{rel} digests to the pinned {want} ({len(raw)} bytes)")
+        return
+    record("role policy integrity", False,
+           f"{rel} digests to {got} but config pins {want}: the governance "
+           f"document changed without the config edit that makes the change "
+           f"visible")
+
+
+def check_swarm_boundary(cfg: dict) -> None:
+    """N1: SKILL.md declares concurrent swarms out of scope and the protocol
+    mandates one live authorization per stage, yet two accepted records used to
+    verify green because every other check reads one file at a time.
+
+    The count that IS decidable breaks the boundary first, so a blockless legacy
+    record cannot be used to hide a second accepted one.
+    """
+    records, dir_absent = _authorization_records(cfg)
+    if dir_absent or not records:
+        record("swarm boundary", True,
+               f"0 accepted authorizations: no stage record in "
+               f"{_authorization_dir_label(cfg)}, so nothing is live and "
+               f"nothing can be concurrent")
+        return
+    broken, legacy, accepted = [], [], []
+    for rec in records:
+        if rec["text"] is None:
+            broken.append(f"{rec['rel']} (unreadable: {rec['read_err']})")
+        elif rec["gov_err"]:
+            broken.append(f"{rec['rel']} ({rec['gov_err']})")
+        elif rec["fields"] is None:
+            legacy.append(rec["rel"])
+        elif _verdict(rec) == "accepted":
+            accepted.append(rec["rel"])
+    if len(accepted) > 1:
+        record("swarm boundary", False,
+               f"{len(accepted)} concurrent accepted authorizations ({', '.join(sorted(accepted))}): "
+               f"SKILL.md declares concurrent swarms out of scope, and one "
+               f"stage = one live authorization")
+        return
+    if broken:
+        record("swarm boundary", False,
+               f"{len(broken)} record(s) carry a governance block that cannot "
+               f"be parsed, so the accepted count is not decidable and cannot "
+               f"be certified either way: " + "; ".join(broken))
+        return
+    if legacy:
+        record("swarm boundary", None,
+               f"SKIP(no-governance-block: {', '.join(sorted(legacy))}): a "
+               f"legacy record with no `## Governance` block is a named WARN "
+               f"(spec 6), carries no verdict, and is therefore not counted as "
+               f"accepted -- so the concurrency question stays open here "
+               f"rather than booking a PASS")
+        return
+    record("swarm boundary", True,
+           f"{len(accepted)} accepted authorization(s) of {len(records)} "
+           f"record(s) in the window")
+
+
 def _summarise() -> int:
     """One line that says what was PASSED, out of what ran, and what skipped.
 
@@ -993,7 +1447,15 @@ def main() -> int:
             ("line budgets", lambda: check_line_budgets(cfg, nulled)),
             ("secrets ignored", lambda: check_secrets_ignored(cfg)),
             ("secret mirrors", lambda: check_secret_mirrors(cfg)),
-            ("extra checks", lambda: check_extra(cfg))):
+            ("extra checks", lambda: check_extra(cfg)),
+            # Wave 1b: the four governance checks, last on purpose. Everything
+            # above asks about THIS install; these ask about the records the
+            # install keeps about its own history, and they need a config that
+            # parsed and a layout that held before they can mean anything.
+            ("path coverage", lambda: check_coverage_walk(cfg)),
+            ("pin violation", lambda: check_pin_violation(cfg)),
+            ("role policy integrity", lambda: check_role_policy_integrity(cfg)),
+            ("swarm boundary", lambda: check_swarm_boundary(cfg))):
         try:
             run_check()
         except Exception as exc:  # noqa: BLE001 -- naming it IS the check

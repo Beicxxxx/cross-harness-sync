@@ -38,10 +38,16 @@ def test_fresh_scaffold_verifies_all_green(ai_repo):
 
     Lane S2 (r1 finding 12): `all(ln.startswith("[PASS]"))` was the assertion a
     legitimate fresh-install SKIP contradicts, so the accepted set is now "PASS,
-    or this ONE named SKIP". The shipped template registers no `extra_checks` and
-    no `secret_mirrors`, and finding 2 turns that emptiness into a named line:
-    the run may no longer book `N/N` for a governance set nobody registered.
-    FAIL, WARN, silence and a SECOND skip are still breaks, and the summary's own
+    or one of the NAMED skips". The shipped template registers no `extra_checks`
+    and no `secret_mirrors`, and finding 2 turns that emptiness into a named
+    line: the run may no longer book `N/N` for a governance set nobody
+    registered. Wave 1b adds three more names to that same set, all of them the
+    spec-7 defaults rather than a machine that failed to look: `[SKIP] path
+    coverage` (`protected_paths` defaults to empty, spec 7), `[SKIP] pin
+    violation` (no authorization records yet), `[SKIP] role policy integrity`
+    (no SHA pinned yet). `swarm boundary` is the fourth new check and it PASSes
+    here with a count of zero. FAIL, WARN, silence, a SECOND skip of the same
+    name, and any skip outside this list are still breaks, and the summary's own
     skip tail is pinned against the SKIP lines actually printed.
     """
     res = run_python(ai_repo / ".ai" / "scripts" / "sync_verify.py", cwd=ai_repo)
@@ -49,18 +55,27 @@ def test_fresh_scaffold_verifies_all_green(ai_repo):
     assert res.stdout_raw, "verifier exited 0 without writing any output"
     checks = [ln for ln in res.lines if ln.startswith("[")]
     assert checks, res.lines
-    allowed_skip = ("[SKIP] registered project checks:",)
+    # Lane S2 finding 2's unregistered-governance-set SKIP, then the wave-1b
+    # named governance SKIPs. Add a name here only with a spec section behind it.
+    allowed_skip = ("[SKIP] registered project checks:",
+                    "[SKIP] path coverage:",
+                    "[SKIP] pin violation:",
+                    "[SKIP] role policy integrity:")
     not_green = [ln for ln in checks if not ln.startswith("[PASS]")
                  and not ln.startswith(allowed_skip)]
     assert not not_green, not_green
     skips = [ln for ln in checks if ln.startswith(allowed_skip)]
-    assert len(skips) <= 1, checks
+    # One line per named degradation: a SECOND `[SKIP] path coverage:` would mean
+    # a check was wired into the run twice, and a duplicate of any other name
+    # means the same thing. Still exactly one unknown skip allowed: zero.
+    names = [ln.split(":", 1)[0] for ln in skips]
+    assert len(names) == len(set(names)), skips
     unbracketed = [ln for ln in res.lines if not ln.startswith("[")]
     assert not [ln for ln in unbracketed if WARNISH.search(ln)], unbracketed
     summary = [ln for ln in res.lines if "checks passed" in ln]
     assert len(summary) == 1, res.lines
     if skips:
-        assert ", 1 skipped" in summary[0], (summary[0], skips)
+        assert f", {len(skips)} skipped" in summary[0], (summary[0], skips)
     else:
         assert "skipped" not in summary[0], summary[0]
 
