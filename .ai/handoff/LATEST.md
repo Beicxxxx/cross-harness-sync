@@ -52,9 +52,13 @@
 
 ## 5. Next step
 
-Ask the user whether to tag `v2.1.0` and publish the Release notes; if wave 1c
-is approved, open a record for it first and fix
-`templates/AGENTS.md`'s `git add -A` line inside that stage.
+Publish this stage: `v2.1-dogfood-10d` (`ddcf5f9`, `b32c818`) is committed
+locally with **no upstream** — `git push` dies in a non-interactive shell because
+Git Credential Manager cannot prompt (`/dev/tty` absent), while the `gh` token is
+still valid. `handoff/NEXT_PROMPT.md` carries both routes and the commands. Until
+the push lands, the public repo has no `.ai/` and the §10.D figures are local
+only. Then ask the user about tagging `v2.1.0`; if wave 1c is approved, open its
+record first and fix `templates/AGENTS.md`'s `git add -A` line inside that stage.
 
 ## 6. Must-read list
 
