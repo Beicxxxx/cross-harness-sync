@@ -123,6 +123,165 @@ def compare_version(a, b) -> int:
     left, right = parse_version(a), parse_version(b)
     return (left > right) - (left < right)
 
+
+# Imported here rather than in the header because these are the module's only
+# readers and they sit below: `_GOV_KEY = re.compile(...)` runs at IMPORT time,
+# so an `import re` placed any lower than this would leave that line without a
+# name and the whole module unloadable.
+import fnmatch  # noqa: E402  (module-level, beside its only users by design)
+import re  # noqa: E402  (module-level, beside its only users by design)
+
+
+def parse_governance_block(text):
+    """`(fields, None)` or `({}, why)`; `(None, None)` when there is no block.
+
+    Spec §6's record-format contract, and the three shapes that make this parser
+    worth having rather than a `split(":")` loop: the fence gives unambiguous
+    start/end (so no nested-bullet, stray-line or continuation problem), a
+    repeated key is FATAL because this is audit data and last-wins would let a
+    second `verdict:` silently overrule the first, and an unfilled `<template>`
+    value is fatal because a record shipped with its placeholders intact reads as
+    a completed audit. An unknown key is kept: the schema must stay
+    forward-compatible or a newer writer breaks every older reader.
+
+    The absent block returns `(None, None)` — NOT a default dict — so the caller
+    can name a WARN. A legacy document with no governance block is the one
+    degradation here, and a degradation may never become a PASS (§6, §7).
+    """
+    lines = text.splitlines()
+    try:
+        start = next(i for i, ln in enumerate(lines)
+                     if ln.strip().lower().startswith(_GOVERNANCE_OPEN))
+    except StopIteration:
+        return None, None
+    fields, seen, j = {}, set(), start + 1
+    while j < len(lines) and not lines[j].strip().startswith(_GOVERNANCE_CLOSE):
+        raw = lines[j]; j += 1
+        if not raw.strip():
+            continue
+        key, sep, val = raw.partition(": ")
+        if not sep:
+            return {}, f"governance line has no ': ' separator: {raw!r}"
+        key = key.strip(); val = val.strip()
+        if not _GOV_KEY.match(key):
+            return {}, f"governance key is not [a-z][a-z0-9_]*: {key!r}"
+        if key in seen:
+            return {}, f"governance key repeated (audit data, no last-wins): {key!r}"
+        seen.add(key)
+        if _GOV_UNFILLED.match(val):
+            return {}, f"governance value is an unfilled placeholder: {key}: {val!r}"
+        fields[key] = val
+    if j >= len(lines):
+        return {}, "governance block is never closed"
+    return fields, None
+
+
+def glob_match(rel_path, patterns, case_sensitive=True):
+    """D14: forward-slash patterns, matched case-sensitively and separators first.
+
+    Both halves are load-bearing. `fnmatch.fnmatchcase` rather than
+    `fnmatch.fnmatch` because the latter applies `os.path.normcase`, which on
+    Windows lowercases BOTH sides — so the pattern `a/B/*.md` would match
+    `a/b/c.md` there and the coverage walk would pass on the machine that wrote
+    the config and fail on the one that did not. Backslashes are folded to `/`
+    before matching because git prints `/` and `Path.as_posix()` prints `/` while
+    a caller holding a Windows path hands over backslashes: same file, different
+    answer.
+    """
+    norm = rel_path.replace("\\", "/")
+    for pat in patterns:
+        p = pat.replace("\\", "/")
+        if case_sensitive:
+            if fnmatch.fnmatchcase(norm, p):
+                return True
+        elif fnmatch.fnmatchcase(norm.lower(), p.lower()):
+            return True
+    return False
+
+
+def _tri(res, yes_when):
+    """Three-valued reduction of a git result: TRUE / FALSE / UNKNOWN.
+
+    rc 0 and 1 are the only answers that MEAN anything; everything else (128 for
+    a shallow clone or an absent object, a timeout, git missing) is "cannot
+    determine" and must stay distinguishable from FALSE. Reducing it to a boolean
+    is what turns an unverifiable history into a licence to clobber, so UNKNOWN
+    propagates and the caller halts on it.
+    """
+    if res.timed_out or res.rc not in (0, 1):
+        return "UNKNOWN"
+    return "TRUE" if yes_when(res.rc) else "FALSE"
+
+
+def git_ancestor(root, ancestor, descendant):
+    """TRUE / FALSE / UNKNOWN; rc 128 (shallow, absent object) is UNKNOWN."""
+    res = run_git(root, ["merge-base", "--is-ancestor", ancestor, descendant], timeout=15)
+    return _tri(res, lambda rc: rc == 0)
+
+
+def commit_exists(root, sha):
+    """Existence by `cat-file -e`, not `rev-parse --verify`.
+
+    Measured: `rev-parse --verify <absent>` exits 0 and echoes the string back, so
+    as an existence probe it reports every absent SHA as present. `cat-file -e`
+    refuses instead, and the `^{commit}` suffix pins the question to commits rather
+    than "any object with this id" (a blob id must not pass as a commit).
+
+    One correction to the shipped `_tri` shape, measured on git 2.x here: `cat-file
+    -e <absent>^{commit}` exits **128**, not 1 — so a plain `_tri` reduction would
+    answer UNKNOWN for every absent commit and existence would never be decidable,
+    which is not what §6 asks of this probe either. rc 128 is therefore split by the
+    one thing that makes "absent" and "not fetched yet" genuinely different: whether
+    this repository's history is truncated. Shallow, timing out, or a git that
+    cannot even answer (`is_shallow` -> UNKNOWN for a dubious-ownership or corrupt
+    repo) stays UNKNOWN and halts the caller; a whole repository that has no such
+    object says FALSE.
+    """
+    res = run_git(root, ["cat-file", "-e", f"{sha}^{{commit}}"], timeout=15)
+    if res.timed_out:
+        return "UNKNOWN"
+    if res.rc in (0, 1):
+        return _tri(res, lambda rc: rc == 0)
+    if res.rc == 128 and is_shallow(root) == "FALSE":
+        return "FALSE"
+    return "UNKNOWN"
+
+
+def is_shallow(root):
+    """TRUE / FALSE / UNKNOWN — how much of the history the other two can be trusted for."""
+    res = run_git(root, ["rev-parse", "--is-shallow-repository"], timeout=15)
+    if res.timed_out or res.rc != 0:
+        return "UNKNOWN"
+    return "TRUE" if res.out().strip() == "true" else "FALSE"
+
+
+def log_paths(root, args, pathspec):
+    """NUL-split paths: `(paths, None)` or `(None, why)`.
+
+    `(None, None)` never happens on the success path — an empty log is a real
+    answer, [] is returned for it — so a `None` here is always a failure the
+    caller has to name. `-z` is what makes that safe: it emits raw unquoted bytes,
+    so a path with a space, a non-ASCII name, or a quote in it cannot forge a
+    record or make one disappear the way `--name-only`'s C-style quoting would.
+    Split on NUL, never `splitlines()`, for the same reason.
+
+    WHAT EACH ELEMENT IS, measured, because it is not "one path per element": a
+    record is one COMMIT's block, and with §6.3's `--pretty=format:%H` the block is
+    `"<sha>\n<first path>"` followed by `"<path>"` records — the sha arrives glued to
+    the first path of its own commit, since `-z` terminates blocks, not lines. A
+    caller that treats this list as bare paths counts one path per commit and
+    under-reports coverage; `record.partition("\n")` is the split that attributes a
+    path to the commit that touched it.
+    """
+    res = run_git(root, ["log", *args, "--name-only", "-z", "--", *pathspec], timeout=15)
+    if res.timed_out:
+        return None, "git log timed out"
+    if res.rc != 0:
+        detail = decode(res.stderr).strip().splitlines()
+        return None, f"git log rc={res.rc}: {detail[-1][:160] if detail else 'no stderr'}"
+    return [decode(b) for b in res.stdout.split(b"\x00") if b], None
+
+
 # git's own "which repository am I working on" variables. A git hook exports
 # them, and any child git process that inherits one answers about the OUTER
 # repository no matter which directory it was started in — the same
@@ -169,6 +328,22 @@ def decode(raw: bytes | None) -> str:
 # a tree whose own scripts refused to upgrade it. One copy, read by the
 # installer, the verifier, and any companion record the wave-1b migration writes.
 PROTOCOL_VERSION = "2.1.0"
+
+# The canonical id lengths (§6): 40-hex for the SHA-1s this protocol stores, and
+# 64-hex for the SHA-256 digest that pins ROLE_POLICY.md. They are constants, not
+# literals scattered per script, because "is this a commit id" is a question three
+# callers ask and a wrong answer there reads a garbage field as a verified sha.
+SHA_HEX_LEN = 40
+SHA256_HEX_LEN = 64
+
+# Where an authorization lives (§6): the directory v2.0 mandated ("one stage = one
+# authorization file") but gave no canonical home, so nothing could read it back.
+AUTHORIZATIONS_SUBDIR = "state/authorizations"
+
+_GOVERNANCE_OPEN = "```governance"
+_GOVERNANCE_CLOSE = "```"
+_GOV_KEY = re.compile(r"^[a-z][a-z0-9_]*$")
+_GOV_UNFILLED = re.compile(r"^<[^<>]*>$")  # ASCII angle brackets only
 
 
 def protect_stdio() -> None:
