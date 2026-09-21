@@ -57,10 +57,13 @@ DEFAULT_REQUIRED_FILES = [
 
 # The governance floor under the required-file list, living next to the list it
 # protects. `required_files` merges by REPLACE — which is what lets a repo with
-# no decision log say so — and a replace is also one key away from dropping the
-# files nothing else checks. Spec 4 lets a check be skipped only after proving
-# necessity elsewhere, and at this HEAD nothing else covers these five:
-# `protocol/VERSION` is in no other list at all. So the floor is unioned back in
+# no decision log say so — and that same replace is one key away from dropping,
+# in one line of config, the files that carry the protocol's safety guarantees. Spec 4 lets a check be skipped only after proving
+# necessity elsewhere. The reason this floor exists is NOT that the two commands
+# miss these files — since `51944cf` both union this same object (`--validate`
+# reads the config and the floor, `sync_verify.py` prints `protocol version
+# readable`) — it is that a config edit must never be able to un-check a safety
+# file. So the floor is unioned back in
 # after the merge, and unlike the rest of that key it is NOT configurable: config
 # may add requirements and may drop the optional tail (DECISIONS, DECISIONS_INDEX,
 # LATEST), nothing more.

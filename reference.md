@@ -24,11 +24,12 @@ customizing, or debugging the protocol — not during normal operation.
 │   └── archive/              # timestamped past handoffs
 ├── templates/
 │   └── AUTHORIZATION.md      # one stage = one authorization file
-├── protocol/VERSION          # protocol semver
+├── protocol/VERSION          # PROTOCOL version (a semver stamp), not the skill's release version
 ├── runtime/                  # machine-local, gitignored EXCEPT the lock
 │   ├── STATUS.json           # written only by checkpoint.py
 │   └── WRITER_LOCK.json      # advisory lock; tracked so it travels via git
 └── scripts/
+    ├── ai_common.py          # shared primitives; both entry scripts hard-exit 2 without it
     ├── checkpoint.py
     └── sync_verify.py
 ```
@@ -66,28 +67,58 @@ completion condition, absolute stop boundary. One stage = ONE file. Never pin
 CURRENT/TASK/BLOCKERS/LATEST — frequently-changing state files are not pinning
 targets (pinning them once caused a stall over a routine state edit).
 
-## Token budgets (defaults in sync_config.json)
+## Line budgets (defaults in sync_config.json)
+
+A line is a weak proxy for tokens in CJK state files, which this protocol
+permits; real token accounting is a wave-2 measurement, not a wave-1 claim.
 
 | File | Cap | Why |
 |---|---|---|
-| `AGENTS.md` | 65 lines | canonical instructions, auto-read by every harness |
+| `AGENTS.md` | 65 lines — 81 after `init_sync.py` appends its 16-line managed block; the installer edits `.ai/sync_config.json` to pay for the block it added, and `--no-agents-block` deletes the row instead | canonical instructions, auto-read by every harness |
 | `.ai/state/CURRENT.md` | 60 | L0 must stay cheap |
 | `.ai/handoff/LATEST.md` | 80 | handoff is skimmed every session |
 | `.ai/handoff/NEXT_PROMPT.md` | 100 | executor prompt |
 | `.ai/state/DECISIONS_INDEX.md` | 110 | one line per decision |
 | `DECISIONS.md` | 20 active `##` entries | archive the rest |
 
-Budgets are enforced by `sync_verify.py`, not by discipline. A file over
-budget must be slimmed before commit.
+Budgets are enforced by `sync_verify.py`, not by discipline: an over-budget or
+uncapped file goes red on every run, and a file over budget must be slimmed
+before commit. That is enforcement of the mechanically decidable — omission. It
+cannot detect fabrication: nothing here binds a name to an event that did not
+happen.
+
+## Protocol version
+
+`.ai/protocol/VERSION` is the **protocol** version, not the skill's release
+version, and wave 1a does not treat the two as the same number. `init_sync.py`
+compares the stamp with its own `PROTOCOL_VERSION` before writing anything: a
+newer or unparseable stamp is refused with `VERSION MISMATCH: …` and exit 1,
+including under `--force`/`--clobber`; an older one is reported as an upgrade.
+`sync_verify.py` prints `protocol version readable` for the file it finds.
+Wave 1b's `--migrate` is meant to read that stamp rather than assume it.
 
 ## Advisory writer lock
 
 - Acquire: `checkpoint.py --lock --agent <name> [--ttl 14400] [--reason <id>]`.
-  Refuses (exit 1) if another agent holds an unexpired lock; `--force`
-  overrides but the reason must be recorded in the handoff.
-- Release: `--unlock` marks `released_at` — the lock file is **never deleted**,
-  so git history is the audit trail (pattern borrowed from mcp_agent_mail's
-  persisted lease artifacts).
+  Refuses (exit 1) if another agent holds an unexpired lock, if the checkout is a
+  linked worktree, a symlinked/junctioned `.ai`, not at the repository root, or a
+  layout git cannot describe, and if the tracked record cannot be parsed — an
+  unreadable record is HELD, never free. `--force` overrides, and always requires
+  `--reason "<why>"`: `--force` without it is a usage error, exit 2. `--force`
+  takes a lock OVER; only `--force --discard-lock` abandons an unparseable
+  record, and neither resolves a git conflict. Both the reason and any
+  `forced_layout` kind are written into the record so the next machine can see
+  the takeover.
+- Release: `--unlock --agent <name>` marks `released_at` — the name is required
+  against a live or expired record (exit 2 without it, exit 1 if it is not
+  yours) — and the lock file is **never deleted**, so git history is the audit
+  trail (pattern borrowed from mcp_agent_mail's persisted lease artifacts).
+- What the lock does not do: `--handoff`, the bare checkpoint, `--status` and
+  `--prime` do not stop for another holder. The state-writing commands print a
+  named `WARN <command>: the writer lock is held by <name> …` and continue at
+  exit 0 (`--force` over a refused layout adds a second WARN, and says plainly
+  that nothing records the split there). Concurrent many-agent writers are out of
+  scope, not rejected.
 - `WRITER_LOCK.json` is the ONE tracked file under `runtime/` (`.gitignore`
   excepts it) so the lock travels across machines with `git pull`. All other
   runtime files are machine-local.
@@ -139,11 +170,26 @@ never block, never write state files — hooks remind, the agent writes.
 
 - `secret_files`: each must be git-ignored (`git check-ignore` must succeed).
 - `secret_mirrors`: pairs of env files whose KEY NAMES must be identical sets
-  (e.g. a canonical `.env` and a harness-specific mirror).
+  (e.g. a canonical `.env` and a harness-specific mirror). Presence is checked
+  too, and it is three-valued: both sides absent is a named
+  `SKIP(no mirrored secrets on this machine)` (mirrored secrets are git-ignored,
+  so a second machine legitimately has none); exactly one side present is a
+  `FAIL` naming the missing side, because a one-sided mirror is local drift or a
+  wrong path in the config, not a per-machine difference; both present must
+  agree on key names.
 - `extra_checks`: project-specific verifiers (freeze manifests, drift checks).
-  PASS iff exit code 0. This is where a project's scientific freezes plug in.
+  PASS iff the command exits 0 AND wrote something: an exit 0 with zero bytes on
+  both streams is a named `SKIP`, and a timeout or an unlaunchable command is a
+  FAIL. `rc == 0` is never sufficient. Both timeouts are configurable
+  (`check_timeout`, `git_check_timeout`). This is where a project's scientific
+  freezes plug in.
 
 ## Role policy (summary — full text in templates/ROLE_POLICY.md)
+
+**Recorded, not enforced.** The policy is installed as a required file, so the
+verifier can prove it is *missing*; nothing in wave 1a can prove a review
+happened, who performed it, or which model family they belonged to. The
+`protected_paths` coverage walk that would name uncovered commits is wave 1b.
 
 - **T1 ordinary**: no LLM review. **T2 protected** (freeze/hash/authorization/
   fail-closed paths): one cross-family reviewer, diff + hashes + targeted
@@ -165,7 +211,12 @@ State files may be written in whatever language the team reads fastest, but
 pick ONE per repo and record the choice in AGENTS.md. Timestamps: human-readable
 with explicit timezone and UTC offset, e.g. `2026-08-31 21:21:22
 (Australia/Sydney, UTC+10:00)` — harnesses get timezones wrong often enough
-that the offset must be written out.
+that the offset must be written out. The **offset is the authority**; the zone
+name is opportunistic. `checkpoint.py` prints a zone name only when it is ASCII,
+because on a localized Windows host `tzname()` returns the OS's translated name
+(in a zh locale, a string that mojibakes a legacy console) and an abbreviation
+like `CST` is ambiguous anyway; there the line reads `(UTC+10:00)` and nothing
+is lost.
 
 ## Provenance of borrowed mechanisms
 
