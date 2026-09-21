@@ -3,9 +3,9 @@
 ## v2.1.0 — wave 1a (defect fixes), 2026-09-21
 
 Wave 1a is a correctness release: it fixes defects in the v2.0 scripts rather
-than adding governance. **27 defects were found, 25 were fixed in wave 1a, and
-D14 is deferred to wave 1b because the glob-matching code it applies to does not
-exist yet** (quoted from the spec's §5 table — `docs/superpowers/specs/
+than adding governance. **27 defects were found, 26 were fixed in wave 1a, and
+D14 is the only deferral, to wave 1b, because the glob-matching code it applies
+to does not exist yet** (quoted from the spec's §5 table — `docs/superpowers/specs/
 2026-09-21-cross-harness-sync-v2.1-design.md` — which is the only authority for
 that number; no count in a commit message on this branch is quotable, and two of
 them are known to be wrong: `664bd67` states 21 where 18 was measured, and

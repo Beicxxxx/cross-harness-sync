@@ -83,9 +83,14 @@ failure, and from measuring a premise that was assumed rather than tested:
 
 Severity: C = critical, M = major, m = minor. "Conv" = independently confirmed by more
 than one reviewer. **Canonical count, to be used verbatim in CHANGELOG, README and any
-application text: 27 found; 25 fixed in wave 1a; D14 deferred to 1b because the
-glob-matching code it applies to does not exist yet; D27 added by the `init_sync.py`
-blind audit after this section was first written.**
+application text: 27 found; 26 fixed in wave 1a; D14 deferred to 1b because the
+glob-matching code it applies to does not exist yet. The arithmetic, spelled out:
+the table below has **26 rows, D1-D26**; **D27** was added by the `init_sync.py`
+blind audit after this section was first written, and it **was** fixed on this
+branch (`6ec73ae`), so 26 + 1 = 27 found and 27 - 1 deferred (D14) = **26 fixed**.
+The "25 fixed" this sentence carried since it was written left one defect
+unaccounted in both this text and `CHANGELOG.md`, and every later artifact quotes
+this sentence; corrected in lane Z.**
 
 | # | Sev | Defect | Fix | Regression test |
 |---|---|---|---|---|
