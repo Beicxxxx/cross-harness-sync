@@ -59,7 +59,7 @@ def _flat(*names: str) -> str:
 
 
 def test_d26_unit_claim_is_clean_outside_templates():
-    """Nothing a buyer reads may call the caps token budgets; the code counts lines."""
+    """Nothing a buyer reads may claim the caps count tokens; the code counts lines."""
     hits = _git_grep(D26_NEEDLE, "--", ":!docs/superpowers")
     assert set(hits) <= TEMPLATE_RESIDUAL, hits
     assert "SKILL.md" not in hits and "README.md" not in hits
