@@ -232,6 +232,39 @@ POSITIVE_INT_KEYS = {"decisions_max_active_entries": "entry cap",
 # Keys whose list entries are repo-relative paths.
 PATH_LIST_KEYS = ("secret_files", "required_files")
 
+# Magnitude ceilings for the numbers that ARE the governance layer (lane Z
+# finding 4). Shape alone let six `999999999`s through: every budget line then
+# measured nothing and still booked a PASS, which is the numeric twin of the
+# explicit-`null` decline lane S2 turned into a SKIP. A cap nobody can fail is
+# not a cap, so an out-of-range value is refused as `malformed:` and names the
+# ceiling it broke.
+#
+# Each ceiling is derived from what the thing it bounds can actually be, not
+# from a round number:
+#   LINE_CAP_CEILING  10,000 lines. The largest built-in cap is 110
+#                     (DECISIONS_INDEX) and the largest cap the installer is
+#                     allowed to raise to is 81 (65 own + 16 managed block).
+#                     Ten thousand lines is 90x the biggest real cap and far
+#                     past any file a human reads at startup -- beyond it the
+#                     file is an L2 archive, which this protocol forbids
+#                     reading in full and so never budgets.
+#   ENTRY_CAP_CEILING 2,000 entries. An active decision entry is capped at 15
+#                     lines by the protocol's own template, so 2,000 active
+#                     entries is a 30,000-line DECISIONS.md -- already past the
+#                     line ceiling above, and the archive index that exists to
+#                     bound it.
+#   TIMEOUT_CEILING   86,400 seconds. One day of wall clock. The knobs default
+#                     to 600 (project checks) and 30 (git check-ignore); a
+#                     child a human will not wait a day for is a hung child,
+#                     and the timeout stops being a bound above it.
+LINE_CAP_CEILING = 10_000
+ENTRY_CAP_CEILING = 2_000
+TIMEOUT_CEILING = 86_400
+POSITIVE_INT_CEILINGS = {"decisions_max_active_entries":
+                         (ENTRY_CAP_CEILING, "entries"),
+                         "check_timeout": (TIMEOUT_CEILING, "seconds"),
+                         "git_check_timeout": (TIMEOUT_CEILING, "seconds")}
+
 
 class ConfigError(Exception):
     """The config was missing, unreadable, unparseable, or shaped wrong.
@@ -344,6 +377,13 @@ def _check_shape(key: str, val) -> None:
         # JSON boolean has to be named here rather than trusted to `int`.
         raise ConfigError(f"malformed: config key {key!r} must hold a positive "
                           f"integer {POSITIVE_INT_KEYS[key]}, got {val!r}")
+    if key in POSITIVE_INT_CEILINGS and isinstance(val, int) \
+            and not isinstance(val, bool) and val > POSITIVE_INT_CEILINGS[key][0]:
+        ceiling, unit = POSITIVE_INT_CEILINGS[key]
+        raise ConfigError(f"malformed: config key {key!r} must hold at most "
+                          f"{ceiling} {unit}; above that the {POSITIVE_INT_KEYS[key]} "
+                          f"cannot be reached, so it verifies nothing "
+                          f"(derivation next to the constant), got {val!r}")
     if key == "secret_mirrors":
         for idx, pair in enumerate(val):
             if (not isinstance(pair, list) or len(pair) != 2
