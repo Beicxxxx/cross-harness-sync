@@ -103,7 +103,12 @@ logged in `.ai/state/DECISIONS.md` for wave 1c: `templates/AGENTS.md` tells ever
 harness to run `git add -A && git commit && git push` two lines above its own
 "never commit secrets" rule. Full rows, including the live lock record and the
 `--review-prompt` output on a real window, are in §7 of
-`docs/evidence/wave1b-facts.md`.
+`docs/evidence/wave1b-facts.md`. One number there is stage-relative on purpose:
+the walk reported 29 protected touches before this stage's own commit and 30
+after it, because that commit touches a protected path the record lists. Each
+later commit that touches one adds another, and it stays green only while an
+accepted record names that path — that is the mechanism working, not a stale
+figure.
 
 **Re-measured after the final whole-branch review.** Three false-greens the
 reviewer measured on this host are closed here, each red-first: a

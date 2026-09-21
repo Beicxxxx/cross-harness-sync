@@ -15,7 +15,9 @@
   `docs/evidence/*`; role-policy digest pinned; window set to the wave's own base
   `db091bdcea61daf73bb9cbcae446ef893490bd50`.
 - Coverage walk over real history: 29 uncovered of 29 before the stage record,
-  `[PASS] path coverage: 29 protected touches covered` after it.
+  `[PASS] path coverage: 29 protected touches covered` after it, and 30 once this
+  stage's own commit landed — every later commit that touches a protected path
+  adds one, and only an accepted record naming it keeps the line green.
 - Project's own suite registered as an `extra_checks` check; in-repo verifier now
   `== 25/25 checks passed ==`, rc 0, no `[SKIP]` line.
 - Pre-commit review by a fresh separate-context subagent: 4 Important, all
