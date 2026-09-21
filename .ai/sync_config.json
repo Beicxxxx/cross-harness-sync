@@ -1,0 +1,53 @@
+{
+  "required_files": [
+    ".ai/state/CURRENT.md",
+    ".ai/state/TASK.md",
+    ".ai/state/BLOCKERS.md",
+    ".ai/state/ROLE_POLICY.md",
+    ".ai/state/DECISIONS.md",
+    ".ai/state/DECISIONS_INDEX.md",
+    ".ai/handoff/LATEST.md",
+    ".ai/protocol/VERSION",
+    ".ai/state/authorizations/INDEX.md"
+  ],
+  "budgets": {
+    "AGENTS.md": 65,
+    ".ai/state/CURRENT.md": 60,
+    ".ai/handoff/LATEST.md": 80,
+    ".ai/handoff/NEXT_PROMPT.md": 100,
+    ".ai/state/DECISIONS_INDEX.md": 110
+  },
+  "decisions_max_active_entries": 20,
+  "decisions_file": ".ai/state/DECISIONS.md",
+  "secret_files": [
+    ".env"
+  ],
+  "secret_mirrors": [],
+  "extra_checks": [
+    {
+      "name": "python test suite",
+      "cmd": [
+        "python",
+        "-m",
+        "pytest",
+        "tests/",
+        "-n",
+        "8",
+        "-o",
+        "addopts=",
+        "-q"
+      ]
+    }
+  ],
+  "protected_paths": [
+    "scripts/*",
+    "templates/*",
+    "docs/evidence/*"
+  ],
+  "protected_paths_case": "case-sensitive",
+  "authorizations_dir": ".ai/state/authorizations",
+  "role_policy_sha256": "03f80ef052c5047536584142388164637e7a9240051c0f173e8aed9113c4798b",
+  "governance": {
+    "window_start_commit": "db091bdcea61daf73bb9cbcae446ef893490bd50"
+  }
+}

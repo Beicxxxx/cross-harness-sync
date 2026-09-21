@@ -1,0 +1,13 @@
+# Decisions Index (retrieval entry point — read THIS file, never the full DECISIONS body)
+
+> Rule: new decision = one line here + ≤ 15 lines in `DECISIONS.md` active pages.
+> Full text: the most recent ~20 entries live in `DECISIONS.md`; older ones in
+> `archive/DECISIONS_<yyyymm>_full.md`.
+> Before reversing a past decision: locate it here, read ONLY that single entry.
+
+| Date | Decision | Location |
+|---|---|---|
+| 2026-09-22 | Fix wave's own defects closed by the controller, not a second lane | DECISIONS.md |
+| 2026-09-22 | Spec 10.D satisfied as certification of what landed, not a retroactive process claim | DECISIONS.md |
+| 2026-09-22 | Two shipped templates instruct behaviour the protocol forbids (`git add -A`; "cross-family review") | DECISIONS.md |
+| 2026-09-22 | Governing-copy drift and stale record grants documented, not closed | DECISIONS.md |
