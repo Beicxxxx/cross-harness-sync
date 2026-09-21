@@ -36,7 +36,8 @@ not hardcoded here. Checks, in order:
      the command exits 0 AND wrote something — an exit 0 that produced zero
      bytes on both streams is a SKIP, never a pass; e.g. a freeze verifier)
 
-Exit 0 = every check that ran passed, 1 = at least one FAIL. Every check prints
+Exit 0 = every check that ran passed, 1 = at least one FAIL, 2 = no verdict
+(`ai_common.py` missing, install root unresolvable, config unusable). Every check prints
 PASS/FAIL/SKIP plus its evidence line, and the summary prints the passed count,
 the total and the skip count on ONE line: a check that could not run is named
 and kept out of the passed fraction, never folded into it (spec 4). A run whose
@@ -907,7 +908,18 @@ def main() -> int:
         # report on a failure — but the summary still has to say 0/1 rather
         # than looking like a run that checked something.
         record("config readable", False, str(exc))
-        return _summarise()
+        # Lane Z finding 6 (LOW): SKILL.md's exit-code table documents rc 2 for
+        # "config unusable" and the code answered 1, so a run that reached NO
+        # verdict read as a verdict of FAIL -- the distinction checkpoint.py
+        # goes out of its way to keep (`--validate` rc 2 for an unreadable
+        # record, `--force` without `--reason` rc 2). The table was right; this
+        # is the half that was wrong. The printed `== 0/1 checks passed ==` and
+        # the FAILED line are unchanged, so no total moves -- only the code.
+        _summarise()
+        print("NOT VERIFIED: the config is unusable, so every check that reads "
+              "it was skipped; this is a missing verdict (rc 2), not a failed "
+              "one")
+        return 2
     # Lane S2 finding 2 (HIGH): the run never recorded how many `extra_checks`
     # and `secret_mirrors` it was ASKED to run, so `{"extra_checks": []}` — or
     # deleting the key from a config that carried three governance verifiers —

@@ -211,7 +211,10 @@ def test_a_string_valued_check_timeout_is_named_not_multiplied(ai_repo, sv):
     cfg["check_timeout"] = "1"
     cfg_path.write_text(json.dumps(cfg), encoding="utf-8")
     res = run_python(sv, cwd=ai_repo)
-    assert res.rc == 1, res.stdout
+    # F6 (lane Z): a config the shape check refuses is "unusable", which
+    # SKILL.md's exit-code table documents as rc 2 (no verdict), not rc 1
+    # (a check ran and failed). The named-in-the-message half is unchanged.
+    assert res.rc == 2, res.stdout
     assert any(ln.startswith("[FAIL] config readable") and "malformed:" in ln
                and "check_timeout" in ln for ln in res.lines), res.lines
     assert "Traceback" not in res.stderr, res.stderr

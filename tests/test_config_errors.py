@@ -78,12 +78,19 @@ def readable_failures(res) -> list[str]:
 
 # --------------------------------------------------------------------------
 # D4: a config that cannot be read is a failure, with its own reason
+#
+# Lane Z finding 6 moved the EXIT CODE of this whole group from 1 to 2, not its
+# prose: `SKILL.md`'s exit-code table has always documented rc 2 as "no verdict:
+# ai_common.py missing, install root unresolvable, config unusable", while the
+# code answered 1, so a run that verified nothing read as a verdict about the
+# tree. The printed lines these tests pin (`[FAIL] config readable: …`,
+# `== 0/1 checks passed ==`, `FAILED: config readable`) are unchanged.
 
 
 def test_malformed_json_is_a_failure_not_a_default(ai_repo, sv):
     write_raw(ai_repo, '{"budgets": ')
     res = run_python(sv, cwd=ai_repo)
-    assert res.rc == 1, res.stdout
+    assert res.rc == 2, res.stdout  # F6: no verdict, not a failed check
     assert readable_failures(res), res.lines
     assert "malformed:" in readable_failures(res)[0], res.lines
     assert "sync_config.json" in readable_failures(res)[0], res.lines
@@ -93,7 +100,7 @@ def test_malformed_json_is_a_failure_not_a_default(ai_repo, sv):
 def test_missing_config_is_a_failure(ai_repo, sv):
     (ai_repo / _CONFIG_REL).unlink()
     res = run_python(sv, cwd=ai_repo)
-    assert res.rc == 1, res.stdout
+    assert res.rc == 2, res.stdout  # F6: no verdict (SKILL.md's rc-2 column)
     assert readable_failures(res), res.lines
     assert "unreadable:" in readable_failures(res)[0], res.lines
 
@@ -101,7 +108,7 @@ def test_missing_config_is_a_failure(ai_repo, sv):
 def test_top_level_array_is_rejected(ai_repo, sv):
     write_raw(ai_repo, "[]")
     res = run_python(sv, cwd=ai_repo)
-    assert res.rc == 1, res.stdout
+    assert res.rc == 2, res.stdout  # F6: no verdict (SKILL.md's rc-2 column)
     assert readable_failures(res), res.lines
     assert "not-object:" in readable_failures(res)[0], res.lines
 
@@ -110,7 +117,7 @@ def test_a_config_failure_stops_the_run_and_says_zero_of_one(ai_repo, sv):
     """An unreadable config must not print a confident-looking report either."""
     write_raw(ai_repo, "not json at all")
     res = run_python(sv, cwd=ai_repo)
-    assert res.rc == 1, res.stdout
+    assert res.rc == 2, res.stdout  # F6: no verdict (SKILL.md's rc-2 column)
     assert res.stdout_raw, "verifier exited without writing any output"
     assert "== 0/1 checks passed ==" in res.lines, res.lines
     assert "FAILED: config readable" in res.lines, res.lines
@@ -163,7 +170,10 @@ def test_a_governed_key_of_the_wrong_shape_is_named_not_guessed(
     operand type(s) for /: 'WindowsPath' and 'NoneType'`)."""
     write_raw(ai_repo, bad)
     res = run_python(sv, cwd=ai_repo)
-    assert res.rc == 1, res.stdout
+    # F6: a malformed governed key makes the config unusable, so this is rc 2
+    # ("no verdict", per SKILL.md's table) rather than rc 1 ("a check failed").
+    # The naming assertions below are unchanged — the run still says which key.
+    assert res.rc == 2, res.stdout
     assert readable_failures(res), res.lines
     assert "malformed:" in readable_failures(res)[0], res.lines
     assert expected_key in readable_failures(res)[0], res.lines
