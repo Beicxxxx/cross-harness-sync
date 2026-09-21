@@ -841,16 +841,31 @@ def _review_records(auth_dir):
     return out
 
 
-def _record_state(fields):
-    """`('accepted'|'declined'|'expired'|'legacy', detail)` for one record.
+def _review_is_sha(value):
+    """True for a FULL object id and nothing else.
 
-    `accepted` is the verdict B1's swarm boundary counts (spec 6: `verdict` is a
-    required governance key), so the two commands agree on what "active" means.
-    An `expires_at` that cannot be parsed is EXPIRED, never open-ended -- D10's
-    rule applied one file over, because a record whose expiry nobody can read is
-    the one shape a stale authorization survives as. No `expires_at` at all is
-    `n/a`: this protocol scopes an authorization to a stage, not to a TTL, so
-    silence is the honest answer and it is printed as one.
+    One copy of the rule (40 hex chars, `SHA_HEX_LEN` from `ai_common`): the
+    window a config records and the window this command ends up diffing are the
+    same question asked twice, and two spellings of it drift.
+    """
+    return (isinstance(value, str) and len(value) == SHA_HEX_LEN
+            and all(c in "0123456789abcdefABCDEF" for c in value))
+
+
+def _record_state(fields):
+    """`('accepted'|'declined'|'legacy', detail)` for one record.
+
+    `accepted` is the verdict B1's swarm boundary counts, and it is decided the
+    SAME WAY here — normalized `verdict == accepted`, and nothing else. The two
+    readers must not diverge on what "active" means: `expires_at` is D10's
+    LOCK field, not a spec 6 authorization record key, and `sync_verify`'s
+    accepted count does not consult it, so gating on it here would let one
+    record be live to the review prompt and stale to the verifier (or the other
+    way round) on a tree that contains no contradiction to check. A recorded
+    expiry is still PRINTED as detail, because a reviewer can weigh a date a
+    predicate must not swallow. No `expires_at` at all is `n/a`: this protocol
+    scopes an authorization to a stage, not to a TTL, and silence is the honest
+    answer.
     """
     if fields is None:
         return "legacy", "governance: absent"
@@ -858,14 +873,12 @@ def _record_state(fields):
     if verdict != "accepted":
         return "declined", f"verdict: {fields.get('verdict') or '(no verdict key)'}"
     raw = fields.get("expires_at")
-    if raw is None or not str(raw).strip() or str(raw).strip() in ("n/a", "NOT_REPORTED"):
+    value = "" if raw is None else str(raw).strip()
+    if not value or value in ("n/a", "NOT_REPORTED"):
         return "accepted", "expires: n/a (the record states no expiry)"
-    stamp = parse_ts(str(raw))
-    if stamp is None:
-        return "expired", f"expiry unparseable: {raw!r}"
-    if stamp <= now_dt():
-        return "expired", f"expired {raw}"
-    return "accepted", f"expires: {raw}"
+    return "accepted", (f"expires_at: {value} (recorded; not a gate -- accepted "
+                        "is decided by `verdict` alone, the same way "
+                        "sync_verify counts it)")
 
 
 def _review_authorization_block(cfg, notes):
@@ -918,9 +931,9 @@ def _review_authorization_block(cfg, notes):
             lines.append(text.rstrip("\n"))
         return lines
     lines.append(f"{NO_ACTIVE_AUTH} {where} holds "
-                 f"{len(records)} record(s) and none of them is a non-expired "
-                 "accepted authorization")
-    for state, wording in (("expired", "expired"), ("declined", "not accepted"),
+                 f"{len(records)} record(s) and none of them is an accepted "
+                 "authorization")
+    for state, wording in (("declined", "not accepted"),
                            ("malformed", "governance block invalid"),
                            ("unreadable", "unreadable"),
                            ("legacy", "governance: absent")):
@@ -951,9 +964,7 @@ def _review_window(cfg):
     gov = cfg.get("governance")
     raw = gov.get("window_start_commit") if isinstance(gov, dict) else None
     value = raw.strip() if isinstance(raw, str) else ""
-    if value and value.upper() != "NO_HISTORY" and all(
-            c in "0123456789abcdefABCDEF" for c in value) \
-            and len(value) == SHA_HEX_LEN:
+    if value and value.upper() != "NO_HISTORY" and _review_is_sha(value):
         return value, [f"window: {value} (config "
                        "governance.window_start_commit)"]
     why = ("is unset" if not value
@@ -976,8 +987,7 @@ def _review_diff_block(cfg):
     diff, which is the shape that reads as "nothing to review".
     """
     window, lines = _review_window(cfg)
-    if all(c in "0123456789abcdefABCDEF" for c in window) \
-            and len(window) == SHA_HEX_LEN:
+    if _review_is_sha(window):
         exists = commit_exists(ROOT, window)
         if exists != "TRUE":
             lines.append(f"{DIFF_UNAVAILABLE}] the existence probe on "

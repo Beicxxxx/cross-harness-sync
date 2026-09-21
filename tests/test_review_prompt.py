@@ -14,6 +14,12 @@ comparison with an INDEPENDENT direct run of `sync_verify.py` in the same tree
 (its own `checks passed` summary line, or, when the verifier itself cannot
 answer, this command's named `[VERIFY HALT`), never by a green count — a count
 would tie this file to another lane's check list.
+
+Three further pins carry the contract's edges: the command writes no byte
+anywhere under `.ai` (the claim its ungated dispatch rests on), two live
+authorization records print as `[AMBIGUOUS AUTHORIZATION]` instead of one of
+them winning a sort order, and a missing verifier exits 2 with `[VERIFY HALT`
+inside block 3 — the only non-zero code the rc contract allows.
 """
 import json
 import re
@@ -76,6 +82,25 @@ def _set_config(repo, **top_level):
     path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
 
 
+def _ai_tree(repo):
+    """`{path: bytes}` for every file under `.ai` except CPython's own caches.
+
+    The whole install, because "writes nothing" is a claim about bytes and the
+    cheapest place to check it without missing a side effect is everywhere the
+    command could put one. `__pycache__` is the one exclusion: block 3 launches
+    the verifier, which IMPORTS `ai_common`, so a `.pyc` appearing there is
+    CPython's artifact from importing a module — not protocol state, and not
+    something a read-only command can be asked to prevent. The run below pins
+    `PYTHONDONTWRITEBYTECODE` so the child does not create one either; this
+    filter is what keeps the assertion measuring the command, not the
+    interpreter's leftovers from a test that ran earlier in this fixture.
+    """
+    base = repo / ".ai"
+    return {p.relative_to(base).as_posix(): p.read_bytes()
+            for p in sorted(base.rglob("*"))
+            if p.is_file() and "__pycache__" not in p.parts}
+
+
 def test_three_blocks_in_order_and_rc_zero(ai_repo, cp):
     res = run_python(cp, ["--review-prompt"], cwd=ai_repo)
     assert res.rc == 0, f"rc {res.rc}:\n{res.stdout}\n{res.stderr}"
@@ -106,9 +131,49 @@ def test_accepted_authorization_is_shown_in_full(ai_repo, cp):
     assert NO_AUTH not in body, f"a live record was not found:\n{body}"
 
 
-def test_expired_authorization_is_not_promoted_as_active(ai_repo, cp):
+def test_two_accepted_records_are_named_ambiguous(ai_repo, cp):
+    """Spec 6's N1 shape reached through the review tool: two live authorizations.
+
+    Quietly showing whichever file this machine's sort order returned first
+    reopens the concurrency gap with the very tool meant to make it visible, so
+    all of them print and the ambiguity is named. rc stays 0: a named ambiguity
+    is a complete answer, and rc 2 is reserved for the block that cannot be
+    produced at all.
+    """
+    first = f"AMBIGUOUS-ONE-{int(time.time())}"
+    second = f"AMBIGUOUS-TWO-{int(time.time())}"
+    _write_auth(ai_repo, "0001-alpha.md",
+                f"# Authorization -- alpha\n\n{first}\n\n## Governance\n"
+                + GOV_ACCEPTED)
+    _write_auth(ai_repo, "0002-beta.md",
+                f"# Authorization -- beta\n\n{second}\n\n## Governance\n"
+                + GOV_ACCEPTED)
+    res = run_python(cp, ["--review-prompt"], cwd=ai_repo)
+    assert res.rc == 0, f"rc {res.rc}:\n{res.stdout}\n{res.stderr}"
+    body = _sections(res)[HEADERS[0]]
+    assert "[AMBIGUOUS AUTHORIZATION]" in body, \
+        f"two accepted records must print the named branch:\n{body}"
+    assert "0001-alpha.md" in body and "0002-beta.md" in body, \
+        f"the named branch must list every contender:\n{body}"
+    assert first in body and second in body, \
+        f"neither record may be dropped:\n{body}"
+    assert NO_AUTH not in body, \
+        f"an ambiguous tree is not an unauthorized one:\n{body}"
+
+
+def test_recorded_expiry_is_shown_but_never_gates_active(ai_repo, cp):
+    """Predicate ruling: "active" is normalized `verdict == accepted`, full stop.
+
+    `expires_at` is D10's WRITER-LOCK field, not one of spec 6's authorization
+    record keys, and `sync_verify.py`'s swarm count does not read it — so a
+    record this command called stale while the verifier called it live would put
+    two answers to "what is authorized" on one tree with nothing to check them
+    against. The date is still printed, because a reviewer can weigh it and a
+    predicate must not swallow it.
+    """
+    marker = f"PAST-EXPIRY-{int(time.time())}"
     _write_auth(ai_repo, "0001-stage.md",
-                "# Authorization -- stale\n\nbody\n\n## Governance\n"
+                f"# Authorization -- time-boxed\n\n{marker}\n\n## Governance\n"
                 "```governance\n"
                 "tier: T2\n"
                 "verdict: accepted\n"
@@ -117,9 +182,52 @@ def test_expired_authorization_is_not_promoted_as_active(ai_repo, cp):
     res = run_python(cp, ["--review-prompt"], cwd=ai_repo)
     assert res.rc == 0, res.stdout + res.stderr
     body = _sections(res)[HEADERS[0]]
-    assert NO_AUTH in body, f"an expired record printed as active:\n{body}"
-    assert "expired" in body.lower(), \
-        f"the expiry must be the NAMED reason, not a silent drop:\n{body}"
+    assert marker in body, \
+        f"a verdict-accepted record must print as active:\n{body}"
+    assert "0001-stage.md" in body, f"the record is not identified:\n{body}"
+    assert "2000-01-01T00:00:00+00:00" in body, \
+        f"the recorded expiry must stay on screen as detail:\n{body}"
+    assert NO_AUTH not in body, \
+        f"the block both showed and denied the record:\n{body}"
+
+
+def test_review_prompt_writes_no_bytes_anywhere(ai_repo, cp):
+    """The load-bearing "reads only" invariant, measured rather than asserted.
+
+    `cmd_review_prompt` is dispatched OUTSIDE `_guard_state_writes` precisely
+    because it writes nothing — no STATUS.json bump, no ACTIVE_AGENT, no lock —
+    which is also what lets a reviewer run it on a tree another agent holds.
+    STATUS.json is seeded with known bytes first: a file that never existed
+    "staying absent" proves less than a file that survives a byte-for-byte
+    comparison, and the run must complete (three blocks, rc 0) for the
+    comparison to mean the command actually ran.
+    """
+    status = ai_repo / ".ai" / "runtime" / "STATUS.json"
+    seeded = json.dumps({"session": "seeded-for-the-read-only-run",
+                         "last_agent": "codex"}) + "\n"
+    # write_bytes, not write_text: on Windows text mode would translate the
+    # newline and the byte comparison below would measure the fixture.
+    status.write_bytes(seeded.encode("utf-8"))
+    runtime_dir = ai_repo / ".ai" / "runtime"
+    lock = runtime_dir / "WRITER_LOCK.json"
+    active = runtime_dir / "ACTIVE_AGENT"
+    assert not lock.exists() and not active.exists(), \
+        "the fixture already carries lock state, so its absence proves nothing"
+    before = _ai_tree(ai_repo)
+    res = run_python(cp, ["--review-prompt"], cwd=ai_repo,
+                     env={"PYTHONDONTWRITEBYTECODE": "1"})
+    assert res.rc == 0, f"rc {res.rc}:\n{res.stdout}\n{res.stderr}"
+    _sections(res)
+    assert status.read_bytes() == seeded.encode("utf-8"), \
+        "--review-prompt rewrote runtime/STATUS.json"
+    after = _ai_tree(ai_repo)
+    assert after == before, \
+        "the read set changed the install: " + "; ".join(
+            sorted(f"{k} {'added' if k not in before else ('removed' if k not in after else 'rewritten')}"
+                   for k in set(before) | set(after)
+                   if before.get(k) != after.get(k)))
+    assert not active.exists(), "--review-prompt created runtime/ACTIVE_AGENT"
+    assert not lock.exists(), "--review-prompt took the writer lock"
 
 
 def test_legacy_record_without_governance_block_is_shown_and_named(ai_repo, cp):
@@ -157,6 +265,26 @@ def test_verify_block_carries_the_child_real_output(ai_repo, cp, sv):
     else:
         assert VERIFY_HALT in body, \
             f"no summary line and no named halt:\n{body}"
+
+
+def test_no_verifier_means_rc_two_and_a_named_halt(ai_repo, cp):
+    """The failure side of the exit-code contract: block 3 is not skippable.
+
+    With the verifier gone there is no child output to embed, so the block
+    carries its named halt instead of an empty body and the process exits 2 —
+    the difference between "the review prompt is incomplete" and "the review
+    prompt checked nothing", which is exactly what rc must not let a caller
+    collapse.
+    """
+    (ai_repo / ".ai" / "scripts" / "sync_verify.py").unlink()
+    res = run_python(cp, ["--review-prompt"], cwd=ai_repo)
+    assert res.rc == 2, \
+        f"a tree with no verifier must exit 2, got {res.rc}:\n{res.stdout}\n{res.stderr}"
+    body = _sections(res)[HEADERS[2]]
+    assert VERIFY_HALT in body, f"the rc-2 path must name its halt:\n{body}"
+    assert "sync_verify.py" in body, f"the missing child must be named:\n{body}"
+    assert "not a pass" in body, \
+        f"the halt has to say what it is not:\n{body}"
 
 
 def test_diff_block_names_a_real_window_and_the_patch(ai_repo, cp):
