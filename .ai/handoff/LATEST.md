@@ -1,79 +1,72 @@
 # Latest Handoff
 
-> Updated: 2026-09-22 10:28 (+10:00) by qoder-cli after the dogfood stage was
-> published as PR #2, its commits re-authored to the owner's GitHub identity.
+> Updated: 2026-09-22 12:15 (+10:00) by qoder-cli, mid wave 1c: the release-face
+> fixes are landed and tested, the review and the deferred minors are not.
 > Budget: ≤ 80 lines. Background and boundary statements live in
 > `.ai/state/CURRENT.md` — link, never copy.
 
 ## 1. Done
 
-- Wave 1b merged to `main` as PR #1 (`3a5f2a9`); suite on the merge commit is
-  `480 passed, 5 skipped`.
-- This protocol installed into its own repository (`python scripts/init_sync.py .`),
-  under a writer lock held by `qoder-cli` while the install ran.
-- Governance registered: `protected_paths` = `scripts/*`, `templates/*`,
-  `docs/evidence/*`; role-policy digest pinned; window set to the wave's own base
-  `db091bdcea61daf73bb9cbcae446ef893490bd50`.
-- Coverage walk over real history: 29 uncovered of 29 before the stage record,
-  `[PASS] path coverage: 29 protected touches covered` after it, 30 when this
-  stage's own commit landed, and 32 measured on the repin commit `51dcf20` —
-  every later commit that touches a protected path adds one, and only an accepted
-  record naming it keeps the line green. Re-measure it, never carry it forward.
-- Project's own suite registered as an `extra_checks` check; in-repo verifier now
-  `== 25/25 checks passed ==`, rc 0, no `[SKIP]` line.
-- Pre-commit review by a fresh separate-context subagent: 4 Important, all
-  closed (index row, record filename convention, unfilled required files, the
-  `.ai/**` wildcard grant).
-- **Published.** `v2.1-dogfood-10d` is on origin and [PR
-  #2](https://github.com/Beicxxxx/cross-harness-sync/pull/2) is open against `main`.
-  The push that looked impossible was GCM prompting in a shell with no `/dev/tty`:
-  `GIT_TERMINAL_PROMPT=0 git -c credential.helper='!gh auth git-credential' push`
-  works per command and writes nothing; plain `git push` still dies on the prompt.
-- Every stage commit carries the owner's GitHub identity, set with
-  `filter-branch --env-filter` before publication; both trees are `c7d616e3…`, so
-  content did not move. D8 has the mapping and the limit of that proof.
+- PR #2 merged as `0bc4d7f`, so `main` carries `.ai/` and the §10.D figures are
+  reachable by a clone. Nothing here restates those figures; they belong to the
+  tree `docs/evidence/wave1b-facts.md` describes.
+- The user ruled on a contradiction inside the shipped policy: R3 required a
+  different model family at T2/T3 while R5 said family is recorded and never
+  gates. Cross-family is now the default with a **recorded** `same-family`
+  fallback, restated consistently in the policy, `templates/`, `README` and `SKILL`.
+- Three release-face defects fixed red-first in `tests/test_lane_1c_governance.py`:
+  the R3/R5 contradiction, `git add -A` ordered by the shipped instructions, and
+  slots (`<NAME> <<EMAIL>>`, `Adopted: … by <who>`) that no code ever filled and
+  no check ever caught — while the unfilled ROLE_POLICY was digest-pinned.
+- `init_sync.py` resolves the slots only it can know (from the repository's own
+  config), names the ones it cannot, and drops ROLE_POLICY section 7 with a `WARN`
+  instead of inventing someone else's boundaries. `sync_verify.py` reports residue.
+- This repository's runtime face updated to match: `.ai/state/ROLE_POLICY.md`
+  finished and re-pinned, `AGENTS.md` states the two-face rule, and the install
+  copies under `.ai/scripts/` were synced by hand.
 
 ## 2. Not done
 
-- No tag, no GitHub Release, no version bump.
-- Wave 1c (14 deferred minors, plus the three findings in
-  `docs/evidence/wave1b-facts.md` §7) has not started and needs its own record.
-- The four host-limits in `.ai/state/BLOCKERS.md` §1.3 remain unverified.
+- No review has run on this increment, so
+  `.ai/state/authorizations/2026-09-22-wave1c.md` records `verdict: pending`. Do
+  not write "reviewed" here until one has.
+- Nothing is pushed: the branch has no upstream and there is no PR #3 yet.
+- The CHANGELOG entry for the release documents is not written, though `README.md`
+  and `SKILL.md` figures were re-measured.
+- Deferred: 14 wave-1b minors, the governing-copy drift check, the stale-grant
+  rule. All listed in `handoff/NEXT_PROMPT.md`.
 
 ## 3. Evidence pointers
 
-- `docs/evidence/wave1b-facts.md` §7 — measured rows for this stage, including
-  the live lock record and the `--review-prompt` block layout on a real window.
-- `.superpowers/sdd/2026-09-21-cross-harness-sync-v2.1-wave1b-governance-migration/evidence/dogfood-*.log`
-  — raw verifier output, before and after the record. **Gitignored**: private
-  reasoning, not evidence a clone can reach.
-- `.ai/state/authorizations/2026-09-22-wave1b-dogfood.md` — the stage record.
+- `docs/evidence/wave1c-facts.md` — W1…W12, each measured on this tree, including
+  the red-at-base run and the two regressions this stage caused and fixed.
+- `docs/release-authorizations/2026-09-22-wave1c-product-changes.md` — what ships
+  and why, authorised outside the runtime record.
+- `tests/test_lane_1c_governance.py` — the 9 cases; run them against a base worktree
+  to reproduce W1.
 
 ## 4. Warnings
 
-- `.ai/scripts/*.py` are the copies that actually govern and they are outside
-  `protected_paths`. Byte-identical to `scripts/*.py` right now; nothing detects
-  them drifting later. Do not read a green `sync_verify` as proof the installed
-  verifier matches the source.
-- The coverage walk unions editable lists across the whole window, so an
-  accepted record keeps authorising after its stage closes.
-- A `[PASS]` is omission-detection, not prevention, and the lock is advisory: the
-  publish increment ran un-locked after 09:27:19 rather than overwrite D5's record.
+- `protected_paths` dropped `scripts/*` and `templates/*`. `path coverage` therefore
+  reads 8 where wave 1b read 33. That is the ruling, not a regression — but it also
+  means **nothing in the runtime check now guards an unauthorised edit to shipped
+  code**. The release record and the review are the control.
+- `.ai/scripts/*.py` was synced by hand this time and still has no drift check, so a
+  green `sync_verify` does not prove the installed verifier matches `scripts/`.
+- Counts are pinned in three places at once (fresh, migrated, this repo). A new check
+  moves all three; `test_authorization_records.py` is the tripwire that says so.
 
 ## 5. Next step
 
-Nothing is blocked on a mechanism any more. Two decisions are the user's: tag
-`v2.1.0` with a Release, and whether wave 1c starts now. If it does, write its
-authorization record before touching `scripts/` or `templates/` — both are
-protected, so an unauthorised edit prints `[FAIL] path coverage`. Start on the
-two template defects (`templates/AGENTS.md:48` says `git add -A`;
-`templates/handoff/NEXT_PROMPT.md:31` demands a cross-family review, which R5
-never gates on and §2 forbids claiming), red-first against `main`.
+Commit, push the branch and open PR #3 with the red-at-base output inline (a clone
+cannot reach `.superpowers/`). Then one review — cross-family where a second family
+is reachable, otherwise same-family with no shared context — and only then fill the
+record's `reviewer` and `verdict`. Ask the user before any tag or Release.
 
 ## 6. Must-read list
 
-- `.ai/state/CURRENT.md` §5 — the standing rules this stage wrote.
-- `.ai/state/DECISIONS.md` — the two decisions this stage recorded, including why
-  the dogfood cannot be described as retroactive process evidence.
+- `.ai/state/ROLE_POLICY.md` §1–3 as amended — the rule this stage changed.
+- `docs/evidence/wave1c-facts.md` W6 and W10 — the two-face consequence and the
+  upgrade path that breaking it would silently destroy.
 - `docs/superpowers/specs/2026-09-21-cross-harness-sync-v2.1-design.md` §2 — the
   publishing red lines, binding on any text that leaves this repo.

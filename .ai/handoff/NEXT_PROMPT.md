@@ -1,86 +1,81 @@
-# Next Prompt — wave 1c: write its record before touching shipped code
+# Next Prompt — finish wave 1c: the deferred minors, then the release documents
 
 You are the single active implementation executor. Read, in order:
-`.ai/state/ROLE_POLICY.md` (tiers, R1–R7); `.ai/state/CURRENT.md` §5 and
-`.ai/state/BLOCKERS.md` (binding disclosures); spec §2 (publishing red lines)
-and §6 under `docs/superpowers/specs/`.
+`.ai/state/ROLE_POLICY.md` (tiers, R1–R7 — note that R3 and R5 were reconciled on
+2026-09-22 and cross-family is now a recorded preference, not a gate);
+`.ai/state/CURRENT.md` §5 and `.ai/state/BLOCKERS.md` (binding disclosures);
+`.ai/state/authorizations/2026-09-22-wave1c.md` (runtime face) and
+`docs/release-authorizations/2026-09-22-wave1c-product-changes.md` (release face);
+spec §2 (publishing red lines) under `docs/superpowers/specs/`.
 
-## The dogfood stage is published — wave 1c is the only work left
+## Which face is which — the rule that shapes every step below
 
-[PR #2](https://github.com/Beicxxxx/cross-harness-sync/pull/2) is OPEN against
-`main`, every commit authored as `Beicxxxx`. Prove it rather than trusting this
-file: `git ls-remote --heads origin | grep dogfood` prints the live tip, and
-`gh pr view 2 --json state,additions,commits` answers for the rest.
+`templates/` and `scripts/` ship to other people. They are authorised in
+`docs/release-authorizations/`, never by a record under `.ai/state/authorizations/`,
+and `protected_paths` no longer lists them: the previous stage registered the
+release face there, which let this repository's own runtime certify what gets
+published. The user ruled on this on 2026-09-22. Editing a shipped file under a
+runtime record is the exact error to avoid; `path coverage` will no longer catch it.
 
-`main` still has no `.ai/`, because merging is the user's call. A reader of the
-default branch gets the protocol without the install until they say otherwise, so
-quote the PR, not `main`, for anything §10.D measured.
+## Done, on branch `v2.1-wave1c-governance-defects`
 
-Two things that cost the last session its turn, now settled:
+- The three defects found by line number, all fixed on the release face with
+  red-first tests in `tests/test_lane_1c_governance.py` (9 cases): `R3`/`R5`
+  contradicted each other; the templates and `README.md`/`SKILL.md` ordered
+  `git add -A`; `<NAME> <<EMAIL>>` and the `Adopted:` line were copied verbatim and
+  nothing checked them.
+- `init_sync.py` now resolves the slots only it can know (project name, remote,
+  commit identity from the repository's own config) and `sync_verify.py` reports
+  what is left. Section 7 is dropped with a `WARN`, never invented for a stranger.
+- `.ai/state/ROLE_POLICY.md` is finished and re-pinned; `AGENTS.md` states the
+  two-face rule. Measurements: `docs/evidence/wave1c-facts.md`.
 
-- `git push` fails in a non-interactive shell: Git Credential Manager tries to
-  prompt, `/dev/tty` does not exist, and it dies with `could not read Username
-  for 'https://github.com'`. A hang there is input that cannot arrive, not speed.
-  This authenticates per command and persists nothing:
-  `GIT_TERMINAL_PROMPT=0 git -c credential.helper='!gh auth git-credential' push`
-- This repository's **local** `user.name`/`user.email` are now the owner's GitHub
-  identity, because their global config carries a school address that must not
-  represent this project. Leave both alone: never touch the global config, and do
-  not plan to clean the 78 already-published `main` commits that do carry it —
-  that needs a force-push to published history, which is refused by default.
+Two claims in the previous version of this file were wrong and are withdrawn: the
+identity defect was never in `templates/AGENTS.md` (which holds a placeholder, not
+a sentence pointing at repo history — the sentence was this repository's own), and
+the "third template defect" I logged from it did not exist.
 
-## Task 1 — wave 1c: write its record before touching shipped code
+## Still to do — wave 1c's deferred list
 
-The deferred list: wave-1b minors (M-3, M-4, M-5, M-7..M-14,
-`checkpoint._review_is_sha` accepting uppercase, `_migration_commit`'s
-post-commit listing check fixed without a test, 15 duplicated `_load` helpers in
-5 signatures) plus the three findings in `docs/evidence/wave1b-facts.md` §7.
-Start with the three template defects, the first two verified by line number:
-`templates/AGENTS.md:48` says `git add -A && git commit && git push` two lines
-above "never commit secrets"; `templates/handoff/NEXT_PROMPT.md:31` demands an
-"independent cross-family review", which R5 forbids gating on and §2 forbids
-claiming; and that rule's own commit-identity line points at "the identity already
-in this repo's history", which here is the school address on 78 published commits —
-the installed `AGENTS.md` was reworded to the repository-local identity, so the
-template is now the stale copy and the next `init_sync.py` would overwrite the fix.
-`scripts/` and `templates/` are protected, so editing them without an accepted
-record prints `[FAIL] path coverage: … uncovered of … protected touches`.
+- Wave-1b minors: M-3, M-4, M-5, M-7..M-14; `checkpoint._review_is_sha` accepting
+  uppercase; `_migration_commit`'s post-commit listing check fixed without a test;
+  15 duplicated `_load` helpers across 5 signatures.
+- The governing-copy drift check: `.ai/scripts/*.py` is the copy that actually runs
+  and it is outside `protected_paths`. Nothing detects it diverging from `scripts/`,
+  so a green `sync_verify` is not evidence the installed verifier matches the source.
+  This stage hit that limit itself — the fix landed in `scripts/` and had to be
+  copied by hand. Fix = a drift check, not protecting the copy.
+- The stale-grant rule: coverage unions the editable lists of every accepted record
+  in the window, so a closed stage keeps authorising. `_section_bullets` reads each
+  bullet as an `fnmatch` pattern and `*` crosses `/`, so enumerate, never wildcard.
+- Re-measure the three figures `SKILL.md`/`README.md` publish, and land a CHANGELOG
+  entry per release document touched. Do not carry numbers from
+  `docs/evidence/wave1b-facts.md` — they belong to their own trees.
 
-## Known hazards to inspect first
+## Hazards that bit this stage
 
-1. `.ai/scripts/*.py` is the copy that actually governs and sits **outside**
-   `protected_paths`. Byte-identical to `scripts/*.py` today, digest-checked;
-   nothing detects drift, so a green `sync_verify` is not evidence the installed
-   verifier matches the source. Fix = a drift check, not protecting the copy.
-2. Coverage unions the editable lists of every accepted record in the window, so
-   wave 1b's record still authorises after this stage opens. Green coverage ≠
-   current stage authorised.
-3. `_section_bullets` reads each editable bullet as an `fnmatch` pattern and `*`
-   crosses `/`: a `.ai/**` grant would authorise the config, index and installed
-   verifier forever. Enumerate, as the current record does.
-4. `required .ai/state/BLOCKERS.md`, the `budget` lines and
-   `registered project checks` all pass on an unfilled template. Three state
-   files shipped blank until this stage filled them.
-5. `.ai/runtime/WRITER_LOCK.json` is un-ignored by a `!` rule, so a blanket add
-   commits a live lock. It now holds the released record (§10.D's D5 evidence):
-   re-acquiring the lock overwrites it, so `--add` specific paths and leave the
-   file out rather than unstaging it after the fact.
-6. Exact counts are pinned (`480 passed, 5 skipped`; fresh `20/24 … 4 skipped`;
-   migrated `21/24 … 3 skipped`); re-measure each test's own summary, since
-   several edit config and differ from the baseline.
-7. `run_python` resolves script paths against `cwd` — pass absolute, or rc 2 with
-   empty output reads like an installer refusal; `make_repo()` refuses in-repo.
+1. Adding a check moves every pinned count (`20/24`→`21/25` fresh,
+   `21/24`→`22/25` migrated). `tests/test_authorization_records.py` is the
+   tripwire; when it pulls, re-measure rather than editing the expectation.
+2. Filling the installer's own slots makes the output differ from its template, so
+   `is_template_shaped()` starts calling every install hand-edited and `--force`
+   refreshes nothing. `installer_slot_lines()` is the fix — do not "simplify" it.
+3. Reading `AGENTS.md` as UTF-8 crashed on a GBK file. `exists()` answers False for
+   files this host merely denies, so it cannot guard that read either.
+4. `.ai/runtime/WRITER_LOCK.json` holds a released record that `docs/evidence/`
+   cites as D5; re-acquiring overwrites it. This stage holds epoch 3, released at
+   close-out, and the older record survives in the dogfood commits.
+5. `480 passed, 5 skipped` is wave 1b's number on wave 1b's tree. Read the suite's
+   own line on the tree you are writing about.
 
 ## Mandatory outcome
 
-Every wave-1c item fails against `main` first, with that output in the PR;
+Every item fails against the tree it is meant to fix, with that output in the PR;
 `python .ai/scripts/sync_verify.py` stays green on this tree with the figure
-re-measured after your change rather than copied — at `51dcf20` it was
-`== 25/25 checks passed ==`, rc 0, no `[SKIP]`, `path coverage: 32 protected
-touches covered`, `python test suite … 480 passed, 5 skipped`. Handoff files are
-not protected paths, so editing them leaves that count alone; touching
-`docs/evidence/` moves it again. Stop for one fresh-context review when done and
-call it "reviewed by a different model" only if a different model did it.
+re-measured after your change rather than copied; `python -m pytest tests/ -n 8
+-o addopts= -q` reports its own totals. Stop for one review, cross-family where a
+second family is reachable, and record which it was — say "reviewed by a different
+model" only when one did.
 
 ## Absolute stop boundary
 
