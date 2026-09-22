@@ -23,7 +23,7 @@ that was red first" from "looked at and left" from "cannot be resolved".
 | Q4 | M-2 | `_migration_commit` reads `listing.ok` and deliberately keeps `ok=True` when the post-commit listing fails, naming the degradation instead. Fixed in code in wave 1b with no test. | closed in wave 1d as a coverage pin, not a red-first fix: `test_a_failed_post_commit_listing_names_the_recheck_it_skipped`. It cannot have been red — the branch it tests already shipped — and it is not vacuous either: the pre-fix shape returned `True, "0 path(s) committed"`, which two of its assertions reject by name. What it does NOT catch is Q15. |
 | Q5 | M-5 | `tests/test_tristate_history.py:227` asserts the literal substring `"git log"` inside an error string, so the assertion tests wording rather than the contract. | closed in wave 1d: the assertion now demands git's own echo of the offending argument plus the exit code, both measured on this host (`git log rc=128: fatal: bad revision 'definitely-not-a-ref'`) and neither dependent on how our f-string is worded — or on the console's language, since the argument is quoted in any locale. |
 | Q6 | M-4 | `_load` is duplicated across 15 test files under 5 signatures (the ledger corrects an earlier "3 files" claim). A shared helper in `tests/helpers.py` is the fix. | left open — see the note below |
-| Q7 | M-7 | `init_sync.py --migrate` is blocked by its own earlier writer lock and the hint never says "release the lock first". Wave 1b recorded it as an operator-experience note for the release note, not a code defect. | open → `CHANGELOG.md` |
+| Q7 | M-7 | `init_sync.py --migrate` is blocked by its own earlier writer lock and the hint never says "release the lock first". Wave 1b recorded it as an operator-experience note for the release note, not a code defect. | measured, and the premise is wrong. `--migrate` under a lock held by another agent exits 2 with: `MIGRATE REFUSED: the writer lock could not be acquired…` then `checkpoint.py --lock exited 1: LOCK CONFLICT: held by someone-else until <expiry>` and `Advisory lock: you may wait for expiry, coordinate, or re-run with --force --reason "<why>"`. The holder, the expiry and the three remedies are all there, and `SKILL.md` already documents the refusal in the upgrade section — "release the lock first" is not advice the protocol could give, since releasing another agent's pen is not offered. What WAS owed was the release-document entry wave 1c never wrote, so both waves have one now in `CHANGELOG.md`. |
 | Q8 | sidecar divergence | A v2.0 install with a diverged sidecar keeps running the OLD verifier and reports `== 14/14 ==`, which is rosier than the current `20/24` shape. From wave 1b's ledger, "for the merge decision". | left open, named |
 | Q9 | stale-grant rule | Coverage unions the `## Editable files` of every accepted record in the window, so a spent record keeps authorising. Wave 1c added `status: open\|closed` for the concurrency question and deliberately did NOT give grants an expiry: an accepted record still never expires inside its window. | left open by decision |
 | Q10 | runtime-record globs | `release authorization` refuses `*?[` in accepted release bullets; the runtime walk still accepts a bullet of `*`, which would cover every protected path in the window forever. Found twice (W17, W22). The asymmetry is real, not an oversight: this repository's own accepted records use runtime wildcards, so refusing them would rewrite approved grants after the fact. | left open, named |
@@ -41,7 +41,10 @@ appear here only so the numbering gap is explained rather than looked for.
 
 ## Reading this table as a queue
 
-Rows marked "this stage" are wave 1d's scope under
-`docs/release-authorizations/2026-09-22-wave1d-product-changes.md`. Rows marked
-"left open, named" are the project's known limits and belong in any write-up that
-says what the protocol does not do; they are not hidden behind a green run.
+Wave 1d's scope was Q1–Q5 and Q7, and every one of those rows now carries either a
+case that was red against the base first (Q1, Q2, Q3), a coverage pin that says it
+could not have been (Q4), a replaced assertion (Q5), or a premise that did not
+survive measuring (Q7). The rest are decisions, not backlog: "left open, named"
+rows are this project's known limits and belong in any write-up that says what the
+protocol does not do — they are not hidden behind a green run, and a later wave
+that closes one should move the row rather than delete it.

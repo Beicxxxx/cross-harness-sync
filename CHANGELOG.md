@@ -1,5 +1,163 @@
 # Changelog
 
+## v2.1.0 — wave 1d (the deferred queue, published and then worked), 2026-09-22
+
+Wave 1c ended owing two kinds of debt: shipped behaviour it had named but not
+changed, and a deferred list that existed only as `M-3, M-7..M-14` inside a
+gitignored directory. Both are dealt with here, in that order — a queue a reader
+cannot open is not a queue.
+
+### What is now shipped
+
+- **`governing copy` (check 10)** — the bytes that ran the report are compared to
+  the bytes this checkout ships: every `.ai/scripts/*.py` must digest to its twin
+  in `scripts/`. `path coverage` cannot answer this, because it asks whether an
+  edit was *authorised*, and a record naming both walks authorises a mismatch as
+  readily as a match. The comparison is discriminated structurally by
+  `scripts/init_sync.py`, the one file in that directory the installer never
+  copies, so an ordinary install gets `SKIP(not-source-checkout)` instead of a red
+  it was never asked to satisfy, and a project that keeps unrelated code in a
+  `scripts/` directory is not held to a comparison its install never made. It
+  checks that what runs matches what is authored; it does not check that every
+  authored file got installed, because that list lives in an installer that is not
+  installed, and re-deriving it here would be a second promise to keep in step.
+- **The runtime coverage window is now bound by the records that live in it.**
+  Wave 1c gave the release face this and left the runtime walk holding the same
+  hole: `governance.window_start_commit` is one config line, the walk's reach is
+  exactly that line, and advancing it drops the commits before it out of the range
+  — where they read as neither covered nor uncovered, because nothing looks at
+  them. `_base_conflicts` answers for both faces now, and the runtime check reads
+  the records *before* it walks, since an empty range is precisely what a narrowed
+  anchor produces. Two exemptions, both about history: a `status: closed` record
+  does not bind the window forever (re-anchoring at each new wave is the
+  lifecycle), and a runtime record that declares no base bounds nothing — runtime
+  records predate the field, and an accepted one cannot be edited to add a line it
+  never carried. A stage that omits the line is unguarded at its own back edge,
+  which `templates/AUTHORIZATION.md` now says to the person writing the record.
+- **One predicate for "is this a commit id".** `checkpoint.py --review-prompt`
+  accepted an uppercase hex anchor that `ai_common.window_is_valid` — the copy the
+  verifier and the migrator both use — refused. Git resolves either spelling, so
+  the two commands never disagreed about a commit; they disagreed about whether a
+  recorded field says anything at all, and the review prompt diffed happily from a
+  window the walk calls unreadable. `ai_common.is_full_sha` is the shape now, and
+  `window_is_valid` is that or `NO_HISTORY`.
+- **Two shipped arms that no case reached now have cases.**
+  `_migration_commit`'s post-commit listing path — rewritten in wave 1b precisely
+  because a failed `git show` used to print `0 path(s) committed` while the
+  containment recheck silently did not run — shipped without a test. One
+  suite assertion demanded the substring `"git log"` inside an error string, which
+  survives a reason that lost every fact it should carry; it now demands git's own
+  echo of the offending argument and the exit code.
+- **Published figures re-measured, not carried forward.** A default install ends
+  `== 21/27 checks passed, 6 skipped ==`; after `--migrate`,
+  `== 22/27 checks passed, 5 skipped ==` (both measured at `7b44120` on this host,
+  and pinned by name in `tests/test_authorization_records.py`, which is the
+  tripwire that pulls whenever a check arrives). The sixth skip is
+  `governing copy`, and it names the reason above.
+
+### What this wave did not fix, in print
+
+`docs/evidence/wave1d-queue.md` is the tracked queue: fifteen rows, each with what
+the item actually is, and a status column that distinguishes *closed with a case
+that was red first* from *looked at and left* from *cannot be resolved*. Row Q13
+is the last of those: wave 1c published "14 minors" and named seven ids that no
+tracked file — and no file in the private ledger either — defines anywhere, so no
+row claims to be one of them. Q15 is new to this wave: the listing guard reads
+exit status, so a `git show` that exits 0 and writes nothing still reads as a
+clean commit, which is the exact shape this protocol made illegal in
+`extra_checks` and has not yet made illegal here.
+
+### Operator note
+
+`--migrate` refuses at exit 2 while another agent holds the writer lock. The
+refusal names the holder, its expiry, and the three remedies that exist
+(wait / coordinate / `--force --reason "<why>"`, which records the takeover in the
+lock itself) — measured at `7b44120`, output quoted in the queue's Q7 row. Wave
+1b's ledger filed that as a missing "release the lock first" hint; there is no
+such hint to add, because releasing someone else's pen is not a thing the protocol
+offers. What *is* owed and now written down is the behavior itself, in
+`SKILL.md`'s upgrade section, which it already had.
+
+## v2.1.0 — wave 1c (two faces of authorisation, and the placeholders the
+installer owns), 2026-09-22
+
+One release-document entry per shipped change is this file's rule, and wave 1c
+broke it: `git diff --name-only 0bc4d7f5..aecd536 -- scripts templates README.md
+SKILL.md reference.md tests` answers 22 files and this file said nothing about
+them. That is the same omission the protocol exists to catch, committed by the
+wave that wrote the warning, so the entry is written here — sourced from
+`docs/release-authorizations/2026-09-22-wave1c-product-changes.md`, whose own base
+is `0bc4d7f5`, and every behaviour below is still shipped on the tree this file
+describes.
+
+### What shipped
+
+- **The release face and the runtime face are separate authorities.** `templates/`
+  and `scripts/` ship to other people; they are authorised in
+  `docs/release-authorizations/` and guarded by `tests/`, never by a record under
+  `.ai/state/authorizations/`, which governs one repository. Registering the
+  release paths in `protected_paths` let the repository that happens to *host* the
+  product certify its own publication by writing a note in its own state
+  directory — which is what wave 1b's dogfood did to its own `scripts/` and
+  `templates/`, green, in a run whose every check passed.
+- **`release authorization`** walks `release_window_start_commit..HEAD` over
+  `release_paths` and requires an ACCEPTED release record's `## Editable files`.
+  Its own review then found the gate was advisory where it claimed to be a wall,
+  twice over: an unreadable record sat *under* a coverage PASS (named only inside
+  that PASS's own text), and the anchor was one config line nobody compared to
+  anything. Accepted records must now state their own `window_start_commit:`, an
+  anchor past a live record's base is a FAIL, an unreadable record is a FAIL, and
+  a zero-touch window with nothing accepted is `SKIP(quiet-window-unanchored)`
+  rather than `0 pairs covered`. The pass after that found the new rule binding a
+  *finished* stage's base to the window forever, so it applies to live records —
+  the same `verdict`/`status` split as `swarm boundary`, and the same reason.
+- **`verdict` and `status` are different fields, because they answer different
+  questions.** `verdict: accepted` made a record the authority over the commits it
+  names *and* said the stage was still live, so a repository that finished a second
+  stage had two accepted records and `swarm boundary` went red forever — with the
+  only exit being to rewrite the finished record's verdict, which retracted its
+  coverage and made its own commits read as unauthorised. `status: open|closed`
+  answers liveness alone, read by the boundary and the review prompt and
+  deliberately not by the coverage walk. What `status` cannot do is protect a
+  reader from a lie: a false `closed` costs nothing, so the reviewer is the check
+  and the field only makes the claim visible.
+- **`unfilled template slots`**: `required <file>` asks whether a state file exists
+  and `budget <file>` asks how long it is, so a verbatim template copy answered
+  both and printed PASSes — including for a `ROLE_POLICY.md` whose authorship line
+  still read `by <who>`, in a file that is digest-pinned. The installer now
+  resolves the slots only it can know (project name, remote, commit identity from
+  the repository's own `--local` config, the Adopted line) and the verifier reports
+  the rest.
+- **Three instructions that shipped their own bug.** `templates/AGENTS.md` ordered
+  `git add -A && git commit && git push` two lines above its rule against
+  committing secrets. `templates/ROLE_POLICY.md` made a different model family a
+  requirement at T2/T3 in R3 while R5 said family is recorded and never gates, and
+  `TASK.md`/`CURRENT.md`/`NEXT_PROMPT.md` restated the same unconditional
+  requirement in the files every agent fills in. R3/R5 is resolved as
+  *cross-family is the preference, same-family is accepted where a second family
+  is unreachable, and the record must say which it got* — and `SKILL.md`/R5 say
+  "reviewed by a different model" only when one did.
+- **A global git identity no longer leaks into a stranger's `AGENTS.md`.** The
+  first cut of the slot resolver read `git config user.name`, which resolves local
+  → global, so on a machine whose global identity is an institutional address the
+  installer wrote that address into a repository that had never chosen it and
+  reported the slot as resolved. It reads `--local` only now, and a missing local
+  value stays missing. The hermetic test HOME could not see this, which is why the
+  first cut passed its own suite; the case that pins it injects `GIT_CONFIG_GLOBAL`
+  so the fallback cannot return unreported.
+- **Section 7 of the role-policy template is dropped with a `WARN`**, not filled
+  in. It asks for project boundaries the installer cannot know; inventing them for
+  someone else's repository is shipping an instruction as if it were an answer.
+
+### What wave 1c left standing, and said
+
+Nothing above makes a review happen. The verifier detects omission, not
+fabrication — a `[PASS]` cannot tell an honest record from an invented one — the
+writer lock is advisory, `status: closed` is a self-report the boundary believes,
+and an accepted record never expires inside its window. The releases also
+published no cross-family attestation: this host's session log carries one model
+field for every segment, so the records say `NOT_REPORTED` rather than guess.
+
 ## v2.1.0 — wave 1b (governance + migration), 2026-09-21
 
 Wave 1b ships the governance surface of spec §6 and the migration of spec §8 on
