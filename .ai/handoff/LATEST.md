@@ -35,28 +35,30 @@
   `main`, two commits split by face: `06dc156` release, `c4a9586` runtime.
 - The CHANGELOG entry for the release documents is not written, though `README.md`
   and `SKILL.md` figures were re-measured.
-- The review's other findings are open, all reproducible, all in W13: `git add -A`
-  still in `scripts/init_sync.py:2162`; `reference.md` 72/307/310 still requires a
-  cross-family reviewer; `7 failed` should read `8` in the release record; `22/25`
-  has no tripwire test; and **nothing enforces the two-face split** — an edit to
-  `scripts/foo.py` under a runtime record now prints no FAIL anywhere.
+- Closed since the review (`19fcfcb`): the emitted `git add -A`, three `reference.md`
+  requirements, the `7 failed` count, the CONTROL argument, and three unsupported
+  "same model family" assertions — the one on `main` corrected by new text, not by
+  rewriting history. Still open: no tripwire for `22/25`, and **nothing enforces the
+  two-face split**, so a `scripts/foo.py` commit under a runtime record prints no
+  FAIL anywhere. Both go to PR #4, that check first.
 - Deferred: 14 wave-1b minors, the governing-copy drift check, the stale-grant rule.
 
 ## 3. Evidence pointers
 
-- `docs/evidence/wave1c-facts.md` — W1…W12, each measured on this tree, including
+- `docs/evidence/wave1c-facts.md` — W1…W15, each measured on this tree, including
   the red-at-base run and the two regressions this stage caused and fixed.
 - `docs/release-authorizations/2026-09-22-wave1c-product-changes.md` — what ships
   and why, authorised outside the runtime record.
-- `tests/test_lane_1c_governance.py` — the 9 cases; run them against a base worktree
+- `tests/test_lane_1c_governance.py` — 11 cases; run them against a base worktree
   to reproduce W1.
 
 ## 4. Warnings
 
-- `protected_paths` dropped `scripts/*` and `templates/*`. `path coverage` therefore
-  reads 8 where wave 1b read 33. That is the ruling, not a regression — but it also
-  means **nothing in the runtime check now guards an unauthorised edit to shipped
-  code**. The release record and the review are the control.
+- `protected_paths` dropped `scripts/*` and `templates/*`, so `path coverage` counts
+  this repository's evidence commits only: `2 uncovered of 10 protected touches`,
+  rc 1, because the stage record is `pending` and an unaccepted record certifies
+  nothing. That FAIL is the mechanism, not a defect to argue away. What is genuinely
+  missing is a guard for the release face — see §2.
 - `.ai/scripts/*.py` was synced by hand this time and still has no drift check, so a
   green `sync_verify` does not prove the installed verifier matches `scripts/`.
 - Counts are pinned in three places at once (fresh, migrated, this repo). A new check
@@ -64,10 +66,11 @@
 
 ## 5. Next step
 
-One review on PR #3 — cross-family where a second family is reachable, otherwise
-same-family with no shared context — then fill the record's `reviewer` and
-`verdict` and this file's §2. Ask the user before spending on a second model
-family, and before any tag or Release.
+PR #4: the release-face check (a commit touching `scripts/` or `templates/` names an
+accepted release record), red-first, plus the `22/25` tripwire. Then close PR #3 —
+accepting its record only if the review is honestly attributed: this session's logs
+held one segment, every model field `qfmodel`, no per-agent attribution, so no
+cross-family attestation may be written (W14).
 
 ## 6. Must-read list
 
