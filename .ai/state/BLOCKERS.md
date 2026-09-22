@@ -1,16 +1,21 @@
 # Current Blockers
 
-> Last updated: 2026-09-22 08:52 (+10:00)
-> Updated by: qoder-cli (spec 10.D install landed; this file was an empty template).
+> Last updated: 2026-09-22 10:32 (+10:00)
+> Updated by: qoder-cli (the dogfood stage is published; this file's premise
+> that it was stuck unpushed no longer holds).
 
 ## Active blocker
 
-No technical blocker. Progress is parked at a decision only the user can make:
-whether to tag `v2.1.0` and publish a GitHub Release, and whether wave 1c starts
+No technical blocker. [PR #2](https://github.com/Beicxxxx/cross-harness-sync/pull/2)
+is open with the stage on it, so what is parked are three decisions only the user
+can make: merge it, tag `v2.1.0` with a GitHub Release, and whether wave 1c starts
 now. Nothing is waiting on a mechanism that does not exist.
 
 ## Not blockers
 
+- The push that looked impossible was Git Credential Manager trying to prompt in
+  a shell with no `/dev/tty`. It is solved, not pending: per-command
+  `credential.helper='!gh auth git-credential'` pushes fine non-interactively.
 - Wave 1c's defect list is open (14 minors and the three items in
   `docs/evidence/wave1b-facts.md` §7). It is queued, not blocked.
 - `budget AGENTS.md` went red twice while this stage filled the installed files

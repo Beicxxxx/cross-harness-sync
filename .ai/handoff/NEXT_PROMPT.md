@@ -1,46 +1,33 @@
-# Next Prompt — push the dogfood stage, open PR #2, then start wave 1c
+# Next Prompt — wave 1c: write its record before touching shipped code
 
 You are the single active implementation executor. Read, in order:
 `.ai/state/ROLE_POLICY.md` (tiers, R1–R7); `.ai/state/CURRENT.md` §5 and
-`.ai/state/BLOCKERS.md` (binding disclosures);
-`.ai/state/authorizations/2026-09-22-wave1b-dogfood.md`; spec §2 (publishing red
-lines) and §6 under `docs/superpowers/specs/`.
+`.ai/state/BLOCKERS.md` (binding disclosures); spec §2 (publishing red lines)
+and §6 under `docs/superpowers/specs/`.
 
-## The one thing blocking everything else
+## The dogfood stage is published — wave 1c is the only work left
 
-The dogfood stage is committed locally and **never published**:
+[PR #2](https://github.com/Beicxxxx/cross-harness-sync/pull/2) is OPEN against
+`main`: 27 files, +4892/−9, six commits authored as `Beicxxxx`. Proven rather
+than claimed — `git ls-remote --heads origin | grep dogfood` prints the tip and
+`gh pr view 2` resolves.
 
-    * v2.1-dogfood-10d   (no upstream)   <- `git log --oneline main..HEAD`
-      main               3a5f2a9  [origin/main]   <- all a clone can get
+`main` still has no `.ai/`, because merging is the user's call. A reader of the
+default branch gets the protocol without the install until they say otherwise, so
+quote the PR, not `main`, for anything §10.D measured.
 
-So the public repo still has no `.ai/`, and every §10.D figure in `CHANGELOG.md`
-and `docs/evidence/wave1b-facts.md` §7 is unpushed. Prove publication rather than
-trusting a claim: `git ls-remote --heads origin | grep dogfood` returns a line and
-`gh pr view 2` exists.
+Two things that cost the last session its turn, now settled:
 
-`git push` cannot run in a non-interactive shell: Git Credential Manager tries to
-prompt, `/dev/tty` does not exist, and it dies with `could not read Username for
-'https://github.com'`. The `gh` token is still valid, so reads and `gh pr create`
-work. A hang here is waiting for input that cannot arrive — not slow.
-
-Two routes; the user picks, and B routes their gh token into git:
-
-    # A — once, in a real terminal (browser auth pops):
-    cd "F:\Papers and Projects\cross-harness-sync"
-    git push -u origin v2.1-dogfood-10d
-    # B — per-command, nothing persistent, needs explicit go-ahead:
-    git -c credential.helper='!gh auth git-credential' push -u origin v2.1-dogfood-10d
-
-Then `gh pr create --base main --head v2.1-dogfood-10d --title "feat(10D): run
-this protocol in its own repository" --body-file
-.superpowers/sdd/2026-09-21-cross-harness-sync-v2.1-wave1b-governance-migration/pr2-body.md`
-— that body sits under gitignored `.superpowers/` and may be the only copy.
-
-## Task 0 — the dogfood stage (authorized; nothing in it left undone)
-
-The install landed and a separate-context reviewer closed 4 Importants before
-commit. Owned files are enumerated in the stage record; anything not listed there
-is read-only.
+- `git push` fails in a non-interactive shell: Git Credential Manager tries to
+  prompt, `/dev/tty` does not exist, and it dies with `could not read Username
+  for 'https://github.com'`. A hang there is input that cannot arrive, not speed.
+  This authenticates per command and persists nothing:
+  `GIT_TERMINAL_PROMPT=0 git -c credential.helper='!gh auth git-credential' push`
+- This repository's **local** `user.name`/`user.email` are now the owner's GitHub
+  identity, because their global config carries a school address that must not
+  represent this project. Leave both alone: never touch the global config, and do
+  not plan to clean the 78 already-published `main` commits that do carry it —
+  that needs a force-push to published history, which is refused by default.
 
 ## Task 1 — wave 1c: write its record before touching shipped code
 
@@ -71,8 +58,9 @@ accepted record prints `[FAIL] path coverage: … uncovered of … protected tou
    `registered project checks` all pass on an unfilled template. Three state
    files shipped blank until this stage filled them.
 5. `.ai/runtime/WRITER_LOCK.json` is un-ignored by a `!` rule, so a blanket add
-   commits a live lock. `--unlock` writes `released_at` rather than deleting —
-   that released record is §10.D's evidence.
+   commits a live lock. It now holds the released record (§10.D's D5 evidence):
+   re-acquiring the lock overwrites it, so `--add` specific paths and leave the
+   file out rather than unstaging it after the fact.
 6. Exact counts are pinned (`480 passed, 5 skipped`; fresh `20/24 … 4 skipped`;
    migrated `21/24 … 3 skipped`); re-measure each test's own summary, since
    several edit config and differ from the baseline.
@@ -81,18 +69,18 @@ accepted record prints `[FAIL] path coverage: … uncovered of … protected tou
 
 ## Mandatory outcome
 
-`git ls-remote` and `gh pr view 2` show the stage is public; every wave-1c item
-fails against `main` first, with that output in the PR; `python
-.ai/scripts/sync_verify.py` stays green on this tree with the figure re-measured
-after your change rather than copied — at `56365c3` it was `== 25/25 checks
-passed ==`, rc 0, no `[SKIP]`, `path coverage: 31 protected touches covered`,
-`python test suite … 480 passed, 5 skipped`. Stop for one fresh-context review
-when done and call it "reviewed by a different model" only if a different model
-did it.
+Every wave-1c item fails against `main` first, with that output in the PR;
+`python .ai/scripts/sync_verify.py` stays green on this tree with the figure
+re-measured after your change rather than copied — at `51dcf20` it was
+`== 25/25 checks passed ==`, rc 0, no `[SKIP]`, `path coverage: 32 protected
+touches covered`, `python test suite … 480 passed, 5 skipped`. Handoff files are
+not protected paths, so editing them leaves that count alone; touching
+`docs/evidence/` moves it again. Stop for one fresh-context review when done and
+call it "reviewed by a different model" only if a different model did it.
 
 ## Absolute stop boundary
 
-No tag, no Release, no version bump, no merge of any PR, no push to `main` and no
+No tag, no Release, no version bump, no merge of any PR, no push to `main`, no
 change to the user's global git config — not credentials, not anything — without
 the user asking in terms. Never `git add -A`, never `git add -f` the gitignored
 `.superpowers/`, never force-push, never rewrite published history. No

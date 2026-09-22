@@ -1,19 +1,22 @@
 # Active Task
 
-> Last updated: 2026-09-22 08:42:06 (+10:00)
-> Updated by: qoder-cli (the user chose to merge now and continue with the dogfood).
+> Last updated: 2026-09-22 10:32 (+10:00)
+> Updated by: qoder-cli (spec 10.D published as open PR #2; the queue is empty).
 
 ## Standing state — do not rewrite
 
 > Published text may only claim what was measured on the tree being read.
 > No tag, no GitHub Release, no version bump without the user.
 > `.superpowers/` is private reasoning; it is never force-added to git.
+> Commits here carry the owner's GitHub identity from this repository's local
+> git config, not their global school address.
 
 ## The one active task
 
-Execute spec 10.D: install this protocol into its own repository, register the
-shipped surface as protected, and make the governance checks judge real history
-rather than a fixture.
+None. The task below is done, reviewed and published —
+[PR #2](https://github.com/Beicxxxx/cross-harness-sync/pull/2) against `main`,
+still open because merging is the user's call. The queue stays empty until they
+merge it, or authorise wave 1c and let its record be written first.
 
 ## Role ownership
 
@@ -38,11 +41,11 @@ Editing anything under `scripts/` or `templates/` — this stage certifies what
 wave 1b landed, it does not change shipped code. Starting wave 1c work. Tagging
 or releasing.
 
-## Completion condition
+## Completion condition — met, and re-measured
 
-`python .ai/scripts/sync_verify.py` prints
-`[PASS] path coverage: 29 protected touches covered` where the same command
-printed 29 uncovered before the record existed; the whole suite stays at
-480 passed / 5 skipped; and the spec 10.D line in `CHANGELOG.md` says what
-actually happened — that the install certifies what landed, and does not
+`python .ai/scripts/sync_verify.py` prints `[PASS] path coverage: 32 protected
+touches covered` (29 uncovered of 29 before the record existed, 30 and 31 as the
+stage's own protected-path commits landed) with `== 25/25 checks passed ==`, rc 0
+and no `[SKIP]` line; the suite holds at `480 passed, 5 skipped`. The spec 10.D
+line in `CHANGELOG.md` says the install certifies what landed and does not
 retroactively govern how it was reviewed.

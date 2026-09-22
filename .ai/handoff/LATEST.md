@@ -1,7 +1,7 @@
 # Latest Handoff
 
-> Updated: 2026-09-22 08:52 (+10:00) by qoder-cli after the spec 10.D install
-> landed and its review closed.
+> Updated: 2026-09-22 10:28 (+10:00) by qoder-cli after the dogfood stage was
+> published as PR #2, its commits re-authored to the owner's GitHub identity.
 > Budget: ≤ 80 lines. Background and boundary statements live in
 > `.ai/state/CURRENT.md` — link, never copy.
 
@@ -15,14 +15,25 @@
   `docs/evidence/*`; role-policy digest pinned; window set to the wave's own base
   `db091bdcea61daf73bb9cbcae446ef893490bd50`.
 - Coverage walk over real history: 29 uncovered of 29 before the stage record,
-  `[PASS] path coverage: 29 protected touches covered` after it, and 30 once this
-  stage's own commit landed — every later commit that touches a protected path
-  adds one, and only an accepted record naming it keeps the line green.
+  `[PASS] path coverage: 29 protected touches covered` after it, 30 when this
+  stage's own commit landed, and 32 measured on the repin commit `51dcf20` —
+  every later commit that touches a protected path adds one, and only an accepted
+  record naming it keeps the line green. Re-measure it, never carry it forward.
 - Project's own suite registered as an `extra_checks` check; in-repo verifier now
   `== 25/25 checks passed ==`, rc 0, no `[SKIP]` line.
 - Pre-commit review by a fresh separate-context subagent: 4 Important, all
   closed (index row, record filename convention, unfilled required files, the
   `.ai/**` wildcard grant).
+- **Published.** `v2.1-dogfood-10d` is on origin and
+  [PR #2](https://github.com/Beicxxxx/cross-harness-sync/pull/2) is open against
+  `main` — 27 files, +4892/−9. The credential failure that parked this was worked
+  around, not fixed: `GIT_TERMINAL_PROMPT=0 git -c credential.helper='!gh
+  auth git-credential' push` authenticates non-interactively, per command, with
+  nothing written to config. Plain `git push` still dies on GCM's prompt.
+- All six stage commits carry the owner's GitHub identity, set with
+  `filter-branch --env-filter` before publication. `git rev-parse` of the
+  pre-rewrite and post-rewrite trees is the same object (`c7d616e3…`), so content
+  did not move; D7 in the evidence file has the hash mapping.
 
 ## 2. Not done
 
@@ -52,13 +63,13 @@
 
 ## 5. Next step
 
-Publish this stage: `v2.1-dogfood-10d` (`20242cb`, `56365c3`) is committed
-locally with **no upstream** — `git push` dies in a non-interactive shell because
-Git Credential Manager cannot prompt (`/dev/tty` absent), while the `gh` token is
-still valid. `handoff/NEXT_PROMPT.md` carries both routes and the commands. Until
-the push lands, the public repo has no `.ai/` and the §10.D figures are local
-only. Then ask the user about tagging `v2.1.0`; if wave 1c is approved, open its
-record first and fix `templates/AGENTS.md`'s `git add -A` line inside that stage.
+Nothing is blocked on a mechanism any more. Two decisions are the user's: tag
+`v2.1.0` with a Release, and whether wave 1c starts now. If it does, write its
+authorization record before touching `scripts/` or `templates/` — both are
+protected, so an unauthorised edit prints `[FAIL] path coverage`. Start on the
+two template defects (`templates/AGENTS.md:48` says `git add -A`;
+`templates/handoff/NEXT_PROMPT.md:31` demands a cross-family review, which R5
+never gates on and §2 forbids claiming), red-first against `main`.
 
 ## 6. Must-read list
 
