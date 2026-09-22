@@ -43,8 +43,8 @@ exactly what to read.
 
 ## Git Sync (remote: https://github.com/Beicxxxx/cross-harness-sync.git, public)
 
-- Commit identity: the `user.name`/`user.email` already in this repo's history
-  (per-command `git -c user.name=… -c user.email=…`; never commit as the harness).
+- Commit identity: this repository's LOCAL `user.name`/`user.email` (the owner's
+  GitHub identity), never the harness; `main`'s school address predates that setting.
 - At every stage close-out and session end: `git add -A && git commit && git push`.
 - Never force-push, never rewrite published history, never commit secrets
   (fresh clone: verify `git check-ignore -v .env` first).

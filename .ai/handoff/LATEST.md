@@ -10,7 +10,7 @@
 - Wave 1b merged to `main` as PR #1 (`3a5f2a9`); suite on the merge commit is
   `480 passed, 5 skipped`.
 - This protocol installed into its own repository (`python scripts/init_sync.py .`),
-  under a writer lock held by `qoder-cli` for the duration.
+  under a writer lock held by `qoder-cli` while the install ran.
 - Governance registered: `protected_paths` = `scripts/*`, `templates/*`,
   `docs/evidence/*`; role-policy digest pinned; window set to the wave's own base
   `db091bdcea61daf73bb9cbcae446ef893490bd50`.
@@ -24,16 +24,14 @@
 - Pre-commit review by a fresh separate-context subagent: 4 Important, all
   closed (index row, record filename convention, unfilled required files, the
   `.ai/**` wildcard grant).
-- **Published.** `v2.1-dogfood-10d` is on origin and
-  [PR #2](https://github.com/Beicxxxx/cross-harness-sync/pull/2) is open against
-  `main`, 27 files. The credential failure that parked this was worked around, not
-  fixed: `GIT_TERMINAL_PROMPT=0 git -c credential.helper='!gh
-  auth git-credential' push` authenticates non-interactively, per command, with
-  nothing written to config. Plain `git push` still dies on GCM's prompt.
+- **Published.** `v2.1-dogfood-10d` is on origin and [PR
+  #2](https://github.com/Beicxxxx/cross-harness-sync/pull/2) is open against `main`.
+  The push that looked impossible was GCM prompting in a shell with no `/dev/tty`:
+  `GIT_TERMINAL_PROMPT=0 git -c credential.helper='!gh auth git-credential' push`
+  works per command and writes nothing; plain `git push` still dies on the prompt.
 - Every stage commit carries the owner's GitHub identity, set with
-  `filter-branch --env-filter` before publication. `git rev-parse` of the
-  pre-rewrite and post-rewrite trees is the same object (`c7d616e3…`), so content
-  did not move; D7 in the evidence file has the hash mapping.
+  `filter-branch --env-filter` before publication; both trees are `c7d616e3…`, so
+  content did not move. D8 has the mapping and the limit of that proof.
 
 ## 2. Not done
 
@@ -59,7 +57,8 @@
   verifier matches the source.
 - The coverage walk unions editable lists across the whole window, so an
   accepted record keeps authorising after its stage closes.
-- A `[PASS]` is omission-detection, not prevention, and the lock is advisory.
+- A `[PASS]` is omission-detection, not prevention, and the lock is advisory: the
+  publish increment ran un-locked after 09:27:19 rather than overwrite D5's record.
 
 ## 5. Next step
 

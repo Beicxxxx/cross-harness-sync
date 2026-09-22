@@ -8,9 +8,9 @@ and §6 under `docs/superpowers/specs/`.
 ## The dogfood stage is published — wave 1c is the only work left
 
 [PR #2](https://github.com/Beicxxxx/cross-harness-sync/pull/2) is OPEN against
-`main`, 27 files, every commit authored as `Beicxxxx`. Prove it rather than
-trusting this file: `git ls-remote --heads origin | grep dogfood` prints the live
-tip, and `gh pr view 2 --json state,additions,commits` answers for the rest.
+`main`, every commit authored as `Beicxxxx`. Prove it rather than trusting this
+file: `git ls-remote --heads origin | grep dogfood` prints the live tip, and
+`gh pr view 2 --json state,additions,commits` answers for the rest.
 
 `main` still has no `.ai/`, because merging is the user's call. A reader of the
 default branch gets the protocol without the install until they say otherwise, so
@@ -35,12 +35,16 @@ The deferred list: wave-1b minors (M-3, M-4, M-5, M-7..M-14,
 `checkpoint._review_is_sha` accepting uppercase, `_migration_commit`'s
 post-commit listing check fixed without a test, 15 duplicated `_load` helpers in
 5 signatures) plus the three findings in `docs/evidence/wave1b-facts.md` §7.
-Start with the two template defects, both verified by line number:
+Start with the three template defects, the first two verified by line number:
 `templates/AGENTS.md:48` says `git add -A && git commit && git push` two lines
 above "never commit secrets"; `templates/handoff/NEXT_PROMPT.md:31` demands an
 "independent cross-family review", which R5 forbids gating on and §2 forbids
-claiming. `scripts/` and `templates/` are protected, so editing them without an
-accepted record prints `[FAIL] path coverage: … uncovered of … protected touches`.
+claiming; and that rule's own commit-identity line points at "the identity already
+in this repo's history", which here is the school address on 78 published commits —
+the installed `AGENTS.md` was reworded to the repository-local identity, so the
+template is now the stale copy and the next `init_sync.py` would overwrite the fix.
+`scripts/` and `templates/` are protected, so editing them without an accepted
+record prints `[FAIL] path coverage: … uncovered of … protected touches`.
 
 ## Known hazards to inspect first
 

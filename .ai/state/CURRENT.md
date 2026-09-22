@@ -9,7 +9,7 @@
 |---|---|
 | Current stage | Spec 10.D dogfood published as open PR #2; `main` awaits the user's merge call |
 | Authorization | `.ai/state/authorizations/2026-09-22-wave1b-dogfood.md` (T2, accepted) |
-| Blockers | none technical; two decisions are the user's — merge/tag, and whether wave 1c opens |
+| Blockers | none technical; three decisions are the user's — merge PR #2, tag/release, open wave 1c |
 | Health check | `python .ai/scripts/sync_verify.py` |
 | Red lines | no "all green", no "enforced", no "cross-family"; no tag or release without the user |
 
