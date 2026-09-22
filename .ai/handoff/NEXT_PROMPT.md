@@ -44,9 +44,10 @@ smoothed over.
 
 ## Then: wave 1c's deferred list
 
-- Wave-1b minors: M-3, M-4, M-5, M-7..M-14; `checkpoint._review_is_sha` accepting
-  uppercase; `_migration_commit`'s post-commit listing check fixed without a test;
-  15 duplicated `_load` helpers across 5 signatures.
+- The queue is `docs/evidence/wave1d-queue.md`, one row per item a tracked
+  artifact defines, and it says outright which ids in the old list resolve to
+  nothing. Wave 1d works Q1-Q5 and Q7 from it; Q8-Q13 are named limits that
+  belong in any write-up of what the protocol does not do.
 - The governing-copy drift check: `.ai/scripts/*` is the copy that actually runs and
   nothing detects it diverging from `scripts/`, so a green `sync_verify` is not
   evidence the installed verifier matches the source — this stage copied by hand.

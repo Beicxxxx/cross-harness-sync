@@ -38,7 +38,8 @@ rather than "same family" or "cross-family" — R5 forbids guessing either way.
 | Wave 1a | merged; 26 of 27 defects fixed, D14 was the single deferral |
 | Wave 1b | merged as PR #1 (`3a5f2a9`): governance records, coverage walk, `--review-prompt`, `--migrate`, D14, N1 |
 | This repo's own install | `.ai/` is on `main` (PR #2 merged as `0bc4d7f`) |
-| Wave 1c | accepted on PR #3/#4, unmerged: policy/R3-R5, `git add -A`, unfilled slots, the release gate, and verdict-vs-`status`; 14 minors deferred |
+| Wave 1c | accepted on PR #3/#4, unmerged: policy/R3-R5, `git add -A`, unfilled slots, the release gate, and verdict-vs-`status` |
+| Wave 1d | open on its own branch: the deferred queue rewritten as a tracked file, then the drift and window-narrowing checks |
 | Release | undecided: no tag, no GitHub Release |
 
 ## 4. Stage history

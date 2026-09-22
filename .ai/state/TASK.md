@@ -44,8 +44,10 @@ a shipped file — that separation is itself one of this stage's products.
 3. Done — three fresh-context passes on those two (W17, W22, W24), then both
    records' `verdict` and the wave-1b record's `status: closed` in one commit. A
    clone cannot reach `.superpowers/`, so the PR bodies carry red-at-base output.
-4. Open — the 14 deferred wave-1b minors, the governing-copy drift check, the
-   stale-grant rule, and the CHANGELOG entry for each release document touched.
+4. Open — wave 1d, on branch `v2.1-wave1d-deferred-queue`: the queue in
+   `docs/evidence/wave1d-queue.md` (Q1-Q13), whose rows Q1-Q5 and Q7 are this
+   stage. The "14 wave-1b minors" this file used to name were unresolvable ids;
+   the queue says so and what remains of them.
 
 ## Explicitly not authorized
 

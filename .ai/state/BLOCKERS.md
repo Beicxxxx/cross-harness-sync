@@ -17,8 +17,10 @@ arms) — accepted by the controller after three rounds on the code they came ou
 - The push that looked impossible was Git Credential Manager trying to prompt in
   a shell with no `/dev/tty`. It is solved, not pending: per-command
   `credential.helper='!gh auth git-credential'` pushes fine non-interactively.
-- Wave 1c's defect list is open (14 minors and the three items in
-  `docs/evidence/wave1b-facts.md` §7). It is queued, not blocked.
+- Wave 1c's defect list is queued, not blocked: `docs/evidence/wave1d-queue.md`
+  holds it. Its old spelling ("14 minors: M-3, M-4, M-5, M-7..M-14") named ids
+  no tracked file defines, which is the dangling-reference defect this file
+  warns about, committed by the wave that warned.
 - `budget AGENTS.md` went red twice while this stage filled the installed files
   in (69 lines, then 66, against a cap of 65). The check was right and the file
   now fits; a budget that only bites other people's text is not a budget.
