@@ -38,9 +38,10 @@
 - Closed since the review (`19fcfcb`): the emitted `git add -A`, three `reference.md`
   requirements, the `7 failed` count, the CONTROL argument, and three unsupported
   "same model family" assertions — the one on `main` corrected by new text, not by
-  rewriting history. Still open: no tripwire for `22/25`, and **nothing enforces the
-  two-face split**, so a `scripts/foo.py` commit under a runtime record prints no
-  FAIL anywhere. Both go to PR #4, that check first.
+  rewriting history. PR #4 then added the release gate; its review came back
+  5C/5I/2M and the record it depends on could not parse, so `9b46161` fixed the
+  record. Three holes still block #4: PASS on a misspelled `release_paths`, on an
+  anchor at HEAD, and on an authorisations directory outside the repository.
 - Deferred: 14 wave-1b minors, the governing-copy drift check, the stale-grant rule.
 
 ## 3. Evidence pointers
