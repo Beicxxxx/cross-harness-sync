@@ -879,8 +879,9 @@ def _record_state(fields):
     record's own claim that its stage has finished, which `sync_verify`'s
     boundary answers with and its coverage walk does not. A record in this state
     is `closed` here so the prompt cannot print a finished stage as the live
-    scope; its text is still shown, because it remains the authority over the
-    commits it names.
+    scope; it is still NAMED in the output, because "one live authorization and
+    one spent one" is a different fact from "one", and the spent record remains
+    the authority over its own commits.
     """
     if fields is None:
         return "legacy", "governance: absent"
@@ -947,10 +948,18 @@ def _review_authorization_block(cfg, notes):
             lines.append(f"-- active authorization: {_review_rel(path)} "
                          f"({detail}) --")
             lines.append(text.rstrip("\n"))
+        # A closed stage is not the live scope, so its text does not print -- but
+        # naming it is the difference between "one authorization covers this" and
+        # a reviewer guessing whether another record exists somewhere.
+        for path, _text, detail in buckets.get("closed", []):
+            lines.append(f"[closed stage authorization] {_review_rel(path)} "
+                         f"({detail}) -- its own commits only, so its text is "
+                         "not printed as the live scope.")
         return lines
     lines.append(f"{NO_ACTIVE_AUTH} {where} holds "
-                 f"{len(records)} record(s) and none of them is an accepted "
-                 "authorization")
+                 f"{len(records)} record(s) and none of them is a live accepted "
+                 "authorization (a finished stage carries `status: closed`, "
+                 "named below rather than counted here)")
     for state, wording in (("declined", "not accepted"),
                            ("closed", "finished stage, not the live scope"),
                            ("malformed", "governance block invalid"),

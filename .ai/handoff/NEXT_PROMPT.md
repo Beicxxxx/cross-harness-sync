@@ -15,7 +15,7 @@ authorised in `docs/release-authorizations/` and never by a record under
 ## Where the branch stands
 
 On `v2.1-wave1c-release-gate` (stacked on `v2.1-wave1c-governance-defects`; PR #3
-then PR #4), pushed through `81ff416`:
+then PR #4), pushed through `4e99840`/`26e2788`:
 
 - Three release-face defects fixed red-first in
   `tests/test_lane_1c_governance.py`: `R3`/`R5` contradicted each other; the shipped
@@ -31,15 +31,15 @@ then PR #4), pushed through `81ff416`:
 Two claims in an earlier version of this file were withdrawn: the identity defect
 was never in `templates/AGENTS.md` (it holds a placeholder; the sentence pointing at
 repo history was this repository's own), and the "third template defect" logged from
-it did not exist. Measurements, including the dry-run numbers below, are in
-`docs/evidence/wave1c-facts.md` W1…W21.
+it did not exist.
 
 ## Step 1 — the review, before anything is accepted
 
-One fresh-context pass on the release gate and the `verdict`/`status` split: a
-subagent with no shared history, `git diff main...HEAD`, and mutants rather than
-comments to attack. Re-run every finding before acting on it, and record what its
-model family was — or that it could not be read (W14).
+Two fresh-context passes have run since the gate landed and their findings are closed
+(W22, W23); nothing has looked at the closure. Same method: no shared history,
+`git diff main...HEAD`, mutants rather than comments to attack, every finding re-run
+before it is acted on, and the reviewer's model family recorded or recorded as
+unreadable (W14).
 
 ## Step 2 — the acceptance commit, exactly
 
@@ -49,7 +49,7 @@ ONE commit, because each verdict change alone is a self-approval:
 - `status: closed` on `.ai/state/authorizations/2026-09-22-wave1b-dogfood.md` —
   NOT its `verdict`, which is what covers wave 1b's own protected touches;
 - `python .ai/scripts/sync_verify.py` then exits 0 with no FAILED line. W19 holds
-  the three dry-run measurements that define the gap (30 / 5 / 11 uncovered of 39).
+  the dry-run measurements that define the gap (30 / 5 / 11 of 39, and 45 / 43 here).
 
 Merging PR #3 and #4 stays the user's call, in those terms.
 ## Then: wave 1c's deferred list

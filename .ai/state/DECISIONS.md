@@ -108,7 +108,12 @@ Rationale: the parser and the union rule both predate this PR, so the gate did n
 the mechanism — it pointed that mechanism at files other people install, which is why it
 counts as newly reachable. This stage's own record enumerates one path per bullet for that
 reason. Closing it needs a refusal or a bound in `sync_verify`, not a comment here.
-Scope: both record kinds; `hazard 3` in `handoff/NEXT_PROMPT.md` predates this and stays.
+Scope: CORRECTED 2026-09-22 19:05 (+10:00) by the next review round — the refusal
+shipped for RELEASE bullets only, so this line's "both record kinds" was an
+overclaim about my own text, exactly the defect class this wave keeps catching. A
+runtime record may still carry `- \`*\`` and cover every protected path in the window;
+it is named in `docs/evidence/wave1c-facts.md` W22/W23 and stays on the deferred
+list, where `handoff/NEXT_PROMPT.md` keeps its hazard bullet.
 
 ## 2026-09-22 14:35 (+10:00): The release authority is itself under governance
 
@@ -143,3 +148,21 @@ claim is reviewable, not forge-proof — the same envelope as a false `verdict`,
 spec 6.3 already says.
 Scope: shipped in `templates/AUTHORIZATION.md`; a record predating the key has none
 and means `open`.
+
+## 2026-09-22 19:12 (+10:00): An accepted release record must name the window it authorises
+
+Decided by: qoder-cli on the gate's fourth review, reproduced on this host before any
+edit. `release_window_start_commit` was one config line compared to nothing, so moving
+it forward dropped the commits an accepted record authorised and they then read as
+COVERED — the walk cannot report a range it does not enter. Setting it to the tip
+empties both walks and books `== 27/27 ==` over 45 runtime and 43 shipped pairs.
+Rationale: the record states its own base (`window_start_commit:` in its `##
+Governance` block) and the anchor must be at-or-before it, because the record is the
+artifact a human approved and the config is a line that moves. An accepted record that
+declares no base is refused: `verdict: accepted` over an unnameable range is a claim,
+not a coverage fact. Same round: an unreadable record in that directory is a FAIL, not
+a PASS that mentions it, and a zero-touch window with nothing accepted is
+`SKIP(quiet-window-unanchored)`.
+Scope: the release walk only. The runtime walk keeps the same empty-window hole and
+tolerates glob bullets (`docs/evidence/wave1c-facts.md` W18, W22) — widening it here
+would have been the check extending its own reach because other code was nearby.

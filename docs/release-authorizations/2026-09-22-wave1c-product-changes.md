@@ -26,6 +26,7 @@ and the row count below is the third thing to have drifted out of step with the 
 | `scripts/ai_common.py`, `scripts/sync_verify.py` | `required <file>` asks whether a state file exists and `budget <file>` asks how long it is, so a verbatim template copy answers both and prints PASSes. Nothing detected a ROLE_POLICY whose authorship line still read `by <who>` — and that file is digest-pinned. |
 | `scripts/init_sync.py` | Copied `<NAME> <<EMAIL>>`, `<PROJECT NAME>`, `<REMOTE URL>` and the Adopted line verbatim, then told the user to fill in "every placeholder" — including the ones only the installer could know. |
 | `scripts/ai_common.py`, `scripts/sync_verify.py`, `scripts/checkpoint.py`, `templates/AUTHORIZATION.md` | One governance field was answering two questions. `verdict: accepted` makes a record the authority over the commits it names AND says the stage is still live, so a repository that finished a second stage had two accepted records and `swarm boundary` went red forever; the only way out was to rewrite the finished record's verdict, which retracted its coverage and made its OWN commits read as unauthorized. `status: open\|closed` now answers the liveness question alone, read by the boundary and the review prompt and deliberately not by the coverage walk. |
+| `scripts/sync_verify.py` | The gate's own review then found the gate was advisory where it claimed to be a wall: an unreadable record in `docs/release-authorizations/` sat UNDER a coverage PASS (named only in that PASS's own text), and `release_window_start_commit` is one config line nobody compared to anything, so advancing it drops the commits an accepted record authorised and they read as covered because the walk no longer looks at them. Accepted records must now state `window_start_commit:` themselves, an anchor that has passed one is a FAIL, an unreadable record is a FAIL, and a zero-touch window with nothing accepted is a named SKIP rather than `0 pairs covered`. |
 
 ## The ruling behind R3
 
@@ -95,6 +96,7 @@ executor: qoder-cli/controller
 reviewer: qoder-cli general-purpose subagent, separate context
 verdict: pending
 status: open
+window_start_commit: 0bc4d7f54a37a0cf0c15bc999af42eac320d073e
 red_before_green: true
 user_authorized: true
 ```
