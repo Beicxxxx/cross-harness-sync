@@ -1,4 +1,4 @@
-# Next Prompt — wave 1d is accepted locally; two commands remain, then it is the user's
+# Next Prompt — wave 1d is pushed and open as PR #5; only the owner's merge is left
 
 You are the single active implementation executor. Read, in order:
 `.ai/state/CURRENT.md` §2-3, `.ai/state/TASK.md`, `.ai/state/BLOCKERS.md` (binding
@@ -7,21 +7,20 @@ disclosures), `.ai/state/ROLE_POLICY.md` §1-3, and the two wave-1d records:
 `docs/release-authorizations/2026-09-22-wave1d-product-changes.md` (release face).
 Spec §2 (publishing red lines) is under `docs/superpowers/specs/`.
 
-## Do exactly this, in this order
+## There is nothing to do here until the owner decides
 
-1. `python .ai/scripts/checkpoint.py --lock --agent <your-name>` — the previous
-   epoch was released at close-out; re-acquiring overwrites
+`v2.1-wave1d-deferred-queue` is pushed, tip `c9b56cf`-and-after, and open as PR #5
+against `v2.1-wave1c-release-gate`, which is PR #4 against PR #3's branch, which is
+PR #3 against `main`. Merging in that order, tagging, GitHub Release and any version
+bump are the owner's, each asked in its own terms. Do not start a queue row without
+him funding it, and do not "tidy" a document: the last 24 hours on this branch went
+mostly into prose about finished code.
+
+If you are asked to continue anyway:
+1. `python .ai/scripts/checkpoint.py --lock --agent <your-name>` — the previous epoch
+   was released at close-out, and re-acquiring overwrites
    `.ai/runtime/WRITER_LOCK.json`, which `docs/evidence/` cites as a live record.
-2. `GIT_TERMINAL_PROMPT=0 git -c credential.helper='!gh auth git-credential' push -u origin v2.1-wave1d-deferred-queue`
-3. `gh pr create --base v2.1-wave1c-release-gate --head v2.1-wave1d-deferred-queue`
-   — 13 commits, tip `425b18b`. In the body: what check 10 does, the runtime window
-   guard, the two review passes' findings by row (W1-W9, X1-X8), and that merging
-   #3 → #4 → this one, tagging and Release are the user's decisions.
-4. Then a follow-up commit replaces the "not yet pushed" wording in
-   `.ai/handoff/LATEST.md` §5 and names the real PR number — never write a PR number
-   into a file before the PR exists. Then re-run
-   `python .ai/scripts/sync_verify.py` and stop when it prints no `FAILED:` line.
-That is all. The branch has no engineering left of its own.
+2. Re-run `python .ai/scripts/sync_verify.py` before quoting anything from this file.
 
 ## Where it actually stands
 

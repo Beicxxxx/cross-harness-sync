@@ -64,11 +64,10 @@
 
 ## 5. Next step
 
-Push `v2.1-wave1d-deferred-queue` and open its PR stacked on #3 and #4 — the last
-thing this branch owes, and one commit cannot both accept the records and contain the
-push that follows them. After that nothing here is yours to start: merging #3 → #4 →
-this one, tagging and Release are the user's, and the unfunded queue rows (Q6, Q8-Q12,
-Q14, Q15) need his go-ahead before anyone codes them.
+Nothing until the owner decides. The branch is pushed and open as PR #5 against
+`v2.1-wave1c-release-gate` (PR #4), which is PR #3 against `main`: merging in that
+order, tagging and Release are his, and the unfunded queue rows (Q6, Q8-Q12, Q14, Q15)
+need his go-ahead before anyone codes them.
 
 ## 6. Must-read list
 
