@@ -68,6 +68,7 @@ this list is read one entry per line, so a packed line silently covers nothing.
 - `README.md`
 - `SKILL.md`
 - `reference.md`
+- `templates/sync_config.json`
 
 ## Governance
 
