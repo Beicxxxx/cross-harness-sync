@@ -382,6 +382,44 @@ def test_diff_block_names_why_when_git_cannot_answer(ai_repo, cp):
         f"an undiffable window must print a named reason:\n{body}"
 
 
+# ------------------------------------------- one predicate for one anchor ---
+#
+# Q3, recorded in wave 1b's own ledger and deferred to 1c and then to here:
+# `checkpoint._review_is_sha` listed `ABCDEF` in its character class while
+# `ai_common.window_is_valid` — the copy `sync_verify.py` and `init_sync.py` both
+# use — refused it. Git resolves an uppercase id happily, so the two commands
+# agreed about the COMMITS and disagreed about what a recorded anchor is allowed
+# to look like: the same config line named a window the review prompt diffed and
+# the coverage walk refused outright (`test_a_non_commit_window_anchor_fails_
+# rather_than_governing_nothing` pins `"A"*40` on that side). One question, one
+# predicate, and the reviewer's answer has to be the verifier's.
+
+
+def test_an_uppercase_anchor_falls_back_rather_than_answering_alone(ai_repo, cp):
+    """The reviewer must not accept an anchor the verifier calls corrupt."""
+    window = git(ai_repo, "rev-parse", "HEAD").upper()
+    _set_config(ai_repo, governance={"window_start_commit": window})
+    res = run_python(cp, ["--review-prompt"], cwd=ai_repo)
+    assert res.rc == 0, f"rc {res.rc}:\n{res.stdout}\n{res.stderr}"
+    body = _sections(res)[HEADERS[1]]
+    assert "FALLBACK" in body, \
+        f"an uppercase anchor was taken as a recorded window:\n{body}"
+    assert "names no commit id" in body, \
+        f"the fallback has to say why it refused the field it was given:\n{body}"
+
+
+def test_a_lowercase_anchor_still_reaches_the_reviewer(ai_repo, cp):
+    """The control: the refusal above is the spelling, not the predicate failing
+    to read the config at all."""
+    window = git(ai_repo, "rev-parse", "HEAD")
+    _set_config(ai_repo, governance={"window_start_commit": window})
+    res = run_python(cp, ["--review-prompt"], cwd=ai_repo)
+    assert res.rc == 0, f"rc {res.rc}:\n{res.stdout}\n{res.stderr}"
+    body = _sections(res)[HEADERS[1]]
+    assert window in body, f"the recorded window is not named:\n{body}"
+    assert "FALLBACK" not in body, f"a valid anchor must not fall back:\n{body}"
+
+
 # ------------------------------------------------ one record set (I-4) ------
 #
 # Final review I-4, MEASURED: `sync_verify` scanned the authorizations directory

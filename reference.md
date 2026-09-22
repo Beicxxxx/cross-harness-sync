@@ -320,6 +320,20 @@ never block, never write state files — hooks remind, the agent writes.
   `[PASS] path coverage: 0 protected touches covered` over protected work. Same
   predicate on both sides (`ai_common.window_is_valid`, used by the writer in
   §8 and the reader in §6.3).
+- **Each accepted runtime record may state `window_start_commit:` too, and a LIVE
+  one that does is binding.** The release face's anchor has been checked against
+  its records' bases since wave 1c; wave 1d gave the runtime walk the same guard,
+  because the hole was the same shape: advancing this anchor past a live stage's
+  declared base drops that stage's commits from `window..HEAD`, where they read as
+  neither covered nor uncovered. `path coverage` FAILs naming the record and the
+  base it left behind. Two exemptions, both about history rather than convenience:
+  a record with `status: closed` is stepped out (re-anchoring at each new wave is
+  the lifecycle, and the alternative is a next stage that can only go green by
+  editing an approved record), and a record that declares NO base bounds nothing —
+  unlike the release side, where a missing base is itself a FAIL, because runtime
+  records predate the field and cannot be retro-fitted without rewriting them.
+  That leaves a runtime stage unguarded at its own back edge if it omits the line;
+  write it.
 
 ## Role policy (summary — full text in templates/ROLE_POLICY.md)
 

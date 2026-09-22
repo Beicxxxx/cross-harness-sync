@@ -71,12 +71,20 @@ user_authorized: n/a
   prevent. What `status` cannot do is protect you from a lie: a false `verdict`
   costs the writer its coverage, a false `closed` costs nothing, so the reviewer
   is the check here and the field only makes the claim visible.
-- `window_start_commit`: release records only, and required there. A record in
-  the directory `release_authorizations_dir` points at must name the commit its own
-  stage began at, because the walked window is a config line
-  (`release_window_start_commit`) and a line that moves narrows the gate without
-  saying so; the check refuses an anchor that has left a LIVE accepted record's base
-  behind, which is why closing a finished stage (`status: closed`, above) is also
-  how a project re-anchors for the next wave.
+- `window_start_commit`: the commit this stage began at, and the only thing that
+  binds a window to the work it is supposed to govern. Required in a RELEASE record
+  (one in the directory `release_authorizations_dir` points at); optional but
+  binding in a runtime one. Both walks refuse an anchor
+  (`release_window_start_commit`, `governance.window_start_commit`) that has left a
+  LIVE accepted record's declared base behind, because a window is one config line
+  and moving it forward drops the commits before it out of the range, where they
+  read as neither covered nor uncovered — nothing looks at them. Closing a finished
+  stage (`status: closed`, above) is how a project re-anchors for its next wave.
+  Optional on the runtime side for one reason, and it is a reason about history:
+  records written before that field existed carry no such line, an ACCEPTED record
+  cannot be edited to add one, and refusing them all would be answered by rewriting
+  approved records — worse than the hole. So a runtime stage that states no base is
+  unguarded at its own back edge, and the honest response is to write the line in
+  the next record, not to trust the walk to notice.
 - `red_before_green` / `user_authorized`: `true` or `false`, or `n/a` when the
   tier does not ask (both are expected at T3).
