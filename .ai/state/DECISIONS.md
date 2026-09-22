@@ -84,3 +84,28 @@ unconditional requirement is satisfied by writing the word and meaning nothing. 
 part that can be enforced is the description, not the availability.
 Scope: `ROLE_POLICY.md` (template and installed copy) plus the four documents that
 restated the old requirement verbatim. Wave 1c's own review is recorded against it.
+
+## 2026-09-22 13:40 (+10:00): The runtime walk keeps a known hole rather than be widened in passing
+
+Decided by: qoder-cli, while wiring the release gate. The new `_degenerate_empty_window`
+predicate refuses a window whose anchor IS the tip, since `<tip>..HEAD` covers nothing.
+Applying it to `path coverage` too turned `test_a_protected_set_that_does_match_tracked_files_books_the_pass`
+and the indeterminate-void test red: both anchor at HEAD deliberately and expect a PASS
+for a quiet window.
+Rationale: the release gate needed that arm to avoid reporting green over an empty range,
+but changing a settled runtime behaviour is a different change, and a check's reach must
+not widen as a side effect of the code sitting next to it. The hole is real and recorded
+rather than fixed here.
+Scope: `path coverage` only. The release walk is guarded.
+
+## 2026-09-22 13:40 (+10:00): A wildcard bullet in a release record is newly reachable, not newly created
+
+Decided by: qoder-cli on the gate's review. Editable bullets are read as `fnmatch`
+patterns and `*` crosses `/`, so one `*` in a release authorisation would cover the whole
+published surface for every future stage, because accepted records keep their force after
+their stage closes.
+Rationale: the parser and the union rule both predate this PR, so the gate did not invent
+the mechanism — it pointed that mechanism at files other people install, which is why it
+counts as newly reachable. This stage's own record enumerates one path per bullet for that
+reason. Closing it needs a refusal or a bound in `sync_verify`, not a comment here.
+Scope: both record kinds; `hazard 3` in `handoff/NEXT_PROMPT.md` predates this and stays.
