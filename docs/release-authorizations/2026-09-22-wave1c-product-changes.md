@@ -49,21 +49,41 @@ boundaries for someone else's repository.
 - The suite's own totals, re-measured on the tree this table describes and
   reported in the PR rather than here.
 
+## Editable files
+
+Enumerated one path per bullet, no wildcards. The bullet parser reads each entry as
+an `fnmatch` pattern and `*` crosses `/`, so one `*` here would authorise every
+future commit to the release face for good, by the union rule that keeps an accepted
+record in force after its stage closes. A comma-separated bullet is not two patterns:
+this list is read one entry per line, so a packed line silently covers nothing.
+
+- `scripts/ai_common.py`
+- `scripts/sync_verify.py`
+- `scripts/init_sync.py`
+- `templates/AGENTS.md`
+- `templates/CURRENT.md`
+- `templates/ROLE_POLICY.md`
+- `templates/TASK.md`
+- `templates/handoff/NEXT_PROMPT.md`
+- `README.md`
+- `SKILL.md`
+- `reference.md`
+
 ## Governance
 
 ```governance
 tier: T2
 executor: qoder-cli/controller
-reviewer: qoder-cli/general-purpose subagent, separate context; model family and
-  tier NOT confirmed from this host's logs, so no cross-family claim is made here
+reviewer: qoder-cli general-purpose subagent, separate context
 verdict: pending
 red_before_green: true
 user_authorized: true
 ```
 
-`pending` until the review of PR #3 is accepted. `is_accepted()` reads this block,
-and `release authorization` in `sync_verify.py` refuses to let a pending record
-cover a shipped file: a stage cannot publish itself by writing its own verdict.
+The reviewer's model family and tier could not be read from this host's logs (one
+segment, every model field `qfmodel`, no per-agent attribution), so no cross-family
+attestation is made here — R5 records `NOT_REPORTED` rather than guessing. `verdict`
+stays `pending` while the gate's own findings are open; see W17.
 
 ## Boundary
 
