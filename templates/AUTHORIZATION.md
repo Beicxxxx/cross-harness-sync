@@ -78,17 +78,22 @@ user_authorized: n/a
   (`release_window_start_commit`, `governance.window_start_commit`) that has left a
   LIVE accepted record's declared base behind, because a window is one config line
   and moving it forward drops the commits before it out of the range, where they
-  read as neither covered nor uncovered — nothing looks at them. A declared base is
-  asked the same question in the other direction: one that is not a
-  40-lowercase-hex id, or names a commit absent from this history, is its own FAIL,
-  because a base that cannot be resolved bounds nothing while looking like it does.
-  Closing a finished stage (`status: closed`, above) is how a project re-anchors for
-  the next wave.
+  read as neither covered nor uncovered — nothing looks at them. A LIVE record's
+  declared base is asked the same question in the other direction: a base that is
+  not a 40-lowercase-hex id, or names a commit absent from this history, is its own
+  FAIL, because a base that cannot be resolved bounds nothing while looking like it
+  does — and a `status: closed` record is not asked at all, since it no longer
+  claims a window. Closing a finished stage (`status: closed`, above) is how a
+  project re-anchors for the next wave.
   Optional on the runtime side for one reason, and it is a reason about history:
   records written before that field existed carry no such line, an ACCEPTED record
   cannot be edited to add one, and refusing them all would be answered by rewriting
   approved records — worse than the hole. So a runtime stage that states no base is
   unguarded at its own back edge, and the honest response is to write the line in
-  the next record, not to trust the walk to notice.
+  the next record, not to trust the walk to notice. One more way the guard does not
+  fire, named rather than discovered by the next reader: emptying the anchor gives
+  `SKIP(no-window: unset)` instead of a red. On a never-migrated tree that is the
+  correct answer; on one that has migrated it is how the walk stops being asked, and
+  a named SKIP is what a close-out accepts.
 - `red_before_green` / `user_authorized`: `true` or `false`, or `n/a` when the
   tier does not ask (both are expected at T3).

@@ -126,24 +126,46 @@ def test_d_6_an_unreadable_side_fails_rather_than_skipping(ai_repo):
     assert "could not be read" in found, found
 
 
-def test_d_7_a_stranger_named_init_sync_is_not_read_as_the_source_checkout(ai_repo):
+def test_d_7_a_stranger_named_init_sync_is_not_reported_as_a_verdict(ai_repo):
     """The witness is a filename, and a filename can collide (review finding).
 
     A project that owns its own `scripts/init_sync.py` — a deploy script, say — is
     an ordinary install. Under the single-file witness alone it was read as the
     skill's checkout and answered `[FAIL] governing copy: 3 of 3 installed files
     are not the bytes their source says`, a red it cannot configure away and has no
-    way to interpret. The tightened answer requires the witness AND at least one
-    installed name actually appearing in `scripts/`: one shared name is enough to
-    be the checkout (D-4 still fails when a second twin is missing), zero shared
-    names is a directory holding something else entirely.
+    way to interpret. The tightened answer also requires an installed name to appear
+    in `scripts/` — but that condition cannot tell "this is not the checkout" from
+    "the source half of the checkout was deleted", and the first version of its
+    message asserted the one reading anyway. So the token names the ambiguity, and
+    neither reading is booked as a pass.
     """
     (ai_repo / "scripts").mkdir(exist_ok=True)
     (ai_repo / "scripts" / "init_sync.py").write_text("# my own deploy script\n",
                                                       encoding="utf-8")
     res = run(ai_repo)
     found = line(res, "[SKIP] governing copy:")
-    assert found and "not-source-checkout" in found, res.lines
-    assert "shares no file name" in found, found
+    assert found and "undecidable-source-walk" in found, res.lines
+    assert "cannot tell" in found, found
+    assert "this tree is an install" not in found, found
     assert not any(ln.startswith("[FAIL] governing copy:") for ln in res.lines), \
         res.lines
+
+
+def test_d_9_one_drifted_twin_alone_is_still_a_fail(ai_repo):
+    """The case no other test reaches: `scripts/` holds exactly one installed name,
+    and it is the drifted one.
+
+    Zero shared names is an ambiguous tree (D-7); one shared name is the checkout,
+    so the single comparison the check exists to make must still be reported. A
+    variant of `shared` that compared digests instead of names passed the whole lane
+    while flipping exactly this tree from FAIL to SKIP, which is what showed the case
+    was missing rather than that the mutant was clever.
+    """
+    promote(ai_repo)
+    for name in ("ai_common.py", "checkpoint.py"):
+        (ai_repo / "scripts" / name).unlink()
+    write_source(ai_repo, "sync_verify.py", "# drifted, and the only twin left\n")
+    res = run(ai_repo)
+    found = line(res, "[FAIL] governing copy:")
+    assert found and "digests to" in found, res.lines
+    assert ".ai/scripts/sync_verify.py" in found, found
