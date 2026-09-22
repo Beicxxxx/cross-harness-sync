@@ -63,10 +63,13 @@ user_authorized: n/a
   checks identity, tier consistency, and omission.
 - `status`: `open` while the stage is being worked, `closed` once it is
   finished; absent means `open`, and a value that is neither word is read as
-  `open` (a typo must cost you a red line, not silence a check). Only
-  `swarm boundary` consults it: closing a stage takes it out of the live-writer
-  count WITHOUT retracting the `## Editable files` grants that cover its own
-  commits, because coverage is a question about history. Rewriting `verdict`
-  instead — a `retired` value — is the mistake this key exists to prevent.
+  `open` (a typo must cost you a red line, not silence a check). The boundary and
+  `checkpoint --review-prompt` consult it; the coverage walk deliberately does
+  not, so closing a stage takes it out of the live-writer count WITHOUT
+  retracting the `## Editable files` grants that cover its own commits. Rewriting
+  `verdict` instead — a `retired` value — is the mistake this key exists to
+  prevent. What `status` cannot do is protect you from a lie: a false `verdict`
+  costs the writer its coverage, a false `closed` costs nothing, so the reviewer
+  is the check here and the field only makes the claim visible.
 - `red_before_green` / `user_authorized`: `true` or `false`, or `n/a` when the
   tier does not ask (both are expected at T3).

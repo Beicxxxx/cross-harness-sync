@@ -285,6 +285,17 @@ never block, never write state files — hooks remind, the agent writes.
   when the concept arrived later than the history: sharing the runtime window made
   this repository report every shipped commit ever made as unauthorised, most of
   them predating the rule; `git log --name-only` over either anchor shows which.
+- Each **accepted** release record must also state `window_start_commit:` in its
+  `## Governance` block: the commit its own stage began at. The anchor above is one
+  config line and the walk's reach is exactly that line, so advancing it past a
+  record's base drops the commits that record authorised — and they then read as
+  covered, because nothing walks them any more. A missing or malformed base, or one
+  the walked anchor has left behind, is a FAIL naming the record. An empty range with
+  no accepted record is a named `SKIP(quiet-window-unanchored)` rather than a PASS:
+  from inside the walk, "nothing shipped since here" and "the anchor was moved" are
+  the same zeros. And an unreadable record in that directory can no longer sit under
+  a coverage PASS either — it is named as a FAIL, because the accepted set is then
+  not the whole authority set.
 
 - `role_policy_sha256`: the digest `.ai/state/ROLE_POLICY.md` must hash to. `""`
   means not pinned and the check is `SKIP(no-sha-pinned)`; anything else must be
@@ -317,10 +328,11 @@ What wave 1b does make **verifiable** is omission: `path coverage` walks
 names every touch that no accepted authorization's `## Editable files` covers;
 `pin violation` refuses a pin on `CURRENT.md` / `TASK.md` / `BLOCKERS.md` /
 `LATEST.md`; `swarm boundary` refuses more than one accepted authorization that
-is still a live writer at once (`status: closed` on a finished stage is the
-answer, and it does not undo that record's coverage grants — retiring it by
-rewriting `verdict` would have re-authorized nothing and uncovered its own
-commits). None of them detects a fabricated record, and every history question is
+is still a live writer at once. `status: closed` on a finished stage is the
+answer, and `checkpoint --review-prompt` reads the same field so the two cannot
+disagree — it is a self-report the boundary believes, the way `verdict` is, and it
+does not undo that record's coverage grants (retiring it by rewriting `verdict`
+would have re-authorized nothing and uncovered its own commits). None of them detects a fabricated record, and every history question is
 three-valued — a shallow or indeterminate history halts with a named `[FAIL]`
 instead of certifying coverage.
 

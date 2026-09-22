@@ -485,10 +485,12 @@ def is_live_stage(fields) -> bool:
 
     Coverage and the release gate deliberately do not call this: they ask what
     was authorised, and that answer does not decay when the stage finishes. The
-    claim is reviewable, not forge-proof — a record can always write
-    `status: closed` to step out of the concurrency count, exactly as it can
-    write a false `verdict`, and spec 6.3 already says a fabricated record looks
-    the same here.
+    claim is reviewable, not forge-proof, and it is WEAKER than its neighbour in
+    one direction worth naming: a false `verdict` costs the liar its coverage,
+    while a false `status: closed` costs nothing at all — it only removes the
+    record from the concurrency count. So this is a self-report the boundary
+    believes, and the check's value is that the report is on the page for the
+    reviewer, not that it can be enforced.
     """
     return is_accepted(fields) and record_status(fields) != RECORD_CLOSED
 

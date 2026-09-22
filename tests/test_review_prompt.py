@@ -223,6 +223,11 @@ def test_a_closed_stage_is_not_the_active_authorization_printed(ai_repo, cp):
         body
     assert live_marker in body and closed_marker not in body, \
         f"only the live record's text may print as the scope:\n{body}"
+    # ... but the spent record is still NAMED: "one live and one spent" is a
+    # different fact from "one", and a silent omission is how a reviewer starts
+    # believing the set is complete.
+    assert "[closed stage authorization]" in body and "0001-done.md" in body, \
+        f"the closed record vanished from the prompt:\n{body}"
     assert NO_AUTH not in body, body
 
 

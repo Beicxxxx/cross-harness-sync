@@ -47,13 +47,26 @@ def empty_release_dir(repo):
     git(repo, "commit", "-q", "-m", "docs: open the release directory")
 
 
+def _anchor(repo):
+    """The window anchor the fixture just wrote, so a record can name its own base."""
+    cfg = json.loads((repo / ".ai" / "sync_config.json").read_text("utf-8"))
+    return str(cfg.get("release_window_start_commit")
+               or (cfg.get("governance") or {}).get("window_start_commit") or "")
+
+
 def write_release_record(repo, verdict, editable="`scripts/engine.py`",
-                         name="2026-09-22-ship.md"):
+                         name="2026-09-22-ship.md", base=None):
     directory = repo / "docs" / "release-authorizations"
     directory.mkdir(parents=True, exist_ok=True)
+    gov = ""
+    if verdict:
+        stated = _anchor(repo) if base is None else base
+        gov = (GOV % verdict).replace(
+            "user_authorized: true\n",
+            f"user_authorized: true\nwindow_start_commit: {stated}\n")
     (directory / name).write_text(
         "# Release authorization\n\n## Editable files\n\n- " + editable + "\n\n"
-        + (GOV % verdict if verdict else ""), encoding="utf-8")
+        + gov, encoding="utf-8")
     git(repo, "add", str(directory.relative_to(repo).as_posix()))
     git(repo, "commit", "-q", "-m", "docs: authorise the release face")
 
@@ -325,3 +338,99 @@ def test_c4_17_an_accepted_record_cannot_glob_its_way_to_the_whole_face(ai_repo)
     assert line(res, "[PASS] release authorization:") is None, res.lines
     bad = line(res, "[FAIL] release authorization:")
     assert bad and "glob" in bad and "scripts/*" in bad, res.lines
+
+
+def test_c4_18_an_unreadable_record_may_not_sit_under_a_pass(ai_repo):
+    """A green booked while part of the authority set could not be read.
+
+    The readable records covered every touch, so the line PASSed and named the
+    garbled file inside its own evidence string. That is the shape `pin violation`
+    refuses for the runtime records: "we could not look" is never a verdict (spec 4).
+    """
+    setup(ai_repo, release_paths=["scripts/*"])
+    write_release_record(ai_repo, "accepted")
+    garbled = ai_repo / "docs" / "release-authorizations" / "00-garbled.md"
+    garbled.write_bytes(b"# Release authorization\n\n\xfe\xff not utf-8\n")
+    git(ai_repo, "add", "docs/release-authorizations/00-garbled.md")
+    git(ai_repo, "commit", "-q", "-m", "docs: add a record no reader can decode")
+    res = run(ai_repo)
+    found = line(res, "[FAIL] release authorization:")
+    assert found and "could not be read" in found and "00-garbled.md" in found, \
+        res.lines
+    assert line(res, "[PASS] release authorization:") is None, res.lines
+
+
+def test_c4_19_an_accepted_record_that_names_no_base_is_a_fail(ai_repo):
+    """`verdict: accepted` without a range is a claim nobody can check.
+
+    The accepted set is what the walk unions, and the walk's reach is one config
+    line; a record that never states where its stage began cannot be tested
+    against that line, so it must cost the run its green.
+    """
+    setup(ai_repo, release_paths=["scripts/*"])
+    write_release_record(ai_repo, "accepted", base="")
+    res = run(ai_repo)
+    found = line(res, "[FAIL] release authorization:")
+    assert found and "window_start_commit" in found, res.lines
+
+
+def test_c4_20_moving_the_anchor_past_a_records_base_is_a_fail(ai_repo):
+    """The narrowing attack, which is worse than emptying the range.
+
+    `_degenerate_empty_window` catches an anchor at the tip; this one leaves a
+    legal, non-empty range and simply drops the commits an accepted record
+    authorised. They then read as covered because nothing walks them, so the
+    record's own declared base has to be compared against the anchor.
+    """
+    setup(ai_repo, release_paths=["scripts/*"])
+    write_release_record(ai_repo, "accepted")      # its base is setup()'s anchor
+    anchor = git(ai_repo, "rev-parse", "HEAD").strip()
+    (ai_repo / "scripts" / "more.py").write_text("Y = 2\n", encoding="utf-8")
+    git(ai_repo, "add", "scripts/more.py")
+    git(ai_repo, "commit", "-q", "-m", "feat: ship a second module")
+    _set_cfg(ai_repo, release_window_start_commit=anchor)
+    res = run(ai_repo)
+    found = line(res, "[FAIL] release authorization:")
+    assert found and "moved past" in found, res.lines
+    assert "scripts/engine.py" not in (line(res, "[PASS] release authorization:")
+                                       or ""), res.lines
+
+
+def test_c4_21_a_quiet_window_with_no_accepted_record_is_not_a_pass(ai_repo):
+    """Zero touches and no accepted record cannot distinguish a moved anchor from a
+    project that shipped nothing — the walk cannot see the difference, so say so."""
+    setup(ai_repo, release_paths=["scripts/*"])
+    (ai_repo / "notes").mkdir(exist_ok=True)
+    (ai_repo / "notes" / "x.md").write_text("nothing shipped here\n",
+                                            encoding="utf-8")
+    git(ai_repo, "add", "notes/x.md")
+    git(ai_repo, "commit", "-q", "-m", "docs: a commit that ships nothing")
+    _set_cfg(ai_repo, release_window_start_commit=git(ai_repo, "rev-parse",
+                                                      "HEAD^").strip())
+    write_release_record(ai_repo, "pending")
+    res = run(ai_repo)
+    assert line(res, "[PASS] release authorization:") is None, res.lines
+    found = line(res, "[SKIP] release authorization:")
+    assert found and "quiet-window-unanchored" in found, res.lines
+
+
+def test_c4_22_control_a_quiet_window_with_an_anchored_record_passes(ai_repo):
+    """CONTROL: the two cases above must not make a genuinely quiet release face
+    permanently red.
+
+    The honest shape is a record whose own base IS the anchor and a window that
+    then holds no shipped commit: "nothing has been published since here", which is
+    a fact the walk can state, not a range it was moved out of.
+    """
+    setup(ai_repo, release_paths=["scripts/*"])
+    engine_commit = git(ai_repo, "rev-parse", "HEAD").strip()
+    _set_cfg(ai_repo, release_window_start_commit=engine_commit)
+    write_release_record(ai_repo, "accepted", base=engine_commit)
+    (ai_repo / "notes").mkdir(exist_ok=True)
+    (ai_repo / "notes" / "x.md").write_text("nothing shipped here\n",
+                                            encoding="utf-8")
+    git(ai_repo, "add", "notes/x.md")
+    git(ai_repo, "commit", "-q", "-m", "docs: a commit that ships nothing")
+    res = run(ai_repo)
+    found = line(res, "[PASS] release authorization:")
+    assert found and "0 release-face (commit, path) pairs covered" in found,         res.lines
