@@ -42,8 +42,9 @@ boundaries for someone else's repository.
 
 - `tests/test_lane_1c_governance.py` — one test per defect, red against the base
   tree first. Red output: `.superpowers/sdd/2026-09-22-wave1c/evidence/lane-1c-red-at-base.log`
-  (`7 failed, 1 passed`; the one pass is the CONTROL case, which must be green at
-  base or it is not guarding the relaxation side). Private to this machine, so
+  (`8 failed, 1 passed`; the one pass is the CONTROL case, which can only be green
+  at base because the check it guards did not exist yet — its base-green proves
+  nothing, and it earns its place by staying green afterwards). Private to this machine, so
   the PR body carries the same output inline.
 - The suite's own totals, re-measured on the tree this table describes and
   reported in the PR rather than here.

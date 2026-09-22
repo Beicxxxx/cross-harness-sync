@@ -2167,7 +2167,7 @@ def main() -> int:
         print(f"VERSION: {version_detail}")
     if args.clobber:
         print("WARNING: --clobber overwrites edited .ai state and config. Commit "
-              "the work first (`git add -A && git commit`) so this stays "
+              "the work first (`git add <the paths you intend to keep> && git commit`) so this stays "
               "recoverable.")
 
     if args.scripts_only:

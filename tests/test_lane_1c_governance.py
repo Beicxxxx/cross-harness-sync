@@ -123,11 +123,17 @@ def test_c2_role_policy_ships_the_downgrade_it_enforces():
 def test_c2_no_shipped_text_gates_on_model_family():
     """The preference may appear anywhere; the requirement may appear nowhere.
 
-    R3's old wording had a copy in three templates, so a harness that can load
-    one model was told on three sides that it cannot do T2 work at all.
+    R3's old wording had a copy in three templates AND in `reference.md`, which
+    the release record names as in scope: a harness that can load one model was
+    told on four sides that it cannot do T2 work at all.
     """
-    hits = _git_grep("must be a different model", "templates")
+    hits = _git_grep("must be a different model", "templates", "reference.md")
     assert hits == [], hits
+    # The reference's terse restatements: "one cross-family reviewer" and
+    # "R3 cross-family review" read as a gate without the downgrade clause.
+    gate = _git_grep("cross-family reviewer", "reference.md")
+    gate += _git_grep("cross-family review", "reference.md")
+    assert gate == [], gate
 
 
 def test_c2_template_takeover_prompt_states_the_rule_it_ships():
@@ -145,11 +151,27 @@ def test_c3_no_shipped_text_orders_a_blanket_add():
     """`git add -A` two lines above "never commit secrets" is the bug.
 
     Scope is every path a reader follows, not just the template: README and
-    SKILL each carried the same command in a quickstart, and an agent that
-    copied the doc rather than installing the template hit the same defect.
+    SKILL each carried the same command in a quickstart, and an agent that copied
+    the doc rather than installing the template hit the same defect.
     """
     hits = _git_grep(ADD_ALL, "templates", "README.md", "SKILL.md", "reference.md")
     assert hits == [], hits
+
+
+def test_c3_no_emitted_instruction_orders_a_blanket_add():
+    """The installer's own output told users to blanket-add (review C3, open item).
+
+    Only string literals count. Two comments in these same files name the command
+    to explain why it is wrong — quoting a defect is not ordering it, and a sweep
+    that cannot tell the two apart gets disabled rather than aimed.
+    """
+    offenders = []
+    for rel in ("scripts/init_sync.py", "scripts/checkpoint.py", "scripts/sync_verify.py"):
+        for num, line in enumerate((REPO_ROOT / rel).read_text("utf-8").split("\n"), 1):
+            body = line.lstrip()
+            if ADD_ALL in line and body[:1] in "\"'":
+                offenders.append(f"{rel}:{num}")
+    assert offenders == [], offenders
 
 
 def test_c3_the_identity_slot_is_filled_by_the_installer(tmp_path):
