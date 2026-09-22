@@ -80,15 +80,35 @@ which is gitignored and therefore is not evidence a reader can reach.
 | Shallow history | a real `git clone --depth 1 file://…` **on this nt host**: `[FAIL] path coverage: shallow/indeterminate history (true): the bounded walk cannot certify coverage of window f2b030fe..HEAD`, rc 1 |
 | The void check itself cannot answer (`git ls-files` fails on a governed tree whose window is quiet) | `[WARN] path coverage: the registered set could not be matched against the tracked files (…)` then `[SKIP] path coverage: SKIP(void-check-unavailable): …`, and no `[PASS] path coverage:` line at all. Before this commit's fix the same tree printed `[PASS] path coverage: 0 protected touches covered`, rc 0 — the degradation-reading-as-a-verdict shape §4 forbids, caught by the re-review of the commit that fixed the two above rather than by its author |
 | `is_shallow → UNKNOWN` | not reproducible with a real clone here; measured through B1's monkeypatched parametrization `tests/test_coverage_walk.py::test_the_shallow_or_indeterminate_halt_is_pinned_on_this_host[TRUE-True]` / `[UNKNOWN-True]` / `[FALSE-False]`, 3 passed. B1's real-clone test `test_a_real_shallow_clone_halts_the_walk` skips on this host with `posix-only test, running on nt` and is CI-gated; the manual clone above is the host-local substitute. |
-| Dogfood in a throwaway clone of this repo (§10.D) | `== 23/24 checks passed, 1 skipped ==` with `[PASS] path coverage: 0 protected touches covered`, `[PASS] pin violation: 1 authorization record(s), no state file pinned`, `[PASS] role policy integrity: .ai/state/ROLE_POLICY.md digests to the pinned 03f80ef0…`, `[PASS] swarm boundary: 1 accepted authorization(s) of 1 record(s) in the window` |
+| Dogfood in a throwaway clone of this repo | `== 23/24 checks passed, 1 skipped ==` with `[PASS] path coverage: 0 protected touches covered`, `[PASS] pin violation: 1 authorization record(s), no state file pinned`, `[PASS] role policy integrity: .ai/state/ROLE_POLICY.md digests to the pinned 03f80ef0…`, `[PASS] swarm boundary: 1 accepted authorization(s) of 1 record(s) in the window`. Superseded by the in-repo install below; kept because it measures a *clone's* default install, which is what a new user gets |
 
-**§10.D as written (this wave executing under the repo's OWN `.ai/`) was NOT
-done.** The repo root has no `.ai/` directory: the wave ran in a throwaway clone
-of the repo, whose install is a *clone's* install. That run is substitute
-evidence for the install/migrate/verify machinery and it is not self-dogfooding —
-nothing in this repository's own history is governed by the `path coverage` walk
-it ships. The published repo is therefore **not** self-dogfooding, and adopting
-§10.D as written is wave-1c work, not a claim this release can make.
+**Spec 10.D: this repository now runs under its own protocol, installed after the
+merge.** `python scripts/init_sync.py .` landed `.ai/` in the repo root, the
+writer lock was taken, `scripts/`, `templates/` and `docs/evidence/` were
+registered as protected paths, the role-policy digest was pinned, and the
+governance window was set to this wave's own base commit — so the coverage walk
+judges the 29 real protected touches of wave 1b against one accepted stage
+record, whose editable-file list the walk itself generated. Before that record
+existed the same command printed `[FAIL] path coverage: 29 uncovered of 29
+protected touches` at rc 1; after it, `[PASS] path coverage: 29 protected touches
+covered`. With the project's own suite registered as an `extra_checks` entry the
+in-repo run reaches `== 25/25 checks passed ==`, rc 0, with no `[SKIP]` line at
+all — the only install in this file that registers nothing to be skipped about.
+
+That is the honest ceiling of the claim: the install **postdates** the wave, so it
+certifies what shipped and cannot attest that each earlier step ran under a lock
+— wave 1b was executed while this repo had no `.ai/` at all, and no record here
+says otherwise. Filling the installed files in by hand surfaced one new defect,
+logged in `.ai/state/DECISIONS.md` for wave 1c: `templates/AGENTS.md` tells every
+harness to run `git add -A && git commit && git push` two lines above its own
+"never commit secrets" rule. Full rows, including the live lock record and the
+`--review-prompt` output on a real window, are in §7 of
+`docs/evidence/wave1b-facts.md`. One number there is stage-relative on purpose:
+the walk reported 29 protected touches before this stage's own commit and 30
+after it, because that commit touches a protected path the record lists. Each
+later commit that touches one adds another, and it stays green only while an
+accepted record names that path — that is the mechanism working, not a stale
+figure.
 
 **Re-measured after the final whole-branch review.** Three false-greens the
 reviewer measured on this host are closed here, each red-first: a

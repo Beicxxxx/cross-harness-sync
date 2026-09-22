@@ -6,3 +6,9 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .superpowers/
+
+# cross-harness-sync
+.ai/runtime/*
+!.ai/runtime/WRITER_LOCK.json
+!.ai/runtime/.gitkeep
+.env

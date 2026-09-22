@@ -1,0 +1,9 @@
+{
+  "agent": "qoder-cli",
+  "reason": "wave1b dogfood: install this protocol into its own repository (spec 10.D)",
+  "acquired_at": "2026-09-22T08:37:29+10:00",
+  "expires_at": "2026-09-22T12:37:29+10:00",
+  "released_at": "2026-09-22T09:27:19+10:00",
+  "epoch": 1,
+  "released_by": "qoder-cli"
+}
