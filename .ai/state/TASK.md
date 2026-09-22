@@ -1,7 +1,7 @@
 # Active Task
 
-> Last updated: 2026-09-23 01:45 (+10:00)
-> Updated by: qoder-cli (wave 1d reviewed; both records still `pending`).
+> Last updated: 2026-09-23 01:09 (+10:00)
+> Updated by: qoder-cli (wave 1d accepted; nothing merged).
 
 ## Standing state — do not rewrite
 
@@ -45,9 +45,12 @@ a shipped file, and `path coverage` no longer catches it when one tries.
 3. Done — Q4/Q5/Q7: the two arms no test reached now have cases; the published
    verifier figures were re-measured; and the release-document entries wave 1c owed
    are in `CHANGELOG.md`, for wave 1c as well as wave 1d.
-4. Open — acceptance: the two wave-1d records go to `verdict: accepted` and wave 1c
-   goes to `status: closed` in the same commit, then the branch is pushed and PR
-   #3/#4/#5 left ready to merge. Merge, tag and Release stay the user's.
+4. Done — acceptance: both wave-1d records carry `verdict: accepted`, wave 1c moved
+   to `status: closed` in the same commit, and the verifier plus the full suite were
+   re-run on that tree (V13 of `docs/evidence/wave1d-facts.md`).
+5. The only work left on this branch is outward: push it and open its PR on top of
+   #3/#4. Merge, tag and Release stay the user's, so after that push this file has
+   no task in it.
 
 ## Explicitly not authorized
 

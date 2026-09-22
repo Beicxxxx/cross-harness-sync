@@ -1,7 +1,7 @@
 # Current Project State — the single source of truth for progress
 
-> Last updated: 2026-09-23 01:40 (+10:00) by qoder-cli (wave 1d reviewed; records
-> not yet accepted).
+> Last updated: 2026-09-23 01:09 (+10:00) by qoder-cli (wave 1d accepted; nothing
+> merged). The 01:40/01:50/02:05 headers this replaces ran ~40 min ahead of the clock.
 > Budget: this file stays ≤ 60 lines (enforced by `.ai/scripts/sync_verify.py`).
 
 ## At a glance (for humans; machines treat this as authoritative)
@@ -9,8 +9,8 @@
 | Item | State |
 |---|---|
 | Current stage | Wave 1d on `v2.1-wave1d-deferred-queue`; wave 1c on PR #3 + stacked PR #4; PR #2 merged as `0bc4d7f` |
-| Authorization | both wave-1d records `verdict: pending` — reviewed, not yet accepted; wave 1c's two are `accepted` |
-| Blockers | merge only: PR #3 and PR #4 are the user's call, as are tag and Release |
+| Authorization | both wave-1d records `verdict: accepted`; wave 1c's two are `accepted` and `status: closed` |
+| Blockers | merge only: PR #3, PR #4 and wave 1d's own PR are the user's call, as are tag and Release |
 | Health check | `python .ai/scripts/sync_verify.py` |
 | Red lines | no "all green", no "enforced", no "cross-family"; no tag or release without the user |
 
@@ -24,9 +24,9 @@ machines using files and git alone. Background: the v2.1 design spec under
 
 `.ai/state/authorizations/2026-09-22-wave1d.md` (runtime face) and
 `docs/release-authorizations/2026-09-22-wave1d-product-changes.md` (what ships) —
-both `verdict: pending`, both reviewed. Accepting them also closes wave 1c by
-`status`, because two live accepted records in one window is the condition
-`swarm boundary` exists to refuse. Measurements and each review finding's
+both `verdict: accepted`, after two fresh-context review passes. Their acceptance
+closes wave 1c by `status`, because two live accepted records in one window is the
+condition `swarm boundary` exists to refuse. Measurements and each review finding's
 disposition: `docs/evidence/wave1d-facts.md`; the open queue:
 `docs/evidence/wave1d-queue.md`. Reviewers were fresh-context subagents; their model
 families are not readable from this host's logs, so the honest value is
@@ -40,7 +40,7 @@ families are not readable from this host's logs, so the honest value is
 | Wave 1b | merged as PR #1 (`3a5f2a9`): governance records, coverage walk, `--review-prompt`, `--migrate`, D14, N1 |
 | This repo's own install | `.ai/` is on `main` (PR #2 merged as `0bc4d7f`) |
 | Wave 1c | accepted on PR #3/#4, unmerged: policy/R3-R5, `git add -A`, unfilled slots, the release gate, and verdict-vs-`status` |
-| Wave 1d | reviewed, records pending, on its own branch: check 10 `governing copy`, the runtime window guard shared with the release face, one anchor predicate, and the deferred queue as a tracked file with every row dispositioned |
+| Wave 1d | accepted, unmerged, on its own branch: check 10 `governing copy`, the runtime window guard shared with the release face, one anchor predicate, and the deferred queue as a tracked file with every row dispositioned |
 | Release | undecided: no tag, no GitHub Release |
 
 ## 4. Stage history

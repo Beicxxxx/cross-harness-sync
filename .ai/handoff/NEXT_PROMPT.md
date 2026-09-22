@@ -20,12 +20,15 @@ Everything else — `.ai/**`, `AGENTS.md`, `CHANGELOG.md`, `docs/evidence/**`,
 ## Where the branch stands
 
 `v2.1-wave1d-deferred-queue`: both wave-1d records `verdict: accepted`, wave 1c
-`status: closed`, pushed, its PR open on top of PR #3 and PR #4. Wave 1d shipped
-check 10 `governing copy` (each `.ai/scripts/*.py` against its `scripts/` twin), the
-runtime window bound by the same `_base_conflicts` the release face uses, one anchor
-predicate (`ai_common.is_full_sha`), cases for two shipped arms no test reached, and
-the `CHANGELOG.md` entries wave 1c owed. `docs/evidence/wave1d-facts.md` is the
-measurement-and-finding record; `docs/evidence/wave1d-queue.md` is the queue.
+`status: closed`, and the acceptance commit is this branch's tip. Whether its PR is
+open is a `gh pr list` away; this file deliberately does not answer it, because the
+commit that changes the verdicts cannot also contain the push that follows them.
+Wave 1d shipped check 10 `governing copy` (each `.ai/scripts/*.py` against its
+`scripts/` twin), the runtime window bound by the same `_base_conflicts` the release
+face uses, one anchor predicate (`ai_common.is_full_sha`), cases for two shipped arms
+no test reached, and the `CHANGELOG.md` entries wave 1c owed.
+`docs/evidence/wave1d-facts.md` is the measurement-and-finding record;
+`docs/evidence/wave1d-queue.md` is the queue.
 
 ## What is actually left
 

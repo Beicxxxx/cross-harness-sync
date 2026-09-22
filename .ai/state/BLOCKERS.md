@@ -1,16 +1,17 @@
 # Current Blockers
 
-> Last updated: 2026-09-23 01:50 (+10:00)
-> Updated by: qoder-cli (wave 1d reviewed; records `pending`; nothing merged).
+> Last updated: 2026-09-23 01:09 (+10:00)
+> Updated by: qoder-cli (wave 1d accepted; records no longer `pending`).
 
 ## Active blocker
 
-Nothing technical. Wave 1d's two records read `verdict: pending` because the
-acceptance commit has not been made; they have had two fresh-context review passes,
-the second aimed at the first one's closures — which is the step wave 1c skipped and
-disclosed skipping (W24). What is left to the user is merge (PR #3, then PR #4, then
-wave 1d's own), tag/Release, and how much of `docs/evidence/wave1d-queue.md`'s
-remaining rows to fund.
+Nothing technical, and nothing outstanding on the records: both wave-1d ones read
+`verdict: accepted` after two fresh-context review passes, the second aimed at the
+first one's closures — which is the step wave 1c skipped and disclosed skipping
+(W24). What is left to the user is merge (PR #3, then PR #4, then wave 1d's own),
+tag/Release, and how much of `docs/evidence/wave1d-queue.md`'s remaining rows to
+fund. What a reviewer has NOT seen is the acceptance commit itself — two verdict
+flips, a `status` change and the state-file rewrites that follow them.
 
 ## Not blockers
 

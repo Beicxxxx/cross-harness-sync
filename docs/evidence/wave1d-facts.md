@@ -22,6 +22,7 @@
 | V10 | which tracked artifact named the deferred ids | `git show aecd536:<file> \| grep "M-[0-9]"` over the four L0/L1 handoff files | one hit: `.ai/handoff/NEXT_PROMPT.md:47`; CURRENT/TASK/BLOCKERS published the count only | `aecd536` |
 | V11 | X1's ambiguous tree, after the fix | same scaffold, `scripts/init_sync.py` present, all three twins deleted | `[SKIP] governing copy: SKIP(undecidable-source-walk): scripts/init_sync.py is present but scripts/ holds none of the 3 installed name(s), so this check cannot tell 'scripts/ is unrelated code that borrows the installer's filename' from 'the source side of these copies was deleted'; neither reading is a pass and neither is compared` | working tree, post-X1 |
 | V12 | suite and verifier, once the review fixes were in | `python -m pytest tests/ -n 8 -o addopts= -q`; `python .ai/scripts/sync_verify.py` | `538 passed, 5 skipped`; `== 25/28 checks passed ==` with `FAILED: budget .ai/handoff/LATEST.md, path coverage, release authorization` at the first run and the budget line cleared by the handoff trim before the commit | working tree on `9150b6a`, before the commit that carries this row |
+| V13 | the accepted tree: both wave-1d records `verdict: accepted`, wave 1c `status: closed` | `python .ai/scripts/sync_verify.py`, re-run twice | `== 28/28 checks passed ==`, no `FAILED:` line, `[PASS] governing copy: 3 installed files byte-identical to their twins in scripts/ (sha-256 over the whole file)`, `[PASS] path coverage: 75 protected touches covered`, `[PASS] release authorization: 78 release-face (commit, path) pairs covered by accepted record(s) (2 record(s) in docs/release-authorizations)`, `[PASS] swarm boundary: 3 accepted authorization(s) of 3 record(s) in the window -- 1 of them live, 2 closed`, and its `extra_checks` suite line `538 passed, 5 skipped`. The first run of this pair printed `== 27/28 ==` with `FAILED: budget .ai/state/CURRENT.md` — the close-out rewrite had pushed that file to 61 lines against a cap of 60, so the check was right and the file was trimmed, not the cap raised | working tree on `98d5ce2`, uncommitted when run — the acceptance commit is this row's tree |
 
 V2/V3 are the two figures `README.md` and `SKILL.md` publish, and they are what
 `tests/test_authorization_records.py` pins by name; V4's two FAILED lines are the
@@ -68,8 +69,11 @@ resting on a runtime grant, which is the error this wave's records exist to prev
 - **`governing copy` still cannot tell a stale copy from a hand-edited one**, and it
   does not assert that every authored file was installed; both limits are in its
   own docstring and in `reference.md`.
-- Wave 1c's record remains `status: open` with no declared base on this tree, so
-  Q14's second escape is not hypothetical here — it is the current state.
+- Wave 1c's two records were `status: open` at the time of the two review passes, and
+  its runtime record declares no base, so Q14's first two escapes were the state of
+  this tree rather than a hypothesis. Acceptance (V13) closes wave 1c by `status`,
+  which does not fix either one: a live baseless record becomes a closed record, and
+  a closed record is never asked. The mechanism's reach is unchanged by this stage.
 
 ## The second pass, over these closures
 
