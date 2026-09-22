@@ -42,15 +42,17 @@ fenced block below and ignores the prose, so: one `key: value` per line, a
 repeated key is fatal (audit data has no last-wins), and an unfilled angle
 placeholder is fatal too — which is why this template carries the two sanctioned
 sentinels (`n/a`, `NOT_REPORTED`) for you to replace instead of a bracketed hint.
-`verdict:` is the line that decides whether this record counts as live; drop the
-key and the record is undecided, which the verifier names as
-`SKIP(no-verdict: …)` and never books as a pass.
+`verdict:` decides whether this record is an authority at all; `status:` says
+whether its stage is still a live writer. Drop `verdict` and the record is
+undecided, which the verifier names as `SKIP(no-verdict: …)` and never books as
+a pass.
 
 ```governance
 tier: n/a
 executor: NOT_REPORTED
 reviewer: NOT_REPORTED
 verdict: NOT_REPORTED
+status: open
 red_before_green: n/a
 user_authorized: n/a
 ```
@@ -59,5 +61,12 @@ user_authorized: n/a
 - `executor` / `reviewer`: the harness and model that filled each role, plus the
   effort tier. Recorded, never gated on model family (rule R5) — the verifier
   checks identity, tier consistency, and omission.
+- `status`: `open` while the stage is being worked, `closed` once it is
+  finished; absent means `open`, and a value that is neither word is read as
+  `open` (a typo must cost you a red line, not silence a check). Only
+  `swarm boundary` consults it: closing a stage takes it out of the live-writer
+  count WITHOUT retracting the `## Editable files` grants that cover its own
+  commits, because coverage is a question about history. Rewriting `verdict`
+  instead — a `retired` value — is the mistake this key exists to prevent.
 - `red_before_green` / `user_authorized`: `true` or `false`, or `n/a` when the
   tier does not ask (both are expected at T3).

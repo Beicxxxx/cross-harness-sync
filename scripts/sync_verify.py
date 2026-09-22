@@ -1479,6 +1479,20 @@ def check_release_authorization(cfg: dict) -> None:
         else:
             pending += 1
 
+    # A release record enumerates; it does not glob. The bullets are matched with
+    # `fnmatch`, where `*` crosses `/`, and accepted records keep their force for the
+    # rest of the window -- so one `*` here would cover every future shipped commit,
+    # forever, from a file that was already approved. Enumeration is the whole
+    # reason this list exists, so a glob is a FAIL and not a style preference.
+    globs = [b for b in accepted if any(ch in b for ch in "*?[")]
+    if globs:
+        record("release authorization", False,
+               f"{len(globs)} accepted release bullet(s) use a glob instead of a "
+               f"path: {', '.join(sorted(set(globs))[:4])} -- `*` crosses `/` and an "
+               "accepted record never expires within the window, so one wildcard "
+               "authorises the whole release face for every later commit")
+        return
+
     if not touched:
         # Same predicate, one extra arm: a quiet release window whose only record
         # could not be read is "cannot determine", and the shared helper has no way
@@ -1609,13 +1623,33 @@ def check_role_policy_integrity(cfg: dict) -> None:
            f"visible")
 
 
+def _closed_note(closed, live):
+    """The tail that says which accepted records stepped out of the count.
+
+    Without it `2 accepted authorization(s) of 2 record(s)` beside a PASS reads as
+    a check that lost a record: the reader cannot see which one the boundary
+    treated as finished, or that it still authorises the commits it names.
+    `accepted` keeps its meaning (a verdict of `accepted`) in both halves of the
+    line; the live set is what gets compared to one.
+    """
+    if not closed:
+        return ""
+    return (f" -- {len(live)} of them live, {len(closed)} closed "
+            f"({', '.join(sorted(closed))}): a closed stage still covers the "
+            "commits it was accepted for, and the boundary compares the live "
+            "count to one")
+
+
 def check_swarm_boundary(cfg: dict) -> None:
     """N1: SKILL.md declares concurrent swarms out of scope and the protocol
     mandates one live authorization per stage, yet two accepted records used to
     verify green because every other check reads one file at a time.
 
     The count that IS decidable breaks the boundary first, so a blockless or
-    verdict-less record cannot be used to hide a second accepted one.
+    verdict-less record cannot be used to hide a second accepted one. The count is
+    of LIVE stages (`status: closed` steps out): a repository that has run two
+    finished stages has two accepted records, and making that red forever is what
+    tempted wave 1c to retire a record and uncover its own history instead.
     """
     records, _absent = _authorization_records(cfg)
     if not records:
@@ -1624,7 +1658,8 @@ def check_swarm_boundary(cfg: dict) -> None:
                f"{_authorization_dir_label(cfg)}, so nothing is live and "
                f"nothing can be concurrent")
         return
-    broken, legacy, undecided, accepted = [], [], [], []
+    broken, legacy, undecided = [], [], []
+    accepted, live, closed = [], [], []
     for rec in records:
         if rec["text"] is None:
             broken.append(f"{rec['rel']} (unreadable: {rec['read_err']})")
@@ -1643,11 +1678,21 @@ def check_swarm_boundary(cfg: dict) -> None:
                              f"`verdict:`)")
         elif ai_common.is_accepted(rec["fields"]):
             accepted.append(rec["rel"])
-    if len(accepted) > 1:
+            # Split on `status`, not on `verdict`: a stage that has finished is
+            # still the authority over the commits it was accepted for, so
+            # retiring it by rewriting its verdict uncovered its own history.
+            # `accepted` stays the full set because the report has to say how
+            # many records were accepted; `live` is what can be concurrent.
+            if ai_common.record_status(rec["fields"]) == ai_common.RECORD_CLOSED:
+                closed.append(rec["rel"])
+            else:
+                live.append(rec["rel"])
+    if len(live) > 1:
         record("swarm boundary", False,
-               f"{len(accepted)} concurrent accepted authorizations ({', '.join(sorted(accepted))}): "
+               f"{len(live)} concurrent accepted authorizations ({', '.join(sorted(live))}): "
                f"SKILL.md declares concurrent swarms out of scope, and one "
-               f"stage = one live authorization")
+               f"stage = one live authorization"
+               + _closed_note(closed, live))
         return
     if broken:
         record("swarm boundary", False,
@@ -1667,7 +1712,7 @@ def check_swarm_boundary(cfg: dict) -> None:
         return
     record("swarm boundary", True,
            f"{len(accepted)} accepted authorization(s) of {len(records)} "
-           f"record(s) in the window")
+           f"record(s) in the window" + _closed_note(closed, live))
 
 
 def _summarise() -> int:

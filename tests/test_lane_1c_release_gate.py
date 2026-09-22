@@ -47,7 +47,8 @@ def empty_release_dir(repo):
     git(repo, "commit", "-q", "-m", "docs: open the release directory")
 
 
-def write_release_record(repo, verdict, editable="`scripts/*`", name="2026-09-22-ship.md"):
+def write_release_record(repo, verdict, editable="`scripts/engine.py`",
+                         name="2026-09-22-ship.md"):
     directory = repo / "docs" / "release-authorizations"
     directory.mkdir(parents=True, exist_ok=True)
     (directory / name).write_text(
@@ -308,3 +309,19 @@ def test_c4_16_a_shallow_history_cannot_certify_a_release(ai_repo, tmp_path):
     res = run_python(shallow / ".ai" / "scripts" / "sync_verify.py", [], cwd=shallow)
     bad = line(res, "[FAIL] release authorization:")
     assert bad and "shallow" in bad, res.lines
+
+
+def test_c4_17_an_accepted_record_cannot_glob_its_way_to_the_whole_face(ai_repo):
+    """One `*` in an accepted release bullet authorises every future shipped commit.
+
+    The bullets are `fnmatch` patterns and `*` crosses `/`; accepted records keep
+    their force for the rest of the window. The third review of this PR found the
+    gate's own record saying "no wildcards" in prose while nothing enforced it, so
+    the claim was decoration. Enumeration is now a requirement, not a style.
+    """
+    setup(ai_repo, release_paths=["scripts/*"])
+    write_release_record(ai_repo, "accepted", editable="`scripts/*`")
+    res = run(ai_repo)
+    assert line(res, "[PASS] release authorization:") is None, res.lines
+    bad = line(res, "[FAIL] release authorization:")
+    assert bad and "glob" in bad and "scripts/*" in bad, res.lines

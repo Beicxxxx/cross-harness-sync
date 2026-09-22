@@ -164,10 +164,12 @@ exit 0 while someone else holds it.
   Evidence pointers / Warnings / Next step / Must-read list), ≤ 80 lines.
 - One stage = ONE authorization `.md` in `.ai/state/authorizations/` (scope +
   editable files + pinned hashes + stop boundary), plus a fenced governance
-  block carrying `tier`, `executor`, `reviewer` and `verdict`; `verdict:
-  accepted` is what makes the record live, and two live records are a FAIL. That
-  directory is the home the coverage walk reads. Template:
-  `.ai/templates/AUTHORIZATION.md`.
+  block carrying `tier`, `executor`, `reviewer`, `verdict` and `status`.
+  `verdict: accepted` makes the record an authority over the commits it names,
+  for the rest of the window; `status: closed` says the stage has finished and
+  takes it out of the live-writer count WITHOUT undoing those grants. Two
+  accepted-and-open records are a FAIL. That directory is the home the coverage
+  walk reads. Template: `.ai/templates/AUTHORIZATION.md`.
 - Never pin frequently-changing state files as authorization baselines.
 - Layered reading: L0 (the three files) at startup; L1 (the task's
   authorization + named docs) when executing; L2 archives are retrieval-only

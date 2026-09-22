@@ -316,8 +316,11 @@ What wave 1b does make **verifiable** is omission: `path coverage` walks
 `git log` over `protected_paths` in `governance.window_start_commit..HEAD` and
 names every touch that no accepted authorization's `## Editable files` covers;
 `pin violation` refuses a pin on `CURRENT.md` / `TASK.md` / `BLOCKERS.md` /
-`LATEST.md`; `swarm boundary` refuses more than one accepted authorization live
-at once. None of them detects a fabricated record, and every history question is
+`LATEST.md`; `swarm boundary` refuses more than one accepted authorization that
+is still a live writer at once (`status: closed` on a finished stage is the
+answer, and it does not undo that record's coverage grants — retiring it by
+rewriting `verdict` would have re-authorized nothing and uncovered its own
+commits). None of them detects a fabricated record, and every history question is
 three-valued — a shallow or indeterminate history halts with a named `[FAIL]`
 instead of certifying coverage.
 
