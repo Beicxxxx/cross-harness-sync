@@ -40,12 +40,26 @@
     }
   ],
   "protected_paths": [
-    "docs/evidence/*"
+    ".ai/scripts/*",
+    ".ai/scripts/*.py",
+    ".ai/sync_config.json",
+    "docs/evidence/*",
+    "docs/release-authorizations/*"
   ],
   "protected_paths_case": "case-sensitive",
   "authorizations_dir": ".ai/state/authorizations",
   "role_policy_sha256": "1cabec53ef17e073822a424bd3233d36da22580d57c41466d3386c2785d7c982",
   "governance": {
     "window_start_commit": "db091bdcea61daf73bb9cbcae446ef893490bd50"
-  }
+  },
+  "release_paths": [
+    "scripts/*",
+    "templates/*",
+    "README.md",
+    "SKILL.md",
+    "reference.md",
+    "tests/*"
+  ],
+  "release_authorizations_dir": "docs/release-authorizations",
+  "release_window_start_commit": "0bc4d7f54a37a0cf0c15bc999af42eac320d073e"
 }

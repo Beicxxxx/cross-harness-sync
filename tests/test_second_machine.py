@@ -110,11 +110,11 @@ def test_mirror_check_skips_when_neither_side_exists(ai_repo, sv):
     assert len(summary) == 1, res.lines
     # Wave 1b's baseline for THIS shape: registering a mirror turns
     # `registered project checks` from its unregistered SKIP into a PASS, so
-    # the four skips are this mirror pair's plus wave 1b's three named
-    # governance ones (`path coverage`, `pin violation`, `role policy
-    # integrity`). The count is the contract: a fifth skip is a break here, and
+    # the skips are this mirror pair's plus the four named governance ones
+    # (`path coverage`, `release authorization`, `pin violation`, `role policy
+    # integrity`). The count is the contract: one more skip is a break here, and
     # so is one that vanished.
-    assert ", 4 skipped" in summary[0], summary[0]
+    assert ", 5 skipped" in summary[0], summary[0]
 
 
 def test_mirror_check_fails_when_only_one_side_exists(ai_repo, sv):

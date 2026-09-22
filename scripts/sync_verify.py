@@ -120,6 +120,15 @@ DEFAULT_CONFIG = {
     "secret_files": [".env"],
     "secret_mirrors": [],
     "extra_checks": [],
+    # Wave 1c C4: the release face. `protected_paths` governs how THIS install is
+    # worked on; these govern what gets published from it, and they are separate
+    # because a repository that uses the protocol must not be able to certify its
+    # own product by writing a record in its own runtime state. Empty means "this
+    # tree ships nothing", which is the honest answer for a normal project and
+    # skips by name.
+    "release_paths": [],
+    "release_authorizations_dir": "docs/release-authorizations",
+    "release_window_start_commit": "",
     # Wall-clock seconds one CHILD gets before it is NAMED as failed (D11).
     # Before Task 6 the value lived only in hardcoded call sites, so an operator
     # with a governance script that never returns had one answer: kill the
@@ -265,6 +274,9 @@ KEY_SHAPES = {
     "protected_paths": list,
     "protected_paths_case": str,
     "authorizations_dir": str,
+    "release_paths": list,
+    "release_authorizations_dir": str,
+    "release_window_start_commit": str,
     "role_policy_sha256": str,
     "governance": dict,
 }
@@ -368,6 +380,18 @@ def _is_path_str(val) -> bool:
     return isinstance(val, str) and val.strip() != ""
 
 
+def _under_ai(val) -> bool:
+    """True when a configured directory resolves into `.ai/`, the runtime state."""
+    raw = str(val or "").strip().replace("\\", "/")
+    if not raw:
+        return False
+    parts = [seg for seg in raw.split("/") if seg not in ("", ".")]
+    # `..` is rejected separately by the repo-relative check; here the question is
+    # only whether the target lands under the runtime directory, so a leading `..`
+    # cannot make a `.ai/` path look clean.
+    return bool(parts) and parts[0] == ai_common.AI_DIR_NAME
+
+
 def _is_repo_relative_path(val) -> bool:
     """A path entry must stay inside the checkout the run is a report about.
 
@@ -451,7 +475,22 @@ def _check_shape(key: str, val) -> None:
         raise ConfigError(f"malformed: config key {key!r} must be a "
                           f"repo-relative path inside the checkout, got "
                           f"{val!r}")
-    if key == "authorizations_dir" and not _is_repo_relative_path(val):
+    if key == "release_authorizations_dir" and str(val or "").strip() != val:
+        raise ConfigError(f"malformed: config key {key!r} must not carry leading or "
+                          f"trailing space, got {val!r}")
+    if key == "release_authorizations_dir" and _under_ai(val):
+        # The split this key exists to enforce: a release authorisation read from
+        # `.ai/state/authorizations` would let a stage note certify a publication,
+        # which is the exact collapse the two directories are kept apart to prevent.
+        # Repo-relative alone does not stop it -- `.ai/...` is repo-relative.
+        raise ConfigError(f"malformed: config key {key!r} must not point into the "
+                          f"runtime state directory (.ai/), got {val!r}: the release "
+                          f"face is authorised by a release record, not by the "
+                          f"repository's own stage note")
+    if key in ("authorizations_dir", "release_authorizations_dir")             and not _is_repo_relative_path(val):
+        # `release_authorizations_dir` decides which files may authorise a
+        # publication, so an escaping path is the same hole one key over: one line
+        # would point the verifier at another tree's records and still print PASS.
         # Same class, one key over: this one retargets the RECORD SOURCE every
         # governance check reads, so an absolute or escaping path would let one
         # config line point the verifier at another tree's authorizations and
@@ -1186,6 +1225,52 @@ def _protected_set_is_void(pathspec):
     return (not [b for b in res.stdout.split(b"\x00") if b]), None
 
 
+def _degenerate_empty_window(window: str, pathspec):
+    """Why a walk that saw zero touches may be governing nothing, or None if not.
+
+    `(kind, evidence)` with kind in {"fail", "skip"}; None means the empty answer is
+    a genuinely quiet window and may be reported as coverage.
+
+    Called by `release authorization` only, and that is a scope decision rather than
+    an oversight: `test_a_protected_set_that_does_match_tracked_files_books_the_pass`
+    anchors at the tip on purpose and expects a PASS for a window with no protected
+    commit, so the same three lines turned two settled runtime-walk tests red. The
+    walk over this repository's own state has the hole as well. It is recorded in
+    `.ai/state/DECISIONS.md` and left alone here, because a check's reach should not
+    be widened by whatever else this PR happens to be touching.
+
+    Both shapes below produce the same permanently-green figure as a real quiet
+    window -- zero candidates, zero touches, one PASS -- and spec 4 forbids reading
+    either of them as a verdict.
+    """
+    tip = ai_common.run_git(ROOT, ["rev-parse", "HEAD"], timeout=15)
+    if tip.ok and tip.out().strip() == window:
+        return "fail", ("the window anchor IS the current tip (" + window[:8] +
+                         "), so `<anchor>..HEAD` is empty by construction and can "
+                         "cover nothing: name the commit before the first change "
+                         "meant to be governed")
+    # Comparing the anchor to the tip as a STRING catches only one degenerate
+    # choice. A side-branch tip or a sha left behind by `git reset` is a real,
+    # well-formed commit that simply is not in HEAD's past, and the range it
+    # bounds is just as empty -- so ancestry, not equality, is the question.
+    anc = ai_common.git_ancestor(ROOT, window, "HEAD")
+    if anc == "UNKNOWN":
+        return "fail", ("cannot tell whether the window anchor " + window[:8] +
+                        " is in HEAD's past (shallow or absent object): an empty "
+                        "walk here is unknown coverage, not quiet history")
+    if anc != "TRUE":
+        return "fail", ("the window anchor " + window[:8] + " is not an ancestor of "
+                        "HEAD, so `<anchor>..HEAD` reaches no commit at all: the "
+                        "empty result is the configuration, not a quiet window")
+    void, void_why = _protected_set_is_void(pathspec)
+    if void_why is not None:
+        return "fail", ("cannot determine whether the registered set matches "
+                        f"anything: {void_why} -- not knowing is not a clean verdict")
+    if void:
+        return "skip", None
+    return None
+
+
 def check_coverage_walk(cfg: dict) -> None:
     """spec 6.3: every protected-path touch in the window is covered by an
     ACCEPTED authorization's own `## Editable files` list.
@@ -1302,6 +1387,254 @@ def check_coverage_walk(cfg: dict) -> None:
     record("path coverage", True, f"{len(touched)} protected touches covered")
 
 
+def check_release_authorization(cfg: dict) -> None:
+    """Wave 1c C4: what gets published needs a release record, not a stage note.
+
+    Same walk as `path coverage`, different path set and a different directory,
+    because the two questions only look alike: "was this stage allowed to edit files
+    in its own tree" versus "did anyone accept shipping these files to other people".
+    Registering the release face under `protected_paths` merges them and lets the
+    repository that happens to host a product certify its own publication, which is
+    what wave 1b's dogfood did to itself. Only an ACCEPTED record counts here; a
+    pending one is a stage that has not been reviewed, and it publishes nothing.
+    """
+    paths = list(cfg.get("release_paths") or [])
+    if not paths:
+        record("release authorization", None,
+               "SKIP(no-release-paths): this tree registers nothing it publishes")
+        return
+    # No empty-value arm here on purpose: `release_authorizations_dir: ""` is refused
+    # by the config shape check at rc 2 before any check runs, so a branch for it
+    # would be unreachable code claiming to be a guard.
+    rel_dir = str(cfg.get("release_authorizations_dir") or "").strip()
+    governance = cfg.get("governance") or {}
+    # The release face starts where the concept starts. Falling back to the runtime
+    # window would reach back through every commit made before a repository had any
+    # notion of a release record, and a rule cannot govern the period before it
+    # existed: measured here, a shared anchor reported 46 uncovered of 46, all but
+    # eight of them older than this check. An explicit anchor is how the boundary is
+    # recorded rather than assumed, and the shape predicate still refuses a fake one.
+    window = str(cfg.get("release_window_start_commit", "")
+                 or governance.get("window_start_commit", "") or "")
+    if window in ("", "NO_HISTORY"):
+        record("release authorization", None, f"SKIP(no-window: {window or 'unset'})")
+        return
+    if not ai_common.window_is_valid(window):
+        record("release authorization", False,
+               f"window anchor is not a commit id: {window!r} bounds no readable "
+               "range, and an unreadable bound is not the empty log it would print")
+        return
+    if not is_git_repo(ROOT):
+        record("release authorization", False,
+               "no git repository to walk, so what ships here is unverifiable")
+        return
+    shallow = ai_common.is_shallow(ROOT)
+    if shallow != "FALSE":
+        # Same rule as the runtime walk: a truncated history cannot distinguish
+        # "never authorised" from "authorised, then the object went away", and
+        # UNKNOWN halts for the same reason.
+        record("release authorization", False,
+               f"shallow or indeterminate history ({shallow.lower()}): the bounded "
+               f"walk cannot certify coverage of window {window[:8]}..HEAD")
+        return
+    pathspec = _protected_pathspec(paths, cfg)
+    rev = f"{window}..HEAD"
+    nonmerge, why = ai_common.log_paths(
+        ROOT, ["--no-merges", "--full-history", "--pretty=format:%H", rev], pathspec)
+    if nonmerge is None:
+        record("release authorization", False, f"walk halted: {why}")
+        return
+    merges, why = ai_common.log_paths(
+        ROOT, ["--merges", "-m", "--first-parent", "--pretty=format:%H", rev], pathspec)
+    if merges is None:
+        record("release authorization", False, f"walk halted: {why}")
+        return
+    touched = sorted(set(_walk_touches(nonmerge) + _walk_touches(merges)))
+
+    directory = ROOT / Path(rel_dir)
+    try:
+        entries = sorted(p for p in directory.iterdir()
+                         if p.suffix.lower() == ".md" and p.name.upper() != "INDEX.MD")
+    except (FileNotFoundError, NotADirectoryError):
+        record("release authorization", False,
+               f"`release_paths` registers {len(paths)} pattern(s) but {rel_dir} does "
+               "not exist: no record here can have authorised these commits")
+        return
+    except OSError as exc:
+        record("release authorization", False,
+               f"{rel_dir} could not be read ({type(exc).__name__}): a directory that "
+               "cannot be read is not a directory holding no authorisations")
+        return
+
+    accepted, pending, unreadable, undecidable, bases = [], 0, [], [], []
+    for path in entries:
+        try:
+            text = path.read_text("utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            unreadable.append(f"{path.name} ({type(exc).__name__})")
+            continue
+        fields, gov_err = ai_common.parse_governance_block(text)
+        if gov_err:
+            undecidable.append(f"{path.name} ({gov_err})")
+        if ai_common.is_accepted(fields):
+            accepted += _section_bullets(text, "Editable files")
+            bases.append((path.name,
+                          str((fields or {}).get(
+                              "window_start_commit", "") or "").strip(),
+                          ai_common.is_live_stage(fields)))
+        else:
+            pending += 1
+
+    # A release record enumerates; it does not glob. The bullets are matched with
+    # `fnmatch`, where `*` crosses `/`, and accepted records keep their force for the
+    # rest of the window -- so one `*` here would cover every future shipped commit,
+    # forever, from a file that was already approved. Enumeration is the whole
+    # reason this list exists, so a glob is a FAIL and not a style preference.
+    globs = [b for b in accepted if any(ch in b for ch in "*?[")]
+    if globs:
+        record("release authorization", False,
+               f"{len(globs)} accepted release bullet(s) use a glob instead of a "
+               f"path: {', '.join(sorted(set(globs))[:4])} -- `*` crosses `/` and an "
+               "accepted record never expires within the window, so one wildcard "
+               "authorises the whole release face for every later commit")
+        return
+
+    conflicts = _release_base_conflicts(bases, window)
+    if conflicts:
+        record("release authorization", False,
+               f"{len(conflicts)} accepted release record(s) do not bound the "
+               f"window that was walked: "
+               + "; ".join(f"{n} {w}" for n, w in conflicts))
+        return
+
+    if not touched:
+        # Same predicate, one extra arm: a quiet release window whose only record
+        # could not be read is "cannot determine", and the shared helper has no way
+        # to know a record was unreadable.
+        kind, evidence = _degenerate_empty_window(window, pathspec) or (None, None)
+        if kind == "fail":
+            record("release authorization", False,
+                   f"{evidence} (an empty range is not authorisation)")
+            return
+        if unreadable:
+            record("release authorization", None,
+                   f"SKIP(release-records-unreadable): the window is quiet and "
+                   f"{len(unreadable)} record(s) could not be read "
+                   f"({', '.join(unreadable[:3])}) -- nothing was confirmed here, "
+                   "and an unreadable authorisation is not an absent one that proves "
+                   "there is nothing to publish")
+            return
+        if not bases and kind is None:
+            # An empty range with nothing accepted in the directory is not a
+            # certified quiet window: `release_window_start_commit` is a config
+            # line, and moving it forward is indistinguishable from a project that
+            # shipped nothing -- from inside the walk. Spec 4: named, never PASS.
+            record("release authorization", None,
+                   f"SKIP(quiet-window-unanchored): the range is empty and "
+                   f"{len(entries)} record(s) in {rel_dir} carry no accepted "
+                   "`verdict`, so nothing states where a release stage began -- an "
+                   "unbounded empty walk proves only that it did not look")
+            return
+        if kind is None:
+            record("release authorization", True,
+                   f"0 release-face (commit, path) pairs covered "
+                   f"({len(entries)} record(s) in {rel_dir})")
+            return
+        print("[WARN] release authorization: no tracked file matches any of the "
+              f"{len(paths)} release_paths pattern(s), so this line governs nothing")
+        record("release authorization", None,
+               "SKIP(void-release-set): no tracked file matches any release_paths "
+               f"pattern ({', '.join(paths[:6])}"
+               f"{', ...' if len(paths) > 6 else ''}) -- a typo'd release set is "
+               "permanently green, which is exactly how it hides (spec 4: named, "
+               "never PASS)")
+        return
+
+    if unreadable:
+        # A record that cannot be read is neither absent nor accepted. Until now it
+        # appeared only inside the evidence string of a PASS over whatever the
+        # readable records happened to cover -- a green booked while part of the
+        # authority set was unread, which is the shape `pin violation` refuses.
+        record("release authorization", False,
+               f"{len(unreadable)} release record(s) are unreadable "
+               f"({', '.join(unreadable[:3])}): could not be read, so the accepted "
+               "set below is not the whole authority set and a coverage claim "
+               "about it is not a fact")
+        return
+
+    uncovered = [(sha, rel) for sha, rel in touched
+                 if not ai_common.glob_match(rel, accepted,
+                                             case_sensitive=_case_sensitive(cfg))]
+    origin = f"{len(entries)} record(s) in {rel_dir}"
+    if undecidable:
+        # "not accepted" and "cannot be told" are different answers, and the
+        # runtime records name which of them applies (`swarm boundary`'s `broken`
+        # bucket); a release record whose block does not parse used to be counted
+        # with the declined ones, which reads as a stage nobody approved.
+        origin += (f", {len(undecidable)} with an unparseable `## Governance` "
+                   f"block ({', '.join(undecidable[:3])})")
+    if uncovered:
+        shown = ", ".join(f"<{sha[:8]} {rel}>" for sha, rel in uncovered[:8])
+        more = f" (+{len(uncovered) - 8} more)" if len(uncovered) > 8 else ""
+        files = len({rel for _sha, rel in touched})
+        record("release authorization", False,
+               f"{len(uncovered)} uncovered of {len(touched)} release-face "
+               f"(commit, path) pairs across {files} files: "
+               f"{shown}{more} -- {origin}, {pending} not accepted. A pending record "
+               "certifies nothing: an unreviewed stage cannot publish on its own word")
+        return
+    record("release authorization", True,
+           f"{len(touched)} release-face (commit, path) pairs covered by "
+           f"accepted record(s) "
+           f"({origin})")
+
+
+def _release_base_conflicts(bases, window):
+    """`(name, why)` for each LIVE accepted release record whose own base the
+    walked window has left behind; empty when every one still bounds its history.
+
+    The anchor is a config line and the walk's reach is exactly that line, so
+    advancing `release_window_start_commit` past a record's declared base drops
+    the commits that record authorised — and they then read as COVERED, because
+    nothing walks them any more. `_degenerate_empty_window` catches the two
+    shapes that empty the range entirely; this catches the one that merely
+    narrows it.
+
+    A `status: closed` record is exempt, and that is the same split W19 had to
+    make for `swarm boundary`: re-anchoring the release window at a new wave is
+    the lifecycle, so binding a finished stage's base to it forever would make
+    the second wave of any project permanently red — the remedy would then be to
+    edit or delete an approved record, which is strictly worse than the hole.
+    What is refused is shrinking the window out from under a stage still open.
+    An accepted record must still state its base: `verdict: accepted` naming no
+    range is a claim nobody can check.
+    """
+    out = []
+    for name, base, live in bases:
+        if not live:
+            continue
+        if not base:
+            out.append((name, "declares no `window_start_commit`, so the window it "
+                              "authorises cannot be checked against the one walked"))
+            continue
+        if not ai_common.window_is_valid(base):
+            out.append((name, f"names {base!r} as its base, which is not a commit "
+                              "id (a base that resolves to something else governs "
+                              "a different range than the record says)"))
+            continue
+        if ai_common.commit_exists(ROOT, base) != "TRUE":
+            out.append((name, f"names base {base[:8]} which is not a commit in this "
+                              "history, so no range can be bounded by it"))
+            continue
+        if ai_common.git_ancestor(ROOT, window, base) != "TRUE":
+            out.append((name, f"its base {base[:8]} is not at-or-after the walked "
+                              f"window's anchor {window[:8]}: the anchor has been "
+                              "moved past the commits this record authorised, so "
+                              "the walk reports them neither uncovered nor covered "
+                              "-- it never looks"))
+    return out
+
+
 def check_pin_violation(cfg: dict) -> None:
     """spec 6.1: the only proposed check whose falsifiable fact lies entirely
     inside the repo -- a pin on a fast-changing state file."""
@@ -1376,13 +1709,33 @@ def check_role_policy_integrity(cfg: dict) -> None:
            f"visible")
 
 
+def _closed_note(closed, live):
+    """The tail that says which accepted records stepped out of the count.
+
+    Without it `2 accepted authorization(s) of 2 record(s)` beside a PASS reads as
+    a check that lost a record: the reader cannot see which one the boundary
+    treated as finished, or that it still authorises the commits it names.
+    `accepted` keeps its meaning (a verdict of `accepted`) in both halves of the
+    line; the live set is what gets compared to one.
+    """
+    if not closed:
+        return ""
+    return (f" -- {len(live)} of them live, {len(closed)} closed "
+            f"({', '.join(sorted(closed))}): a closed stage still covers the "
+            "commits it was accepted for, and the boundary compares the live "
+            "count to one")
+
+
 def check_swarm_boundary(cfg: dict) -> None:
     """N1: SKILL.md declares concurrent swarms out of scope and the protocol
     mandates one live authorization per stage, yet two accepted records used to
     verify green because every other check reads one file at a time.
 
     The count that IS decidable breaks the boundary first, so a blockless or
-    verdict-less record cannot be used to hide a second accepted one.
+    verdict-less record cannot be used to hide a second accepted one. The count is
+    of LIVE stages (`status: closed` steps out): a repository that has run two
+    finished stages has two accepted records, and making that red forever is what
+    tempted wave 1c to retire a record and uncover its own history instead.
     """
     records, _absent = _authorization_records(cfg)
     if not records:
@@ -1391,7 +1744,8 @@ def check_swarm_boundary(cfg: dict) -> None:
                f"{_authorization_dir_label(cfg)}, so nothing is live and "
                f"nothing can be concurrent")
         return
-    broken, legacy, undecided, accepted = [], [], [], []
+    broken, legacy, undecided = [], [], []
+    accepted, live, closed = [], [], []
     for rec in records:
         if rec["text"] is None:
             broken.append(f"{rec['rel']} (unreadable: {rec['read_err']})")
@@ -1410,11 +1764,24 @@ def check_swarm_boundary(cfg: dict) -> None:
                              f"`verdict:`)")
         elif ai_common.is_accepted(rec["fields"]):
             accepted.append(rec["rel"])
-    if len(accepted) > 1:
+            # Split on `status`, not on `verdict`: a stage that has finished is
+            # still the authority over the commits it was accepted for, so
+            # retiring it by rewriting its verdict uncovered its own history.
+            # `accepted` stays the full set because the report has to say how
+            # many records were accepted; `live` is what can be concurrent, and
+            # it is the shared predicate -- one definition for this and for
+            # `checkpoint`'s review prompt, because two readers deciding "live"
+            # separately is the contradiction the tree cannot check.
+            if ai_common.is_live_stage(rec["fields"]):
+                live.append(rec["rel"])
+            else:
+                closed.append(rec["rel"])
+    if len(live) > 1:
         record("swarm boundary", False,
-               f"{len(accepted)} concurrent accepted authorizations ({', '.join(sorted(accepted))}): "
+               f"{len(live)} concurrent accepted authorizations ({', '.join(sorted(live))}): "
                f"SKILL.md declares concurrent swarms out of scope, and one "
-               f"stage = one live authorization")
+               f"stage = one live authorization"
+               + _closed_note(closed, live))
         return
     if broken:
         record("swarm boundary", False,
@@ -1434,7 +1801,7 @@ def check_swarm_boundary(cfg: dict) -> None:
         return
     record("swarm boundary", True,
            f"{len(accepted)} accepted authorization(s) of {len(records)} "
-           f"record(s) in the window")
+           f"record(s) in the window" + _closed_note(closed, live))
 
 
 def _summarise() -> int:
@@ -1591,6 +1958,7 @@ def main() -> int:
             # install keeps about its own history, and they need a config that
             # parsed and a layout that held before they can mean anything.
             ("path coverage", lambda: check_coverage_walk(cfg)),
+            ("release authorization", lambda: check_release_authorization(cfg)),
             ("pin violation", lambda: check_pin_violation(cfg)),
             ("role policy integrity", lambda: check_role_policy_integrity(cfg)),
             ("swarm boundary", lambda: check_swarm_boundary(cfg))):

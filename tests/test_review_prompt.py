@@ -162,7 +162,8 @@ def test_two_accepted_records_are_named_ambiguous(ai_repo, cp):
 
 
 def test_recorded_expiry_is_shown_but_never_gates_active(ai_repo, cp):
-    """Predicate ruling: "active" is normalized `verdict == accepted`, full stop.
+    """Predicate ruling: "active" is `verdict == accepted` plus `status != closed`,
+    and nothing else.
 
     `expires_at` is D10's WRITER-LOCK field, not one of spec 6's authorization
     record keys, and `sync_verify.py`'s swarm count does not read it — so a
@@ -170,6 +171,11 @@ def test_recorded_expiry_is_shown_but_never_gates_active(ai_repo, cp):
     two answers to "what is authorized" on one tree with nothing to check them
     against. The date is still printed, because a reviewer can weigh it and a
     predicate must not swallow it.
+
+    `status` IS read, by both readers, for the opposite reason: it is the
+    record's own claim that its stage is finished, which the verifier's boundary
+    answers with. A claim this command ignored would be the same contradiction
+    in the other direction.
     """
     marker = f"PAST-EXPIRY-{int(time.time())}"
     _write_auth(ai_repo, "0001-stage.md",
@@ -189,6 +195,60 @@ def test_recorded_expiry_is_shown_but_never_gates_active(ai_repo, cp):
         f"the recorded expiry must stay on screen as detail:\n{body}"
     assert NO_AUTH not in body, \
         f"the block both showed and denied the record:\n{body}"
+
+
+def test_a_closed_stage_is_not_the_active_authorization_printed(ai_repo, cp):
+    """The reviewer must be shown the live scope, not a finished one.
+
+    Two accepted records used to mean `[AMBIGUOUS AUTHORIZATION]` with both texts
+    printed, which is right for a swarm and wrong for a repository that has simply
+    run two stages one after the other. `status: closed` distinguishes them, so
+    the closed stage must drop out of the count here exactly as it does in
+    `swarm boundary`, and its text must not be passed off as the live scope.
+    """
+    live_marker = f"LIVE-STAGE-{int(time.time())}"
+    closed_marker = f"CLOSED-STAGE-{int(time.time())}"
+    _write_auth(ai_repo, "0001-done.md",
+                f"# Authorization -- done\n\n{closed_marker}\n\n## Governance\n"
+                "```governance\ntier: T2\nverdict: accepted\nstatus: closed\n```\n")
+    _write_auth(ai_repo, "0002-live.md",
+                f"# Authorization -- live\n\n{live_marker}\n\n## Governance\n"
+                + GOV_ACCEPTED)
+    res = run_python(cp, ["--review-prompt"], cwd=ai_repo)
+    assert res.rc == 0, f"rc {res.rc}:\n{res.stdout}\n{res.stderr}"
+    body = _sections(res)[HEADERS[0]]
+    assert "[AMBIGUOUS AUTHORIZATION]" not in body, \
+        f"a finished stage is not a second live writer:\n{body}"
+    assert "active authorization: .ai/state/authorizations/0002-live.md" in body, \
+        body
+    assert live_marker in body and closed_marker not in body, \
+        f"only the live record's text may print as the scope:\n{body}"
+    # ... but the spent record is still NAMED: "one live and one spent" is a
+    # different fact from "one", and a silent omission is how a reviewer starts
+    # believing the set is complete.
+    assert "[closed stage authorization]" in body and "0001-done.md" in body, \
+        f"the closed record vanished from the prompt:\n{body}"
+    assert NO_AUTH not in body, body
+
+
+def test_a_tree_whose_only_accepted_record_is_closed_says_so(ai_repo, cp):
+    """Named, not silently green and not an empty block.
+
+    `status: closed` takes a record out of the live count, so a tree holding no
+    open stage must report `[NO ACTIVE AUTHORIZATION]` and name the closed record
+    as the reason -- otherwise the reviewer reads "no authorization" where the
+    tree says "the stage that had one is finished".
+    """
+    _write_auth(ai_repo, "0001-done.md",
+                "# Authorization -- done\n\nCLOSED-ONLY\n\n## Governance\n"
+                "```governance\ntier: T2\nverdict: accepted\nstatus: closed\n```\n")
+    res = run_python(cp, ["--review-prompt"], cwd=ai_repo)
+    assert res.rc == 0, f"rc {res.rc}:\n{res.stdout}\n{res.stderr}"
+    body = _sections(res)[HEADERS[0]]
+    assert NO_AUTH in body, body
+    assert "0001-done.md" in body, body
+    assert "finished stage" in body, \
+        f"the reason must distinguish closed from declined:\n{body}"
 
 
 def test_review_prompt_writes_no_bytes_anywhere(ai_repo, cp):

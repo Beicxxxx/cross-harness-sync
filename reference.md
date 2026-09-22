@@ -196,6 +196,9 @@ never block, never write state files — hooks remind, the agent writes.
   "protected_paths": [],
   "protected_paths_case": "case-sensitive",
   "authorizations_dir": ".ai/state/authorizations",
+  "release_paths": [],
+  "release_authorizations_dir": "docs/release-authorizations",
+  "release_window_start_commit": "",
   "role_policy_sha256": "",
   "governance": { "window_start_commit": "" }
 }
@@ -268,6 +271,39 @@ never block, never write state files — hooks remind, the agent writes.
   `INDEX.md` set aside case-insensitively because an index is not an
   authorization. A record in a subdirectory is seen by neither command — one
   agreement, not two near-misses; keep one file per stage in this directory.
+- `release_paths`: what the repository PUBLISHES, as forward-slash globs — empty
+  by default, because most projects ship nothing of theirs to other people. Separate
+  from `protected_paths` on purpose: that list governs how a stage may edit this
+  tree, while a release face needs an authorisation nobody reading the runtime records
+  could write. Register shipped code in both and the distinction collapses.
+- `release_authorizations_dir`: where those records live, repo-relative and inside
+  the checkout. The same shape refusal as `authorizations_dir` applies, because one
+  key choosing where authorisation is read from is one key that could read another
+  tree's records and still print `[PASS]`.
+- `release_window_start_commit`: the commit before the first release-face change to
+  govern, falling back to `governance.window_start_commit`. Give it its own anchor
+  when the concept arrived later than the history: sharing the runtime window made
+  this repository report every shipped commit ever made as unauthorised, most of
+  them predating the rule; `git log --name-only` over either anchor shows which.
+- Each **accepted** release record must also state `window_start_commit:` in its
+  `## Governance` block: the commit its own stage began at. The anchor above is one
+  config line and the walk's reach is exactly that line, so advancing it past a
+  LIVE record's base drops the commits that record authorised — and they then read as
+  covered, because nothing walks them any more. A missing or malformed base, or one a
+  live record's stage has left behind, is a FAIL naming the record; a record with
+  `status: closed` is exempt, because re-anchoring at each new wave is the lifecycle
+  and the alternative is a second stage that can never go green except by editing an
+  approved record. Both are self-reports in the end: moving the anchor AND the base
+  together is one edit to a file this walk reads, and what it costs is that the
+  record now claims a window it never worked in, which is a reviewer's business, not
+  a machine's. An empty range with no accepted record is a named
+  `SKIP(quiet-window-unanchored)` rather than a PASS:
+  from inside the walk, "nothing shipped since here" and "the anchor was moved" are
+  the same zeros. And an unreadable record in that directory can no longer sit under
+  a coverage PASS either — it is named as a FAIL, because the accepted set is then
+  not the whole authority set. The directory is read FLAT: a `.md` in a subdirectory
+  is not a record to either reader, so filing one away also files its authority away.
+
 - `role_policy_sha256`: the digest `.ai/state/ROLE_POLICY.md` must hash to. `""`
   means not pinned and the check is `SKIP(no-sha-pinned)`; anything else must be
   64 lowercase hex characters or the config is refused at exit 2 (`malformed:
@@ -298,8 +334,12 @@ What wave 1b does make **verifiable** is omission: `path coverage` walks
 `git log` over `protected_paths` in `governance.window_start_commit..HEAD` and
 names every touch that no accepted authorization's `## Editable files` covers;
 `pin violation` refuses a pin on `CURRENT.md` / `TASK.md` / `BLOCKERS.md` /
-`LATEST.md`; `swarm boundary` refuses more than one accepted authorization live
-at once. None of them detects a fabricated record, and every history question is
+`LATEST.md`; `swarm boundary` refuses more than one accepted authorization that
+is still a live writer at once. `status: closed` on a finished stage is the
+answer, and `checkpoint --review-prompt` reads the same field so the two cannot
+disagree — it is a self-report the boundary believes, the way `verdict` is, and it
+does not undo that record's coverage grants (retiring it by rewriting `verdict`
+would have re-authorized nothing and uncovered its own commits). None of them detects a fabricated record, and every history question is
 three-valued — a shallow or indeterminate history halts with a named `[FAIL]`
 instead of certifying coverage.
 

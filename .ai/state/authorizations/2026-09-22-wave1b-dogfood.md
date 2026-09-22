@@ -75,6 +75,7 @@ tier: T2
 executor: qoder-cli/controller
 reviewer: qoder-cli/general-purpose-subagent (same family; separate context)
 verdict: accepted
+status: closed
 red_before_green: true
 user_authorized: true
 ```

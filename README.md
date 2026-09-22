@@ -88,11 +88,11 @@ git add <the paths this stage owns> && git commit && git push
 ```
 
 A default install registers no project checks and declares no protected paths,
-so its verifier ends `== 21/25 checks passed, 4 skipped ==` at exit 0 (measured
+so its verifier ends `== 21/26 checks passed, 5 skipped ==` at exit 0 (measured
 on the tree this line ships in — `git log -1 --format=%h` where you read it);
 after `python scripts/init_sync.py <repo> --migrate` pins the
 role policy and records the coverage window, the same install ends
-`== 22/25 checks passed, 3 skipped ==`. Those `[SKIP]` lines are the correct
+`== 22/26 checks passed, 4 skipped ==`. Those `[SKIP]` lines are the correct
 shape, not a failure to fix, and exit 0 is never sufficient on its own: read
 the lines.
 

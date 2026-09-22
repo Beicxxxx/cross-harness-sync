@@ -45,7 +45,9 @@ def test_fresh_scaffold_verifies_all_green(ai_repo):
     spec-7 defaults rather than a machine that failed to look: `[SKIP] path
     coverage` (`protected_paths` defaults to empty, spec 7), `[SKIP] pin
     violation` (no authorization records yet), `[SKIP] role policy integrity`
-    (no SHA pinned yet). `swarm boundary` is the fourth new check and it PASSes
+    (no SHA pinned yet). `release authorization` joins them for the same reason: a project that ships
+    nothing registers no `release_paths`, so the line states that rather than
+    pretending to govern. `swarm boundary` is the fourth new check and it PASSes
     here with a count of zero. FAIL, WARN, silence, a SECOND skip of the same
     name, and any skip outside this list are still breaks, and the summary's own
     skip tail is pinned against the SKIP lines actually printed.
@@ -59,6 +61,7 @@ def test_fresh_scaffold_verifies_all_green(ai_repo):
     # named governance SKIPs. Add a name here only with a spec section behind it.
     allowed_skip = ("[SKIP] registered project checks:",
                     "[SKIP] path coverage:",
+                    "[SKIP] release authorization:",
                     "[SKIP] pin violation:",
                     "[SKIP] role policy integrity:")
     not_green = [ln for ln in checks if not ln.startswith("[PASS]")

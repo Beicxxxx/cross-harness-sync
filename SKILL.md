@@ -84,13 +84,14 @@ not. Declare project-specific checks in `.ai/sync_config.json`, run
 `python .ai/scripts/sync_verify.py` until `FAILED:` is absent and every line
 reads `[PASS]` or a named `[SKIP]`, then commit and push. A default install
 registers no project checks and declares no protected paths, so it ends
-`== 21/25 checks passed, 4 skipped ==` at exit 0 (measured on the tree this file
+`== 21/26 checks passed, 5 skipped ==` at exit 0 (measured on the tree this file
 ships in). The
-four skips are `registered project checks`, `path coverage`
-(`SKIP(no-protected-paths)`), `pin violation` (`SKIP(no-authorizations)`) and
+five skips are `registered project checks`, `path coverage`
+(`SKIP(no-protected-paths)`), `release authorization`
+(`SKIP(no-release-paths)`), `pin violation` (`SKIP(no-authorizations)`) and
 `role policy integrity` (`SKIP(no-sha-pinned)`), and each names which reason it
 took. The same install after `python scripts/init_sync.py <repo> --migrate`
-reads `== 22/25 checks passed, 3 skipped ==`. Neither figure is a failure to fix
+reads `== 22/26 checks passed, 4 skipped ==`. Neither figure is a failure to fix
 and neither is green — nothing in this protocol can be green, only named.
 `rc == 0` is never sufficient; read the lines.
 
@@ -163,10 +164,12 @@ exit 0 while someone else holds it.
   Evidence pointers / Warnings / Next step / Must-read list), ≤ 80 lines.
 - One stage = ONE authorization `.md` in `.ai/state/authorizations/` (scope +
   editable files + pinned hashes + stop boundary), plus a fenced governance
-  block carrying `tier`, `executor`, `reviewer` and `verdict`; `verdict:
-  accepted` is what makes the record live, and two live records are a FAIL. That
-  directory is the home the coverage walk reads. Template:
-  `.ai/templates/AUTHORIZATION.md`.
+  block carrying `tier`, `executor`, `reviewer`, `verdict` and `status`.
+  `verdict: accepted` makes the record an authority over the commits it names,
+  for the rest of the window; `status: closed` says the stage has finished and
+  takes it out of the live-writer count WITHOUT undoing those grants. Two
+  accepted-and-open records are a FAIL. That directory is the home the coverage
+  walk reads. Template: `.ai/templates/AUTHORIZATION.md`.
 - Never pin frequently-changing state files as authorization baselines.
 - Layered reading: L0 (the three files) at startup; L1 (the task's
   authorization + named docs) when executing; L2 archives are retrieval-only

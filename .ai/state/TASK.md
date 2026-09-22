@@ -1,7 +1,7 @@
 # Active Task
 
-> Last updated: 2026-09-22 12:18 (+10:00)
-> Updated by: qoder-cli (wave 1c started, under two separate authorizations).
+> Last updated: 2026-09-22 19:55 (+10:00)
+> Updated by: qoder-cli (wave 1c, both authorizations accepted).
 
 ## Standing state — do not rewrite
 
@@ -13,7 +13,8 @@
 
 ## The one active task
 
-Wave 1c, on branch `v2.1-wave1c-governance-defects`: retire the defects the dogfood
+Wave 1c, on branch `v2.1-wave1c-release-gate` (stacked on
+`v2.1-wave1c-governance-defects`): retire the defects the dogfood
 found, each under its own authority. `scripts/` and `templates/` are the release
 face and answer to
 `docs/release-authorizations/2026-09-22-wave1c-product-changes.md`; this
@@ -24,9 +25,11 @@ a shipped file — that separation is itself one of this stage's products.
 ## Role ownership
 
 - **Executor:** qoder-cli controller (inline fixes, red-first per R4).
-- **Reviewer:** none has run on this increment yet. Cross-family where a second
-  family is reachable, otherwise same-family with no shared context, recorded in
-  those words (R3 as amended 2026-09-22; R5 records, it does not gate).
+- **Reviewer:** fresh-context subagents with no shared history; findings and
+  dispositions are in `docs/evidence/wave1c-facts.md` (W13, W15, W17, W18), and
+  their model families were not readable from this host's logs (W14). Cross-family
+  where a second family is reachable, otherwise same-family with no shared context,
+  recorded in those words (R3 as amended 2026-09-22; R5 records, it does not gate).
 - **User:** merge, any push to `main`, tag, Release, the global git config.
 
 ## Required work
@@ -34,22 +37,28 @@ a shipped file — that separation is itself one of this stage's products.
 1. Done — R3/R5 reconciliation across the policy and the four documents that
    restated it; `git add -A` removed from the shipped instructions; installer-owned
    slots filled by `init_sync.py` and residue reported by `sync_verify.py`;
-   `tests/test_lane_1c_governance.py` (9 cases) shown red against `0bc4d7f` first.
-2. Open — the review on PR #3 (pushed with the red-at-base output inline, because a
-   clone cannot reach `.superpowers/`), then the record's `verdict`.
-3. Open — the 14 deferred wave-1b minors, the governing-copy drift check, the
+   `tests/test_lane_1c_governance.py` shown red against `0bc4d7f` first.
+2. Done — `release authorization` gates the shipped surface on a record in
+   `docs/release-authorizations/`, and `status` is now separate from `verdict` so a
+   finished stage stops being able to un-authorize its own commits (W19).
+3. Done — three fresh-context passes on those two (W17, W22, W24), then both
+   records' `verdict` and the wave-1b record's `status: closed` in one commit. A
+   clone cannot reach `.superpowers/`, so the PR bodies carry red-at-base output.
+4. Open — the 14 deferred wave-1b minors, the governing-copy drift check, the
    stale-grant rule, and the CHANGELOG entry for each release document touched.
 
 ## Explicitly not authorized
 
 Any edit under `scripts/` or `templates/` without the release record; any tag,
 Release, version bump, merge, or push to `main`; treating a wave-1b figure as this
-tree's, now that `protected_paths` no longer registers the release face and
-`path coverage` reads 8 rather than 33.
+tree's, now that `protected_paths` no longer registers the release face.
 
 ## Completion condition
 
-Not met. `python .ai/scripts/sync_verify.py` reads `== 26/26 checks passed ==`,
-rc 0, no `[SKIP]` on this tree, and the suite reports `489 passed, 5 skipped` —
-both re-measured, recorded in `docs/evidence/wave1c-facts.md`. What remains before
-this task can close is publication and one review, not more code.
+Met, and stated as a command rather than a remembered number: with both records
+`accepted` and the wave-1b record `status: closed`, `python .ai/scripts/sync_verify.py`
+exits 0 with no FAILED line and no `[SKIP]`, and `pytest tests/ -n 8 -o addopts= -q`
+is green. Re-run them; a total copied out of this file describes its own tree. The suite is green at
+`516 passed, 5 skipped` (`python -m pytest tests/ -n 8 -o addopts= -q`) as of this
+writing; re-run it, do not quote this line. What remains before this task can close
+is review and acceptance, not more code.

@@ -1,15 +1,16 @@
 # Current Blockers
 
-> Last updated: 2026-09-22 12:20 (+10:00)
-> Updated by: qoder-cli (PR #2 merged as `0bc4d7f`; wave 1c running, unreviewed).
+> Last updated: 2026-09-22 19:55 (+10:00)
+> Updated by: qoder-cli (wave 1c accepted; nothing merged).
 
 ## Active blocker
 
-Nothing technical. Two things gate wave 1c closing: this increment has had **no
-review**, so `.ai/state/authorizations/2026-09-22-wave1c.md` reads
-`verdict: pending` and no text here may imply it was reviewed; and PR #3 is open
-rather than merged. The user's own decisions remain merge, tag/Release, and how
-much of the deferred minor list to fund.
+Nothing technical, and no review is outstanding on the two records any more: both
+read `verdict: accepted` and `python .ai/scripts/sync_verify.py` exits 0 with no
+FAILED line. What is left to the user is merge (PR #3, then PR #4), tag/Release, and
+how much of the deferred minor list to fund. What a reviewer has NOT seen is the last
+batch of closures themselves (W24's live/closed fix, the unreadable and unanchored
+arms) — accepted by the controller after three rounds on the code they came out of.
 
 ## Not blockers
 
