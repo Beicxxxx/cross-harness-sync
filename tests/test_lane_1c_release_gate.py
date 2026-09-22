@@ -55,15 +55,17 @@ def _anchor(repo):
 
 
 def write_release_record(repo, verdict, editable="`scripts/engine.py`",
-                         name="2026-09-22-ship.md", base=None):
+                         name="2026-09-22-ship.md", base=None, status=None):
     directory = repo / "docs" / "release-authorizations"
     directory.mkdir(parents=True, exist_ok=True)
     gov = ""
     if verdict:
         stated = _anchor(repo) if base is None else base
-        gov = (GOV % verdict).replace(
-            "user_authorized: true\n",
-            f"user_authorized: true\nwindow_start_commit: {stated}\n")
+        extra = f"window_start_commit: {stated}\n"
+        if status:
+            extra += f"status: {status}\n"
+        gov = (GOV % verdict).replace("user_authorized: true\n",
+                                      f"user_authorized: true\n{extra}")
     (directory / name).write_text(
         "# Release authorization\n\n## Editable files\n\n- " + editable + "\n\n"
         + gov, encoding="utf-8")
@@ -433,4 +435,55 @@ def test_c4_22_control_a_quiet_window_with_an_anchored_record_passes(ai_repo):
     git(ai_repo, "commit", "-q", "-m", "docs: a commit that ships nothing")
     res = run(ai_repo)
     found = line(res, "[PASS] release authorization:")
-    assert found and "0 release-face (commit, path) pairs covered" in found,         res.lines
+    assert found and "0 release-face (commit, path) pairs covered" in found, res.lines
+
+
+def test_c4_23_a_closed_records_base_does_not_bind_the_window(ai_repo):
+    """The second wave must be able to re-anchor, or the lifecycle is a trap.
+
+    C4-20 refuses an anchor that shrinks out from under a LIVE stage. The same
+    rule applied to a finished one would make every project's second release stage
+    permanently red, and the only way out would be editing or deleting an approved
+    record -- which is worse than the hole it closes.
+    """
+    setup(ai_repo, release_paths=["scripts/*"])
+    write_release_record(ai_repo, "accepted", editable="`scripts/more.py`",
+                         status="closed")
+    (ai_repo / "scripts" / "more.py").write_text("Y = 2\n", encoding="utf-8")
+    git(ai_repo, "add", "scripts/more.py")
+    git(ai_repo, "commit", "-q", "-m", "feat: ship a second module")
+    _set_cfg(ai_repo, release_window_start_commit=git(ai_repo, "rev-parse",
+                                                     "HEAD^").strip())
+    res = run(ai_repo)
+    assert line(res, "[FAIL] release authorization:") is None, res.lines
+    assert line(res, "[PASS] release authorization:"), res.lines
+
+
+def test_c4_24_a_nested_record_is_not_a_record(ai_repo):
+    """The flat layout is the contract, and both readers read it that way.
+
+    `docs/release-authorizations/archive/x.md` is invisible: filing a record away
+    files its authority away with it. Pinned because this directory is exactly
+    where a moved-aside authority file would do the most damage.
+    """
+    base = git(ai_repo, "rev-parse", "HEAD").strip()
+    (ai_repo / "scripts").mkdir(exist_ok=True)
+    (ai_repo / "scripts" / "engine.py").write_text("X = 1\n", encoding="utf-8")
+    git(ai_repo, "add", "scripts/engine.py")
+    git(ai_repo, "commit", "-q", "-m", "feat: ship an engine")
+    _set_cfg(ai_repo, release_paths=["scripts/*"],
+             governance={"window_start_commit": base},
+             release_window_start_commit=base)
+    nested = ai_repo / "docs" / "release-authorizations" / "archive"
+    nested.mkdir(parents=True, exist_ok=True)
+    (nested / "filed-away.md").write_text(
+        "# Release authorization\n\n## Editable files\n\n- `scripts/*`\n\n"
+        "```governance\ntier: T2\nexecutor: test/executor\n"
+        "reviewer: test/reviewer\nverdict: accepted\nuser_authorized: true\n"
+        f"window_start_commit: {base}\n```\n", encoding="utf-8")
+    git(ai_repo, "add", "docs/release-authorizations")
+    git(ai_repo, "commit", "-q", "-m", "docs: file a record into a subdirectory")
+    res = run(ai_repo)
+    found = line(res, "[FAIL] release authorization:")
+    assert found and "scripts/engine.py" in found, res.lines
+    assert "1 record(s) in docs/release-authorizations" not in found, res.lines

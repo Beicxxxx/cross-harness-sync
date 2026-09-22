@@ -288,14 +288,21 @@ never block, never write state files — hooks remind, the agent writes.
 - Each **accepted** release record must also state `window_start_commit:` in its
   `## Governance` block: the commit its own stage began at. The anchor above is one
   config line and the walk's reach is exactly that line, so advancing it past a
-  record's base drops the commits that record authorised — and they then read as
-  covered, because nothing walks them any more. A missing or malformed base, or one
-  the walked anchor has left behind, is a FAIL naming the record. An empty range with
-  no accepted record is a named `SKIP(quiet-window-unanchored)` rather than a PASS:
+  LIVE record's base drops the commits that record authorised — and they then read as
+  covered, because nothing walks them any more. A missing or malformed base, or one a
+  live record's stage has left behind, is a FAIL naming the record; a record with
+  `status: closed` is exempt, because re-anchoring at each new wave is the lifecycle
+  and the alternative is a second stage that can never go green except by editing an
+  approved record. Both are self-reports in the end: moving the anchor AND the base
+  together is one edit to a file this walk reads, and what it costs is that the
+  record now claims a window it never worked in, which is a reviewer's business, not
+  a machine's. An empty range with no accepted record is a named
+  `SKIP(quiet-window-unanchored)` rather than a PASS:
   from inside the walk, "nothing shipped since here" and "the anchor was moved" are
   the same zeros. And an unreadable record in that directory can no longer sit under
   a coverage PASS either — it is named as a FAIL, because the accepted set is then
-  not the whole authority set.
+  not the whole authority set. The directory is read FLAT: a `.md` in a subdirectory
+  is not a record to either reader, so filing one away also files its authority away.
 
 - `role_policy_sha256`: the digest `.ai/state/ROLE_POLICY.md` must hash to. `""`
   means not pinned and the check is `SKIP(no-sha-pinned)`; anything else must be

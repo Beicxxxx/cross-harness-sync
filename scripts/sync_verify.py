@@ -1466,18 +1466,22 @@ def check_release_authorization(cfg: dict) -> None:
                "cannot be read is not a directory holding no authorisations")
         return
 
-    accepted, pending, unreadable, bases = [], 0, [], []
+    accepted, pending, unreadable, undecidable, bases = [], 0, [], [], []
     for path in entries:
         try:
             text = path.read_text("utf-8")
         except (OSError, UnicodeDecodeError) as exc:
             unreadable.append(f"{path.name} ({type(exc).__name__})")
             continue
-        fields, _gov_err = ai_common.parse_governance_block(text)
+        fields, gov_err = ai_common.parse_governance_block(text)
+        if gov_err:
+            undecidable.append(f"{path.name} ({gov_err})")
         if ai_common.is_accepted(fields):
             accepted += _section_bullets(text, "Editable files")
-            bases.append((path.name, str((fields or {}).get(
-                "window_start_commit", "") or "").strip()))
+            bases.append((path.name,
+                          str((fields or {}).get(
+                              "window_start_commit", "") or "").strip(),
+                          ai_common.is_live_stage(fields)))
         else:
             pending += 1
 
@@ -1562,10 +1566,13 @@ def check_release_authorization(cfg: dict) -> None:
                  if not ai_common.glob_match(rel, accepted,
                                              case_sensitive=_case_sensitive(cfg))]
     origin = f"{len(entries)} record(s) in {rel_dir}"
-    if unreadable:
-        # A record that cannot be read is not an absent one and not an accepted one;
-        # naming it keeps "we could not look" out of the PASS column.
-        origin += f", {len(unreadable)} unreadable: {', '.join(unreadable[:3])}"
+    if undecidable:
+        # "not accepted" and "cannot be told" are different answers, and the
+        # runtime records name which of them applies (`swarm boundary`'s `broken`
+        # bucket); a release record whose block does not parse used to be counted
+        # with the declined ones, which reads as a stage nobody approved.
+        origin += (f", {len(undecidable)} with an unparseable `## Governance` "
+                   f"block ({', '.join(undecidable[:3])})")
     if uncovered:
         shown = ", ".join(f"<{sha[:8]} {rel}>" for sha, rel in uncovered[:8])
         more = f" (+{len(uncovered) - 8} more)" if len(uncovered) > 8 else ""
@@ -1583,20 +1590,29 @@ def check_release_authorization(cfg: dict) -> None:
 
 
 def _release_base_conflicts(bases, window):
-    """`(name, why)` for each accepted release record whose own base the window has
-    left behind; empty when every accepted record still bounds the history it claims.
+    """`(name, why)` for each LIVE accepted release record whose own base the
+    walked window has left behind; empty when every one still bounds its history.
 
     The anchor is a config line and the walk's reach is exactly that line, so
     advancing `release_window_start_commit` past a record's declared base drops
     the commits that record authorised — and they then read as COVERED, because
     nothing walks them any more. `_degenerate_empty_window` catches the two
     shapes that empty the range entirely; this catches the one that merely
-    narrows it, which is the shape a real repo reaches by shipping another wave.
-    An accepted record must therefore state its base: `verdict: accepted` on a
-    record that declares no base is a claim about a range nobody can name.
+    narrows it.
+
+    A `status: closed` record is exempt, and that is the same split W19 had to
+    make for `swarm boundary`: re-anchoring the release window at a new wave is
+    the lifecycle, so binding a finished stage's base to it forever would make
+    the second wave of any project permanently red — the remedy would then be to
+    edit or delete an approved record, which is strictly worse than the hole.
+    What is refused is shrinking the window out from under a stage still open.
+    An accepted record must still state its base: `verdict: accepted` naming no
+    range is a claim nobody can check.
     """
     out = []
-    for name, base in bases:
+    for name, base, live in bases:
+        if not live:
+            continue
         if not base:
             out.append((name, "declares no `window_start_commit`, so the window it "
                               "authorises cannot be checked against the one walked"))

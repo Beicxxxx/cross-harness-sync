@@ -71,5 +71,12 @@ user_authorized: n/a
   prevent. What `status` cannot do is protect you from a lie: a false `verdict`
   costs the writer its coverage, a false `closed` costs nothing, so the reviewer
   is the check here and the field only makes the claim visible.
+- `window_start_commit`: release records only, and required there. A record in
+  the directory `release_authorizations_dir` points at must name the commit its own
+  stage began at, because the walked window is a config line
+  (`release_window_start_commit`) and a line that moves narrows the gate without
+  saying so; the check refuses an anchor that has left a LIVE accepted record's base
+  behind, which is why closing a finished stage (`status: closed`, above) is also
+  how a project re-anchors for the next wave.
 - `red_before_green` / `user_authorized`: `true` or `false`, or `n/a` when the
   tier does not ask (both are expected at T3).
