@@ -21,7 +21,7 @@ Background lives in <path-to-long-context-doc> — retrieve on demand, never inl
 ## 2. Active authorization (this stage)
 
 `<path-to-authorization.md>` — SHA-256: `<hash if pinned>`
-Executor: <harness/model>; Reviewer: <harness/model (cross-family)>.
+Executor: <harness/model>; Reviewer: <harness/model — cross-family or same-family>.
 
 ## 3. Where the work stands
 

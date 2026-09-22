@@ -16,7 +16,8 @@ file before doing either.>
 ## Role ownership
 
 - **Executor:** <harness/model, or "inactive">.
-- **Reviewer:** <harness/model — must be a different model family; "inactive" if done>.
+- **Reviewer:** <harness/model — cross-family where reachable, else same-family
+  and no shared context, per R3; "inactive" if done>.
 - **User:** <what only the user may decide for this task>.
 
 ## Required work

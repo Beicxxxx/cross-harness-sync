@@ -143,19 +143,22 @@ def test_the_index_is_not_read_as_an_authorization_record(ai_repo, sv):
 
 def test_the_required_file_flip_moves_the_fresh_install_count_exactly(ai_repo,
                                                                       sv):
-    """The count B1 baselined at `== 19/23 checks passed, 4 skipped ==` is now
-    `20/24`: one more required file, one more PASS, and NO new skip.
+    """The count B1 baselined at `== 19/23 checks passed, 4 skipped ==`, then
+    `20/24` at the required-file flip, is now `21/25`: wave 1c's
+    `unfilled template slots` is one more check and one more PASS, and still
+    NO new skip.
 
     Exact and positive on purpose (wave 1a's ruling). This is the tripwire the
     required-file flip is supposed to pull — B4 re-measures it against the
     merged tree, and a fourth skip here would mean the index arrived without
-    anything writing it.
+    anything writing it. It has now pulled twice: a fifth check arriving without
+    the installer filling the slots it owns would read as a new SKIP here.
     """
     res = run_python(sv, [], cwd=ai_repo)
     assert res.rc == 0, res.stdout + res.stderr
     summary = [ln for ln in res.lines if "checks passed" in ln]
     assert len(summary) == 1, res.lines
-    assert summary[0] == "== 20/24 checks passed, 4 skipped ==", summary[0]
+    assert summary[0] == "== 21/25 checks passed, 4 skipped ==", summary[0]
 
 
 

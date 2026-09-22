@@ -12,7 +12,7 @@ Classify the step first. **When two tiers could apply, take the higher one.**
 | Tier | Applies to | Review required |
 |---|---|---|
 | **T1 — ordinary** | implementation, refactor, bug fix, docs, analysis with no frozen output | Executor runs the relevant tests once. **No LLM review.** |
-| **T2 — protected** | anything touching a freeze, a hash pin, an authorization artifact, a fail-closed path, a security or access predicate, or a production path others depend on | **One cross-family reviewer.** Checks diff, hashes, and targeted regressions. Does **not** re-run full suites the executor already ran. |
+| **T2 — protected** | anything touching a freeze, a hash pin, an authorization artifact, a fail-closed path, a security or access predicate, or a production path others depend on | **One reviewer, cross-family where the harness can reach one.** Checks diff, hashes, and targeted regressions. Does **not** re-run full suites the executor already ran. |
 | **T3 — irreversible gate** | pre-registration, gate verdicts, one-shot opportunities, anything that cannot be undone by a revert | **One independent reviewer + the user's authorization.** Arbiter only if reviewer and executor genuinely conflict. |
 
 ### T1/T2 boundary — not a judgement call
@@ -36,8 +36,13 @@ Day to day there are three: **executor**, **reviewer** (T2/T3 only), and **the
 user as gate**. Planner and arbiter are not standing roles.
 
 - **Executor / single active writer.** Exactly one at a time. Always.
-- **Reviewer.** Required at T2 and T3. Must be a different model **family** from
-  the executor, and must not have planned the step under review (R2).
+- **Reviewer.** Required at T2 and T3. Must not have planned the step under
+  review (R2). Take it from a different model **family** when the harness can
+  reach one; where it cannot, a same-family reviewer with no shared context holds
+  the role and the record says `same-family` out loud. What this regime can
+  enforce is the description, not the split: a harness that can load one family
+  cannot conjure a second, and a rule that ignored that would be obeyed by
+  writing the word and meaning nothing.
   Read scope is hard: the authorization, the diff, and the test/verify output.
   Reading full history "for safety" is out of scope.
 - **User.** Sole authority for T3 authorization and any irreversible action.
@@ -56,8 +61,11 @@ reviewer is calibration (§5) or the user's own read, not another LLM pass.
   by convention plus the advisory lock: `checkpoint.py --lock --agent <name>`.
 - **R2 — Reviewer ≠ author.** A model that wrote or planned a step may not
   review it. Its own verification is corroborating evidence, never the review.
-- **R3 — Cross-family review at T2/T3.** Reviewer and executor from different
-  model families.
+- **R3 — Cross-family review preferred at T2/T3.** Different families when the
+  harness can reach them; a same-family reviewer with no shared context when it
+  cannot, with the downgrade recorded under R5 instead of described as the
+  cross-family case. R3 asks for the best reviewer available, not for a second
+  family to exist.
 - **R4 — Red before green.** A regression test written to close a defect must be
   shown to **fail** against the unfixed code before the fix lands. Executor
   obligation; costs the reviewer nothing.

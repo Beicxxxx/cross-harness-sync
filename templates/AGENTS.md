@@ -45,7 +45,9 @@ exactly what to read.
 
 - Commit identity: `<NAME> <<EMAIL>>`
   (per-command `git -c user.name=… -c user.email=…`; never commit as the harness).
-- At every stage close-out and session end: `git add -A && git commit && git push`.
+- At each close-out and session end: `git add <the paths this stage owns>`, then
+  commit and push. Never a blanket add — that is how a lock record or a `.env`
+  reaches a public commit.
 - Never force-push, never rewrite published history, never commit secrets
   (fresh clone: verify `git check-ignore -v .env` first).
 - Large regenerable caches stay untracked — see `.gitignore`.
