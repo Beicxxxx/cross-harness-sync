@@ -3,9 +3,11 @@
 ## v2.1.0 — wave 1d (the deferred queue, published and then worked), 2026-09-22
 
 Wave 1c ended owing two kinds of debt: shipped behaviour it had named but not
-changed, and a deferred list that existed only as `M-3, M-7..M-14` inside a
-gitignored directory. Both are dealt with here, in that order — a queue a reader
-cannot open is not a queue.
+changed, and a deferred list no reader could open. One tracked artifact at
+`aecd536` named the ids — `.ai/handoff/NEXT_PROMPT.md:47`, "Wave-1b minors: M-3,
+M-4, M-5, M-7..M-14" — three more published only a count ("14 minors"), and the
+definitions lived in a gitignored directory. Both debts are dealt with here, in
+that order: a queue a reader cannot open is not a queue.
 
 ### What is now shipped
 
@@ -13,27 +15,34 @@ cannot open is not a queue.
   the bytes this checkout ships: every `.ai/scripts/*.py` must digest to its twin
   in `scripts/`. `path coverage` cannot answer this, because it asks whether an
   edit was *authorised*, and a record naming both walks authorises a mismatch as
-  readily as a match. The comparison is discriminated structurally by
-  `scripts/init_sync.py`, the one file in that directory the installer never
-  copies, so an ordinary install gets `SKIP(not-source-checkout)` instead of a red
-  it was never asked to satisfy, and a project that keeps unrelated code in a
-  `scripts/` directory is not held to a comparison its install never made. It
-  checks that what runs matches what is authored; it does not check that every
+  readily as a match. Which tree this is gets answered by two conditions, because
+  one was not enough: `scripts/init_sync.py` must be there (the installer is the
+  one file in `scripts/` that never gets copied into `.ai/scripts/`), AND at least
+  one installed name must actually appear in `scripts/`. The first is a filename
+  and a filename can be taken — a project owning its own `scripts/init_sync.py` was
+  read as this repository's checkout and held red over three twins it never had —
+  so the second is what keeps an ordinary install at `SKIP(not-source-checkout)`.
+  It checks that what runs matches what is authored; it does not check that every
   authored file got installed, because that list lives in an installer that is not
   installed, and re-deriving it here would be a second promise to keep in step.
-- **The runtime coverage window is now bound by the records that live in it.**
-  Wave 1c gave the release face this and left the runtime walk holding the same
-  hole: `governance.window_start_commit` is one config line, the walk's reach is
-  exactly that line, and advancing it drops the commits before it out of the range
-  — where they read as neither covered nor uncovered, because nothing looks at
-  them. `_base_conflicts` answers for both faces now, and the runtime check reads
-  the records *before* it walks, since an empty range is precisely what a narrowed
-  anchor produces. Two exemptions, both about history: a `status: closed` record
-  does not bind the window forever (re-anchoring at each new wave is the
-  lifecycle), and a runtime record that declares no base bounds nothing — runtime
-  records predate the field, and an accepted one cannot be edited to add a line it
-  never carried. A stage that omits the line is unguarded at its own back edge,
-  which `templates/AUTHORIZATION.md` now says to the person writing the record.
+- **A narrowed runtime window can now be refused — by the records that say where
+  they began.** Wave 1c gave the release face this and left the runtime walk
+  holding the same hole: `governance.window_start_commit` is one config line, the
+  walk's reach is exactly that line, and advancing it drops the commits before it
+  out of the range — where they read as neither covered nor uncovered, because
+  nothing looks at them. `_base_conflicts` answers for both faces now, and the
+  runtime check reads the records *before* it walks, since an empty range is
+  precisely what a narrowed anchor produces. What the guard does NOT reach, stated
+  as three escapes rather than as a cover: a record with `status: closed` is exempt
+  (re-anchoring at each new wave is the lifecycle, and the alternative is a next
+  stage that can only go green by editing an approved record) — which means
+  closing a live stage and narrowing the anchor is one edit away, and `status` is a
+  self-report the walk believes; a runtime record that declares no base bounds
+  nothing, because runtime records predate the field and an accepted one cannot be
+  retro-fitted; and clearing the anchor entirely leaves `SKIP(no-window: unset)`,
+  which is the pre-existing shape of "this install never migrated". A stage that
+  omits its base is unguarded at its own back edge, which `templates/AUTHORIZATION.md`
+  now says to the person writing the record rather than only in the checker.
 - **One predicate for "is this a commit id".** `checkpoint.py --review-prompt`
   accepted an uppercase hex anchor that `ai_common.window_is_valid` — the copy the
   verifier and the migrator both use — refused. Git resolves either spelling, so
@@ -60,12 +69,13 @@ cannot open is not a queue.
 `docs/evidence/wave1d-queue.md` is the tracked queue: fifteen rows, each with what
 the item actually is, and a status column that distinguishes *closed with a case
 that was red first* from *looked at and left* from *cannot be resolved*. Row Q13
-is the last of those: wave 1c published "14 minors" and named seven ids that no
-tracked file — and no file in the private ledger either — defines anywhere, so no
-row claims to be one of them. Q15 is new to this wave: the listing guard reads
-exit status, so a `git show` that exits 0 and writes nothing still reads as a
-clean commit, which is the exact shape this protocol made illegal in
-`extra_checks` and has not yet made illegal here.
+is the last of those: wave 1c published a count of fourteen minors and named eight
+ids no tracked file defines, and the private ledger's own gloss is one clause
+spanning three topics for seven of them — quoted in the row, so the reachable copy
+lives here, and relied on nowhere. No row claims to be one of those eight. Q15 is
+new to this wave: the listing guard reads exit status, so a `git show` that exits 0
+and writes nothing still reads as a clean commit, which is the exact shape this
+protocol made illegal in `extra_checks` and has not yet made illegal here.
 
 ### Operator note
 

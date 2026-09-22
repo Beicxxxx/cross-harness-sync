@@ -37,9 +37,10 @@ not hardcoded here. Checks, in order:
      bytes on both streams is a SKIP, never a pass; e.g. a freeze verifier)
   10. The copy that RUNS is the copy that SHIPS: every `.ai/scripts/*.py` must be
      byte-identical to its twin in this checkout's `scripts/` (`governing copy`).
-     In a tree that is not the skill's own checkout the check SKIPs by name — an
-     ordinary install has no in-tree source to compare against, and `scripts/`
-     full of the project's own code is not one.
+     A tree is read as the skill's own checkout only when `scripts/init_sync.py`
+     is there AND at least one installed name appears in `scripts/`; anywhere else
+     the check SKIPs by name — an ordinary install has no in-tree source to compare
+     against, and `scripts/` full of the project's own code is not one.
 
 Exit 0 = every check that ran passed, 1 = at least one FAIL, 2 = no verdict
 (`ai_common.py` missing, install root unresolvable, config unusable). Every check prints
@@ -991,12 +992,12 @@ def check_extra(cfg: dict) -> None:
             record(name, res.ok, f"cmd `{label}` rc={res.rc}; {evidence}")
 
 
-# The one file in a source checkout's `scripts/` that the installer never copies
-# into `.ai/scripts/`: `SCRIPT_MAP` in `init_sync.py` lists the other three and
-# this file is the thing a user runs BEFORE there is an `.ai/` to copy into. So
-# its presence answers "is this the skill's own checkout" structurally, where a
-# bare `scripts/` directory cannot — plenty of projects have one, and the C4 lane
-# tests of this very file create one full of unrelated `engine.py`.
+# The installer is the one file in a source checkout's `scripts/` that never gets
+# copied into `.ai/scripts/` (`SCRIPT_MAP` in `init_sync.py` lists the other three,
+# and this file is the thing a user runs before there is an `.ai/` to copy into).
+# It is a NAME, and wave 1d's own review showed a name can be taken, so it is only
+# half the answer: see `check_governing_copy` for the second half, which asks that
+# at least one installed name appear in `scripts/` too.
 SOURCE_CHECKOUT_WITNESS = "init_sync.py"
 
 
@@ -1024,6 +1025,17 @@ def check_governing_copy() -> None:
     occasion without proving the governing verifier was the one it had written.
     The invariant here is identity, so it is one comparison per installed file.
 
+    Which tree this is gets answered twice, because one answer was not enough.
+    `scripts/init_sync.py` is the installer, the one file in `scripts/` the
+    installer never copies, so its presence says "source checkout" where a bare
+    `scripts/` directory does not — but it says it by FILENAME, and a filename can
+    be taken: a project that keeps its own `scripts/init_sync.py` is an ordinary
+    install, and the single-file witness alone read it as this repository's and
+    held it red over three "missing" twins it never had (D-7). So the second half
+    is that at least one installed name must actually appear in `scripts/`: zero
+    shared names is a directory holding something else, one shared name is enough
+    to be the source, and a lone missing twin stays the FAIL it was (D-4).
+
     Coverage limit, said rather than assumed: this checks that what RUNS matches
     what is in `scripts/`. It does not check the reverse direction — a source file
     that should have been installed and was not — because the list of what the
@@ -1035,47 +1047,53 @@ def check_governing_copy() -> None:
     src_dir = ROOT / "scripts"
     inst_dir = AI_DIR / "scripts"
     rel_src = src_dir.relative_to(ROOT).as_posix()
+    rel_inst = inst_dir.relative_to(ROOT).as_posix()
+    if not inst_dir.is_dir():
+        record("governing copy", False,
+               f"{rel_inst}/ is not a directory while {rel_src}/ is a source walk: "
+               f"the installed copy this check exists to compare is absent, so "
+               f"nothing here can be said about drift")
+        return
+    installed = sorted(inst_dir.glob("*.py"), key=lambda p: p.name)
+    shared = [p.name for p in installed if (src_dir / p.name).is_file()]
     witness = (src_dir / SOURCE_CHECKOUT_WITNESS).is_file()
-    if not witness:
+    if not witness or not shared:
         # Named, not silent: an ordinary install of this protocol has no in-tree
         # source, and reporting PASS about a comparison that never happened is the
         # fail-open this wave's whole existence is a reply to.
+        reasons = []
+        if not witness:
+            reasons.append(f"no {rel_src}/{SOURCE_CHECKOUT_WITNESS} is here")
+        if installed and not shared:
+            reasons.append(f"{rel_src}/ shares no file name with {rel_inst}/")
         record("governing copy", None,
-               f"SKIP(not-source-checkout): no {rel_src}/{SOURCE_CHECKOUT_WITNESS} "
-               f"here, so this tree is an install rather than the skill's own "
-               f"checkout and there is no source to compare "
-               f"{(AI_DIR / 'scripts').relative_to(ROOT).as_posix()}/ against")
+               f"SKIP(not-source-checkout): {'; '.join(reasons)}, so this tree is "
+               f"an install rather than the skill's own checkout and there is no "
+               f"source to compare {rel_inst}/ against")
         return
-    if not inst_dir.is_dir():
-        record("governing copy", False,
-               f"{rel_src} is a source walk but {(inst_dir.relative_to(ROOT)).as_posix()}/ "
-               f"is not a directory: the installed copy this check exists to "
-               f"compare is absent, so nothing here can be said about drift")
-        return
-    installed = sorted(inst_dir.glob("*.py"), key=lambda p: p.name)
     problems = []
     matched = 0
     for inst in installed:
-        rel_inst = inst.relative_to(ROOT).as_posix()
+        rel_inst_path = inst.relative_to(ROOT).as_posix()
         inst_sum, inst_err = _sha256_or_error(inst)
         if inst_err:
             # A copy that cannot be read is not a copy that matched. Wave 1c's
             # review made this rule explicit for the release walk: `exists()`
             # answers False for files this host merely denies, so the read itself
             # is the only witness, and it has to be believed in both directions.
-            problems.append(f"{rel_inst} {inst_err}")
+            problems.append(f"{rel_inst_path} {inst_err}")
             continue
         twin = src_dir / inst.name
         src_sum, src_err = _sha256_or_error(twin)
         rel_twin = twin.relative_to(ROOT).as_posix()
         if src_err == "missing":
-            problems.append(f"{rel_inst} has no source twin in {rel_twin} -- the "
+            problems.append(f"{rel_inst_path} has no source twin in {rel_twin} -- the "
                             f"copy that runs has no authored source in this tree")
         elif src_err:
-            problems.append(f"{rel_twin} {src_err}, so {rel_inst} cannot be "
+            problems.append(f"{rel_twin} {src_err}, so {rel_inst_path} cannot be "
                             f"compared to it")
         elif src_sum != inst_sum:
-            problems.append(f"{rel_inst} digests to {inst_sum[:12]} but "
+            problems.append(f"{rel_inst_path} digests to {inst_sum[:12]} but "
                             f"{rel_twin} to {src_sum[:12]} -- the verifier that "
                             f"ran this report is not the one this tree ships")
         else:

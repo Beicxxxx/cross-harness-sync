@@ -67,11 +67,13 @@ grants nothing to its second path and a wildcard grants too much forever.
 ## Completion condition
 
 Each row above has a case that was red against `aecd536bc2e073e19d60ebc984ba614f1a6fc549`
-first, in `tests/test_lane_1d_governing_copy.py` (D-1..D-6, the drift check),
-`tests/test_coverage_walk.py` (E-1..E-4, the narrowing guard) or
-`tests/test_review_prompt.py` (the uppercase anchor). E-2, E-3, E-4 and D-5 are
-controls: they pin what the new rules must NOT do, and they were green before and
-after, which is what makes them evidence rather than decoration.
+first: D-1..D-7 in `tests/test_lane_1d_governing_copy.py` (the drift check and its
+collision fix), E-1 in `tests/test_coverage_walk.py` (the narrowing guard) and the
+uppercase-anchor case in `tests/test_review_prompt.py`. E-2, E-3 and E-4 in the
+coverage file are controls — they pin what the new rules must NOT do and they were
+green at the base because the walk had not yet been asked anything about a base.
+D-5 is not a control in that sense and is not claimed as one: it was red with the
+rest of its lane, since no `governing copy` line existed to PASS on.
 The check-count tripwire in `tests/test_authorization_records.py` is expected to
 pull when a check is added: re-measure the fresh-install and migrated totals from
 the run rather than editing the expectation to the old number.
