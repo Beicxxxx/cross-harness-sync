@@ -38,10 +38,9 @@
 - Closed since the review (`19fcfcb`): the emitted `git add -A`, three `reference.md`
   requirements, the `7 failed` count, the CONTROL argument, and three unsupported
   "same model family" assertions — the one on `main` corrected by new text, not by
-  rewriting history. PR #4 then added the release gate; its review came back
-  5C/5I/2M and the record it depends on could not parse, so `9b46161` fixed the
-  record. Three holes still block #4: PASS on a misspelled `release_paths`, on an
-  anchor at HEAD, and on an authorisations directory outside the repository.
+  rewriting history. PR #4 added the release gate; its review found the record it
+  depends on could never parse, fixed in `9b46161`. Three holes still block it: a
+  PASS on a misspelled `release_paths`, on an anchor at HEAD, outside the repo.
 - Deferred: 14 wave-1b minors, the governing-copy drift check, the stale-grant rule.
 
 ## 3. Evidence pointers
