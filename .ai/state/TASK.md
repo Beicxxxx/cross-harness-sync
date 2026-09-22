@@ -35,8 +35,8 @@ a shipped file — that separation is itself one of this stage's products.
    restated it; `git add -A` removed from the shipped instructions; installer-owned
    slots filled by `init_sync.py` and residue reported by `sync_verify.py`;
    `tests/test_lane_1c_governance.py` (9 cases) shown red against `0bc4d7f` first.
-2. Open — push, open PR #3 with the red-at-base output inline (a clone cannot reach
-   `.superpowers/`), then the review, then the record's `verdict`.
+2. Open — the review on PR #3 (pushed with the red-at-base output inline, because a
+   clone cannot reach `.superpowers/`), then the record's `verdict`.
 3. Open — the 14 deferred wave-1b minors, the governing-copy drift check, the
    stale-grant rule, and the CHANGELOG entry for each release document touched.
 

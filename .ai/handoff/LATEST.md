@@ -1,7 +1,8 @@
 # Latest Handoff
 
-> Updated: 2026-09-22 12:15 (+10:00) by qoder-cli, mid wave 1c: the release-face
-> fixes are landed and tested, the review and the deferred minors are not.
+> Updated: 2026-09-22 12:12 (+10:00) by qoder-cli, mid wave 1c: the release-face
+> fixes are pushed as [PR #3](https://github.com/Beicxxxx/cross-harness-sync/pull/3);
+> the review and the deferred minors are not.
 > Budget: ≤ 80 lines. Background and boundary statements live in
 > `.ai/state/CURRENT.md` — link, never copy.
 
@@ -30,7 +31,8 @@
 - No review has run on this increment, so
   `.ai/state/authorizations/2026-09-22-wave1c.md` records `verdict: pending`. Do
   not write "reviewed" here until one has.
-- Nothing is pushed: the branch has no upstream and there is no PR #3 yet.
+- [PR #3](https://github.com/Beicxxxx/cross-harness-sync/pull/3) is open against
+  `main`, two commits split by face: `06dc156` release, `c4a9586` runtime.
 - The CHANGELOG entry for the release documents is not written, though `README.md`
   and `SKILL.md` figures were re-measured.
 - Deferred: 14 wave-1b minors, the governing-copy drift check, the stale-grant
@@ -58,10 +60,10 @@
 
 ## 5. Next step
 
-Commit, push the branch and open PR #3 with the red-at-base output inline (a clone
-cannot reach `.superpowers/`). Then one review — cross-family where a second family
-is reachable, otherwise same-family with no shared context — and only then fill the
-record's `reviewer` and `verdict`. Ask the user before any tag or Release.
+One review on PR #3 — cross-family where a second family is reachable, otherwise
+same-family with no shared context — then fill the record's `reviewer` and
+`verdict` and this file's §2. Ask the user before spending on a second model
+family, and before any tag or Release.
 
 ## 6. Must-read list
 

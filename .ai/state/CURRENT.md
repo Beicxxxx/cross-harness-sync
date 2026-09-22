@@ -7,7 +7,7 @@
 
 | Item | State |
 |---|---|
-| Current stage | Wave 1c in progress on `v2.1-wave1c-governance-defects` (unpushed); PR #2 merged as `0bc4d7f` |
+| Current stage | Wave 1c open as PR #3 (unreviewed); PR #2 merged as `0bc4d7f` |
 | Authorization | runtime: `.ai/state/authorizations/2026-09-22-wave1c.md` (pending) · release: `docs/release-authorizations/2026-09-22-wave1c-product-changes.md` |
 | Blockers | none technical; this increment is unreviewed and unpushed, and tag/Release is the user's |
 | Health check | `python .ai/scripts/sync_verify.py` |

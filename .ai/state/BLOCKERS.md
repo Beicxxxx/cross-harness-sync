@@ -7,9 +7,9 @@
 
 Nothing technical. Two things gate wave 1c closing: this increment has had **no
 review**, so `.ai/state/authorizations/2026-09-22-wave1c.md` reads
-`verdict: pending` and no text here may imply it was reviewed; and the branch is
-unpushed. The user's own decisions remain merge, tag/Release, and how much of the
-deferred minor list to fund.
+`verdict: pending` and no text here may imply it was reviewed; and PR #3 is open
+rather than merged. The user's own decisions remain merge, tag/Release, and how
+much of the deferred minor list to fund.
 
 ## Not blockers
 
