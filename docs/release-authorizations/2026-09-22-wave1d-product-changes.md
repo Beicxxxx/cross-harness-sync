@@ -6,10 +6,10 @@
 
 ## What ships
 
-Five lines, each a gap wave 1c found by being bitten by the first, by its own
+Six lines, each a gap wave 1c found by being bitten by the first, by its own
 reviewers on the second and third, and by a count that moved under it on the
-fourth. Each row is the defect in the product as published, not a description of
-the diff.
+fourth and fifth; the sixth is two shipped arms that no test case ever reached.
+Each row is the defect in the product as published, not a description of the diff.
 
 | File | Defect in the shipped product |
 |---|---|
@@ -18,6 +18,7 @@ the diff.
 | `scripts/checkpoint.py`, `scripts/ai_common.py` | `checkpoint._review_is_sha` accepts uppercase hex where `ai_common.window_is_valid` refuses it, so one repository carries two definitions of "is this a commit id" and the review prompt's window answer can disagree with the verifier's. One predicate, in `ai_common`, is the fix. |
 | `templates/AUTHORIZATION.md` | The template told a stage that `window_start_commit:` is "release records only". It is now the line that binds THIS repository's own coverage window too: a live accepted runtime record that states its base refuses an anchor moved past it, and one that states nothing is unguarded at its back edge. A field whose contract lives only in the checker is a field people get wrong. |
 | `README.md`, `SKILL.md` | Both publish the fresh-install and migrated-install verifier figures as measured numbers. A check added to the shipped verifier falsifies them on the day it lands, which is how wave 1c's own review found the pair unprotected; they are re-measured here rather than carried forward. |
+| `tests/test_migrate.py`, `tests/test_tristate_history.py` | Two arms of the shipped code had no case reaching them. `_migration_commit`'s post-commit listing path — the one wave 1b's final review changed precisely because an error there used to print `0 path(s) committed` over a commit nobody rechecked — shipped with no test at all, and one suite assertion checked that an error string contained the words `git log` instead of checking that it tells an operator which query died and with what code. A green suite is not coverage, and a reader of `tests/` cannot tell the difference from here. |
 
 ## What is deliberately not in here
 
@@ -45,6 +46,8 @@ grants nothing to its second path and a wildcard grants too much forever.
 - `SKILL.md`
 - `templates/AUTHORIZATION.md`
 - `tests/test_lane_1d_governing_copy.py`
+- `tests/test_migrate.py`
+- `tests/test_tristate_history.py`
 - `tests/test_coverage_walk.py`
 - `tests/test_authorization_records.py`
 - `tests/test_review_prompt.py`
