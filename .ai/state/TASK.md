@@ -43,9 +43,9 @@ or releasing.
 
 ## Completion condition — met, and re-measured
 
-`python .ai/scripts/sync_verify.py` prints `[PASS] path coverage: 32 protected
-touches covered` (29 uncovered of 29 before the record existed, 30 and 31 as the
-stage's own protected-path commits landed) with `== 25/25 checks passed ==`, rc 0
-and no `[SKIP]` line; the suite holds at `480 passed, 5 skipped`. The spec 10.D
-line in `CHANGELOG.md` says the install certifies what landed and does not
-retroactively govern how it was reviewed.
+`python .ai/scripts/sync_verify.py` prints `[PASS] path coverage: 33 protected
+touches covered` (29 uncovered of 29 before the record existed, then 30, 31, 32
+and 33 as the stage's own protected-path commits landed) with `== 25/25 checks
+passed ==`, rc 0 and no `[SKIP]` line; the suite holds at `480 passed, 5 skipped`.
+The spec 10.D line in `CHANGELOG.md` says the install certifies what landed and
+does not retroactively govern how it was reviewed.
