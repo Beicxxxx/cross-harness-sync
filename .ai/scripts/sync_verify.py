@@ -380,6 +380,18 @@ def _is_path_str(val) -> bool:
     return isinstance(val, str) and val.strip() != ""
 
 
+def _under_ai(val) -> bool:
+    """True when a configured directory resolves into `.ai/`, the runtime state."""
+    raw = str(val or "").strip().replace("\\", "/")
+    if not raw:
+        return False
+    parts = [seg for seg in raw.split("/") if seg not in ("", ".")]
+    # `..` is rejected separately by the repo-relative check; here the question is
+    # only whether the target lands under the runtime directory, so a leading `..`
+    # cannot make a `.ai/` path look clean.
+    return bool(parts) and parts[0] == ai_common.AI_DIR_NAME
+
+
 def _is_repo_relative_path(val) -> bool:
     """A path entry must stay inside the checkout the run is a report about.
 
@@ -463,6 +475,18 @@ def _check_shape(key: str, val) -> None:
         raise ConfigError(f"malformed: config key {key!r} must be a "
                           f"repo-relative path inside the checkout, got "
                           f"{val!r}")
+    if key == "release_authorizations_dir" and str(val or "").strip() != val:
+        raise ConfigError(f"malformed: config key {key!r} must not carry leading or "
+                          f"trailing space, got {val!r}")
+    if key == "release_authorizations_dir" and _under_ai(val):
+        # The split this key exists to enforce: a release authorisation read from
+        # `.ai/state/authorizations` would let a stage note certify a publication,
+        # which is the exact collapse the two directories are kept apart to prevent.
+        # Repo-relative alone does not stop it -- `.ai/...` is repo-relative.
+        raise ConfigError(f"malformed: config key {key!r} must not point into the "
+                          f"runtime state directory (.ai/), got {val!r}: the release "
+                          f"face is authorised by a release record, not by the "
+                          f"repository's own stage note")
     if key in ("authorizations_dir", "release_authorizations_dir")             and not _is_repo_relative_path(val):
         # `release_authorizations_dir` decides which files may authorise a
         # publication, so an escaping path is the same hole one key over: one line
@@ -1225,6 +1249,19 @@ def _degenerate_empty_window(window: str, pathspec):
                          "), so `<anchor>..HEAD` is empty by construction and can "
                          "cover nothing: name the commit before the first change "
                          "meant to be governed")
+    # Comparing the anchor to the tip as a STRING catches only one degenerate
+    # choice. A side-branch tip or a sha left behind by `git reset` is a real,
+    # well-formed commit that simply is not in HEAD's past, and the range it
+    # bounds is just as empty -- so ancestry, not equality, is the question.
+    anc = ai_common.git_ancestor(ROOT, window, "HEAD")
+    if anc == "UNKNOWN":
+        return "fail", ("cannot tell whether the window anchor " + window[:8] +
+                        " is in HEAD's past (shallow or absent object): an empty "
+                        "walk here is unknown coverage, not quiet history")
+    if anc != "TRUE":
+        return "fail", ("the window anchor " + window[:8] + " is not an ancestor of "
+                        "HEAD, so `<anchor>..HEAD` reaches no commit at all: the "
+                        "empty result is the configuration, not a quiet window")
     void, void_why = _protected_set_is_void(pathspec)
     if void_why is not None:
         return "fail", ("cannot determine whether the registered set matches "

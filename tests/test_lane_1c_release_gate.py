@@ -197,3 +197,48 @@ def test_c4_10_an_unreadable_record_is_not_a_clean_window(ai_repo):
     assert line(res, "[PASS] release authorization:") is None, res.lines
     skip = line(res, "[SKIP] release authorization:")
     assert skip and "unreadable" in skip, res.lines
+
+
+def test_c4_11_an_anchor_outside_heads_ancestry_governs_nothing(ai_repo):
+    """The tip guard was a string compare, so a DESCENDANT anchor emptied the range.
+
+    A side-branch tip or a sha left behind by `git reset` is a well-formed 40-hex
+    commit that is not in HEAD's past: `<anchor>..HEAD` then reaches nothing, and the
+    walk books `PASS, 0 covered` over a shipped commit no record authorised.
+    """
+    setup(ai_repo, release_paths=["scripts/*"])
+    empty_release_dir(ai_repo)
+    git(ai_repo, "checkout", "-q", "-b", "side")
+    (ai_repo / "side.txt").write_text("side\n", encoding="utf-8")
+    git(ai_repo, "add", "side.txt")
+    git(ai_repo, "commit", "-q", "-m", "side branch tip")
+    side = git(ai_repo, "rev-parse", "HEAD").strip()
+    git(ai_repo, "checkout", "-q", "main")
+    cfg_path = ai_repo / ".ai" / "sync_config.json"
+    cfg = json.loads(cfg_path.read_text("utf-8"))
+    cfg["release_window_start_commit"] = side
+    cfg_path.write_text(json.dumps(cfg, indent=2) + chr(10), encoding="utf-8")
+
+    res = run(ai_repo)
+    assert line(res, "[PASS] release authorization:") is None, res.lines
+    bad = line(res, "[FAIL] release authorization:")
+    assert bad and "ancestor" in bad, res.lines
+
+
+def test_c4_12_the_release_directory_cannot_be_the_runtime_one(ai_repo):
+    """One line of config must not let a stage note certify a publication.
+
+    `release_authorizations_dir` is repo-relative, so `.ai/state/authorizations`
+    passes that test while pointing the release gate at the very directory the split
+    exists to keep it away from. That is the whole distinction, dissolved by a
+    default-looking string, so it is refused rather than discouraged.
+    """
+    setup(ai_repo, release_paths=["scripts/*"])
+    cfg_path = ai_repo / ".ai" / "sync_config.json"
+    cfg = json.loads(cfg_path.read_text("utf-8"))
+    cfg["release_authorizations_dir"] = ".ai/state/authorizations"
+    cfg_path.write_text(json.dumps(cfg, indent=2) + chr(10), encoding="utf-8")
+    res = run(ai_repo)
+    assert res.rc == 2, (res.rc, res.lines[-5:])
+    assert any("release_authorizations_dir" in ln and "runtime" in ln
+               for ln in res.lines), res.lines
