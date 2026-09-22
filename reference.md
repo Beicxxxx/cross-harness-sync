@@ -69,7 +69,7 @@ move to `state/archive/DECISIONS_<yyyymm>_full.md` and their index rows flip to
 that single archived entry.
 
 **AUTHORIZATION.md (per stage)** — issued by the user; scope, editable-file
-list, pinned baselines (SHA-256), roles (executor + cross-family reviewer),
+list, pinned baselines (SHA-256), roles (executor + reviewer, cross-family where reachable),
 completion condition, absolute stop boundary. One stage = ONE file. Never pin
 CURRENT/TASK/BLOCKERS/LATEST — frequently-changing state files are not pinning
 targets (pinning them once caused a stall over a routine state edit).
@@ -304,11 +304,12 @@ three-valued — a shallow or indeterminate history halts with a named `[FAIL]`
 instead of certifying coverage.
 
 - **T1 ordinary**: no LLM review. **T2 protected** (freeze/hash/authorization/
-  fail-closed paths): one cross-family reviewer, diff + hashes + targeted
-  regressions only. **T3 irreversible gate**: independent reviewer + explicit
+  fail-closed paths): one reviewer, taken from a different model family where the
+  harness can reach one and recorded as `same-family` where it cannot; diff +
+  hashes + targeted regressions only. **T3 irreversible gate**: independent reviewer + explicit
   user authorization. Ambiguous → higher tier.
-- Hard rules: R1 single active writer; R2 reviewer ≠ author; R3 cross-family
-  review; R4 red-before-green (regression test must FAIL on unfixed code first);
+- Hard rules: R1 single active writer; R2 reviewer ≠ author; R3 prefers a
+  different family and records the downgrade; R4 red-before-green (regression test must FAIL on unfixed code first);
   R5 record harness+model+effort, unknown = `NOT_REPORTED`, never a re-gate;
   R6 metered spend is a user decision; R7 one model, one function per task.
 - Reviewer read scope is hard: the authorization, the diff, the verify output.

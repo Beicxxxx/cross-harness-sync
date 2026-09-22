@@ -21,8 +21,12 @@ the caller has edited unless --clobber):
     Managed block inside an existing AGENTS.md (idempotent, marker-delimited);
     if no AGENTS.md exists, the full template is copied instead.
 
-After running, fill in every <placeholder> in AGENTS.md / SYNC_PROMPT.md and
-the state files, then commit and push.
+After running, fill in the <placeholders> that describe this project's work: the
+state skeletons in `.ai/state/*.md` and `.ai/SYNC_PROMPT.md`, then commit and
+push. The installer's own slots are resolved by the run itself (wave 1c C1/C3) -
+AGENTS.md's project name, remote and commit identity, and ROLE_POLICY.md's Adopted
+line - because a rule document whose authorship still reads `<who>` is not waiting
+on the user, and nothing else can complete it.
 
 Before anything is written, an existing install's `.ai/protocol/VERSION` is
 compared with this script's own PROTOCOL_VERSION (D22). A stamp newer than these
@@ -119,7 +123,7 @@ from ai_common import PROTOCOL_VERSION  # noqa: E402
 # spec §8's migration reads the repository through the SAME three-valued probes
 # the verifier uses — one definition of "what does git say about HEAD", not a
 # second one that can disagree with it on the machine that asks.
-from ai_common import (NO_HISTORY, SHA_HEX_LEN, git_available,  # noqa: E402
+from ai_common import (INSTALLER_SLOTS, NO_HISTORY, SHA_HEX_LEN, git_available,  # noqa: E402
                        is_git_repo, run_argv, run_git, window_is_valid)
 
 # `check_version_match`'s fourth answer, as a constant so `main()` can tell
@@ -306,6 +310,33 @@ def _template_index() -> tuple[frozenset[str], frozenset[str]]:
     return _TEMPLATE_INDEX
 
 
+_INSTALLER_SLOT_LINES: tuple[re.Pattern, ...] | None = None
+
+
+def installer_slot_lines() -> tuple[re.Pattern, ...]:
+    """Each template line holding an installer-owned slot, as a matcher for its fills.
+
+    `fill_installer_slots()` rewrites such a line with a date, a name or a URL
+    that appears in no shipped template, so `is_template_shaped()` would call the
+    file hand-edited from the moment it is created: `--force` would then refresh
+    nothing, which is the dead end this predicate exists to avoid. Both ends of
+    the line stay anchored and only the filled span is free, so prose a user wrote
+    after the slot still fails the test.
+    """
+    global _INSTALLER_SLOT_LINES
+    if _INSTALLER_SLOT_LINES is None:
+        slots = [slot for group in INSTALLER_SLOTS.values() for slot in group]
+        out = []
+        for blob in _installed_template_texts():
+            for line in blob.split("\n"):
+                if not any(slot in line for slot in slots):
+                    continue
+                parts = re.split(r"<[^<>]*>", line)
+                out.append(re.compile("^" + ".*?".join(map(re.escape, parts)) + "$"))
+        _INSTALLER_SLOT_LINES = tuple(out)
+    return _INSTALLER_SLOT_LINES
+
+
 def is_template_shaped(text: str) -> bool:
     """True only for a copy of one of OUR templates that nobody wrote in.
 
@@ -339,8 +370,11 @@ def is_template_shaped(text: str) -> bool:
     blobs, anchors = _template_index()
     if norm in blobs:
         return True
+    slot_lines = installer_slot_lines()
     for line in (ln for ln in norm.split("\n") if ln.strip()):
         if line in anchors or PLACEHOLDER_RE.search(line) or "<!--" in line:
+            continue
+        if any(match.match(line) for match in slot_lines):
             continue
         return False
     return True
@@ -1919,6 +1953,109 @@ def run_migration(root: Path, args) -> int:
     return 0
 
 
+def fill_installer_slots(root: Path) -> list[str]:
+    """Resolve the slots `ai_common.INSTALLER_SLOTS` names; report what cannot be.
+
+    Wave 1c C1 and C3: the installer copied `Adopted: <YYYY-MM-DD ...> by <who>`
+    and `<NAME> <<EMAIL>>` verbatim, and `required`/`budget` both passed on the
+    result — so every install shipped the rule document with its own authorship
+    left blank and an instruction file naming no identity. Each value here is
+    something git or the clock already knows. Where it does not, the text says so
+    and the line is printed, because a blank slot reads as work somebody finished.
+
+    Returns the notes worth showing the operator; a silent install is the bug.
+    """
+    notes: list[str] = []
+
+    def slot_text(path: Path):
+        """`(text, why_not)` — a GBK AGENTS.md is not hypothetical.
+
+        An editor on a cp936 console writes one, and
+        `test_a_gbk_agents_md_does_not_crash_the_install` exists because the
+        installer once died decoding it. Leaving such a file exactly as found and
+        naming it beats both the crash and a silent rewrite that would re-encode
+        the whole document. `exists()` is not consulted: it answers False for a
+        file this host merely denies, which would read as absent.
+        """
+        try:
+            return path.read_text("utf-8"), ""
+        except FileNotFoundError:
+            return None, "absent"
+        except (OSError, UnicodeDecodeError) as exc:
+            return None, type(exc).__name__
+
+    def git_text(*args: str) -> str:
+        res = run_git(root, list(args), timeout=15)
+        return res.out().strip() if res.ok else ""
+
+    # `--local` is the whole point of this line. Plain `git config user.name`
+    # resolves local -> global, and a repository created with `git init` inherits
+    # nothing until someone sets it, so on a machine whose GLOBAL identity is some
+    # school or employer address the installer would copy that into a stranger's
+    # AGENTS.md and call it resolved. Wave 1c's own review reproduced exactly that:
+    # a fresh `git init` answered the tester's global identity. An absent local
+    # value is a missing value, and the WARN below is the honest output.
+    name, email = (git_text("config", "--local", "user.name"),
+                   git_text("config", "--local", "user.email"))
+    if name and email:
+        identity = f"{name} <{email}>"
+    else:
+        identity = "(not detected - set user.name and user.email in this repository)"
+        notes.append("commit identity: none is set for this repository, so AGENTS.md "
+                     "says so rather than guessing one from the machine or the harness")
+
+    agents = root / "AGENTS.md"
+    text, why = slot_text(agents)
+    if text is None and why != "absent":
+        notes.append(f"AGENTS.md: unreadable ({why}), so its slots stay as found - "
+                     "set the commit identity line by hand")
+    elif text is not None:
+        filled = (text.replace("<PROJECT NAME>", root.name)
+                      .replace("<NAME> <<EMAIL>>", identity)
+                      .replace("<REMOTE URL>",
+                               git_text("remote", "get-url", "origin")
+                               or "no remote configured")
+                      .replace("<private/public>", "visibility not checked"))
+        if filled != text:
+            _write_text(agents, filled)
+
+    policy = root / ".ai" / "state" / "ROLE_POLICY.md"
+    text, why = slot_text(policy)
+    if text is None and why != "absent":
+        notes.append(f"ROLE_POLICY.md: unreadable ({why}), so its Adopted line "
+                     "stays as found")
+    elif text is not None:
+        now = datetime.now().astimezone()
+        offset = now.strftime("%z")                       # +1000
+        filled = (text.replace("<YYYY-MM-DD HH:MM:SS>", now.strftime("%Y-%m-%d %H:%M:%S"))
+                      .replace("(<timezone>)", f"({offset[:3]}:{offset[3:]})")
+                      .replace("by <who>",
+                               f"by `init_sync.py` (cross-harness-sync {PROTOCOL_VERSION})"))
+        # The template's own instruction is to delete section 7 when the project
+        # has no standing boundaries; the installer cannot invent them, so it
+        # does exactly that and says so rather than shipping the instruction as
+        # if it were the answer.
+        start = filled.find("\n## 7. ")
+        if start != -1 and "<List standing " in filled[start:]:
+            end = filled.find("\n## ", start + 1)
+            filled = filled[:start] + (filled[end:] if end != -1 else "")
+            notes.append("role policy section 7 (project boundaries): dropped as "
+                         "template text - add it back if this project has standing "
+                         "prohibitions only the user can lift")
+        if filled != text:
+            _write_text(policy, filled)
+
+    for rel, slots in INSTALLER_SLOTS.items():
+        body, _ = slot_text(root / rel)
+        if body is None:
+            continue  # already named above, or never installed at all
+        left = [slot for slot in slots if slot in body]
+        if left:
+            notes.append(f"{rel}: still holds {', '.join(left)} - fill it or the "
+                        "`unfilled template slots` check will report it red")
+    return notes
+
+
 def main() -> int:
     # First, before anything is printed: a cp936 console turns the UTF-8 bytes
 
@@ -2030,7 +2167,7 @@ def main() -> int:
         print(f"VERSION: {version_detail}")
     if args.clobber:
         print("WARNING: --clobber overwrites edited .ai state and config. Commit "
-              "the work first (`git add -A && git commit`) so this stays "
+              "the work first (`git add <the paths you intend to keep> && git commit`) so this stays "
               "recoverable.")
 
     if args.scripts_only:
@@ -2152,6 +2289,12 @@ def main() -> int:
                 rc = 1
         for line in warn_agents_over_budget(root):
             print(line)
+        # Wave 1c C1/C3, and deliberately HERE rather than with the state files:
+        # AGENTS.md is not written until this block runs, so a fill that wanted
+        # its project name, remote and commit identity had nothing to edit yet.
+        # The step-1 note at the `if rc:` gate below is what this replaces.
+        for note in fill_installer_slots(root):
+            print(f"[WARN] {note}")
 
     # V-4: this block is a promise about what happens NEXT, and it used to print
     # whatever the run had actually achieved — i.e. "should be all green" after
@@ -2167,8 +2310,12 @@ def main() -> int:
         return rc
 
     print("\nNext steps:")
-    print("  1. Fill in every <placeholder> in AGENTS.md, .ai/SYNC_PROMPT.md,")
-    print("     and the .ai/state/*.md files.")
+    print("  1. Fill in the <placeholders> in .ai/SYNC_PROMPT.md and the")
+    print("     .ai/state/*.md skeletons - the ones that describe this project's")
+    print("     work. The installer's own slots (AGENTS.md's project name, remote")
+    print("     and commit identity; ROLE_POLICY.md's Adopted line and its")
+    print("     project-boundaries section) are resolved in the run above, and")
+    print("     `unfilled template slots` reports any that could not be.")
     print("  2. Declare project-specific checks in .ai/sync_config.json")
     print("     (extra_checks, secret_mirrors).")
     print("  3. python .ai/scripts/sync_verify.py  -> no FAILED line; a named")

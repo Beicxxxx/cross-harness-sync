@@ -74,19 +74,25 @@ and outside a repo the secret checks cannot answer and report `[FAIL]`.
 python scripts/init_sync.py /path/to/your/repo
 ```
 
-Then fill in every `<placeholder>` (remote URL, commit identity, project red
-lines), declare project-specific checks in `.ai/sync_config.json`, and:
+Then fill in the `<placeholder>`s that describe your project's work — its red
+lines and the `.ai/state/*.md` skeletons. The installer resolves its own share:
+project name, remote URL and commit identity in `AGENTS.md`, the Adopted line in
+`ROLE_POLICY.md`. Anything it could not work out is named in the run and reported
+afterwards by the `unfilled template slots` check, so a slot left blank is a
+message, not a trap. Declare project-specific checks in `.ai/sync_config.json`,
+and:
 
 ```bash
 python .ai/scripts/sync_verify.py   # no FAILED line; a named [SKIP] is legal, silence is not
-git add -A && git commit && git push
+git add <the paths this stage owns> && git commit && git push
 ```
 
 A default install registers no project checks and declares no protected paths,
-so its verifier ends `== 20/24 checks passed, 4 skipped ==` at exit 0 (measured
-at `3546c08`); after `python scripts/init_sync.py <repo> --migrate` pins the
+so its verifier ends `== 21/25 checks passed, 4 skipped ==` at exit 0 (measured
+on the tree this line ships in — `git log -1 --format=%h` where you read it);
+after `python scripts/init_sync.py <repo> --migrate` pins the
 role policy and records the coverage window, the same install ends
-`== 21/24 checks passed, 3 skipped ==`. Those `[SKIP]` lines are the correct
+`== 22/25 checks passed, 3 skipped ==`. Those `[SKIP]` lines are the correct
 shape, not a failure to fix, and exit 0 is never sufficient on its own: read
 the lines.
 

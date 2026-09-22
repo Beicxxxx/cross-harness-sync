@@ -59,3 +59,28 @@ of which change shipped code and need their own red-first tests.
 Scope: does NOT cover the general case of a hostile record; it is a documented
 limitation, listed in `docs/evidence/wave1b-facts.md` §7 and in the handoff
 hazards, and it is wave-1c work.
+
+## 2026-09-22 12:05 (+10:00): Release face and runtime face are separate authorities
+
+Decided by: the user, asked whether a wave-1c record under `.ai/state/` could
+authorise edits to `templates/` and `scripts/`. It cannot: those ship to other
+people, so they are authorised in `docs/release-authorizations/` and guarded by
+`tests/`. `protected_paths` in this checkout dropped `scripts/*` and `templates/*`,
+which is why `path coverage` reads 8 rather than 33 on this tree.
+Rationale: this repository is both the protocol's user and the protocol's product.
+Letting the first certify the second means any stage can approve its own release,
+and the dogfood stops being evidence about the product.
+Scope: this checkout only. It says nothing about what a downstream project should
+register as protected, and the shipped default is still `protected_paths: []`.
+
+## 2026-09-22 12:05 (+10:00): Cross-family review is a preference, downgrades recorded
+
+Decided by: the user, resolving a contradiction inside the policy itself — R3 made
+a different model family a requirement at T2/T3 while R5 said family is recorded
+and never gates. Cross-family stays the default; a same-family reviewer with no
+shared context is admitted, and the record must say `same-family` in those words.
+Rationale: a harness that can load one family cannot conjure a second, so an
+unconditional requirement is satisfied by writing the word and meaning nothing. The
+part that can be enforced is the description, not the availability.
+Scope: `ROLE_POLICY.md` (template and installed copy) plus the four documents that
+restated the old requirement verbatim. Wave 1c's own review is recorded against it.

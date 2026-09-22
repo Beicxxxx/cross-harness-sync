@@ -49,10 +49,10 @@ prints a FAIL rather than passing quietly.
 - Executor: qoder-cli controller (implemented the fix inline rather than
   dispatching; mutation-checked and re-measured, see CHANGELOG).
 - Reviewer: a qoder-cli `general-purpose` subagent with no shared context, run
-  against the prepared diff. **Same model family as the executor** — this is a
-  separate-context review, and must be described as "reviewed by a different
-  model", never as "cross-family verified" (rule R5 records family, it does not
-  gate on it).
+  against the prepared diff. The reviewing model's family was **not recorded**, so no claim holds in
+  either direction — including this record's earlier "same model family" wording,
+  which this line replaces. R5 makes an unknown field `NOT_REPORTED`, not a guess;
+  only the absence of shared context is evidenced.
 
 ## Completion condition
 

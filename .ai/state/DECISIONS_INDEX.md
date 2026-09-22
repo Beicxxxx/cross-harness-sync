@@ -11,3 +11,5 @@
 | 2026-09-22 | Spec 10.D satisfied as certification of what landed, not a retroactive process claim | DECISIONS.md |
 | 2026-09-22 | Two shipped templates instruct behaviour the protocol forbids (`git add -A`; "cross-family review") | DECISIONS.md |
 | 2026-09-22 | Governing-copy drift and stale record grants documented, not closed | DECISIONS.md |
+| 2026-09-22 | Release face and runtime face are separate authorities: a record under `.ai/state/authorizations/` cannot certify shipped code | DECISIONS.md |
+| 2026-09-22 | Cross-family review is a preference; a same-family downgrade must be recorded | DECISIONS.md |

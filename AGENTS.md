@@ -2,9 +2,8 @@
 
 Canonical instructions for ALL harnesses (Codex, Claude Code, Kimi, GLM, …).
 Keep YOUR rules ≤ 65 lines (enforced by `.ai/scripts/sync_verify.py` against
-`.ai/sync_config.json`). If the skill's managed block is appended here instead of
-this template being copied, it adds 16 lines and `init_sync.py` raises the cap to
-81 (65 + 16) — those 65 lines are still all the file may spend on its own rules.
+`.ai/sync_config.json`). A managed block appended by the skill adds 16 lines and
+`init_sync.py` raises the cap to 81; those 65 lines are still all this file owns.
 
 ## On Session Start (L0 — the ONLY required reads)
 
@@ -45,7 +44,8 @@ exactly what to read.
 
 - Commit identity: this repository's LOCAL `user.name`/`user.email` (the owner's
   GitHub identity), never the harness; `main`'s school address predates that setting.
-- At every stage close-out and session end: `git add -A && git commit && git push`.
+- At each close-out: `git add <the paths this stage owns>`, then commit and push.
+  Never a blanket add — that is how a lock record or a `.env` reaches a commit.
 - Never force-push, never rewrite published history, never commit secrets
   (fresh clone: verify `git check-ignore -v .env` first).
 - Large regenerable caches stay untracked — see `.gitignore`.
@@ -59,7 +59,7 @@ exactly what to read.
 
 - Publish only numbers measured on the tree they describe
   (`docs/evidence/wave1b-facts.md`); a `[PASS]` is not prevention — omission only.
-- Reviewer family is recorded, never gated (R5) — say "reviewed by a different
-  model" only when one did. Never `git add -A` (the Git Sync section above says
-  it; that line is a defect, logged in `.ai/state/DECISIONS.md`), never
-  force-push, never `git add -f` the gitignored `.superpowers/`.
+- Release face vs runtime face: `templates/` and `scripts/` ship to others and are
+  authorised in `docs/release-authorizations/`, never by a record under
+  `.ai/state/authorizations/`, which governs this repo alone. R5 records reviewer
+  family and never gates it; say "reviewed by a different model" only when one did.

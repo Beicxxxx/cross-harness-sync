@@ -28,7 +28,9 @@ Owned files only:
 
 - <Verifiable condition the work must satisfy.>
 - <Evidence to produce: test runs, hashes, red-before-green demonstration.>
-- Stop for exactly one independent cross-family review when done.
+- Stop for exactly one independent review when done. Cross-family where the harness
+  can reach a second family; otherwise same-family with no shared context. Record
+  which it was (R3, R5): the wording is the rule, the availability is not.
 
 ## Absolute stop boundary
 

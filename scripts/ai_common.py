@@ -357,6 +357,24 @@ PROTOCOL_VERSION = "2.1.0"
 SHA_HEX_LEN = 40
 SHA256_HEX_LEN = 64
 
+# Wave 1c finding C1: `required <file>` asks whether a state file exists and
+# `budget <file>` asks how long it is, so a verbatim template copy answers both
+# and prints PASSes — which is how a ROLE_POLICY still reading `Adopted:
+# <YYYY-MM-DD ...> by <who>` reached a digest pin. These are the slots the
+# INSTALLER owns: each is resolvable at install time, so a copy that still holds
+# one means the installer skipped its job, not that a user has work to do.
+# Deliberately excludes the angle brackets in CURRENT/TASK/BLOCKERS/DECISIONS,
+# which are scaffolding the next agent fills as work starts — failing on those
+# would call an idle repository broken, and a check red on every fresh install
+# teaches everyone to ignore it. Read by BOTH `init_sync.py` (which fills them)
+# and `sync_verify.py` (which fails on what is left), so the two cannot disagree.
+INSTALLER_SLOTS = {
+    "AGENTS.md": ("<PROJECT NAME>", "<NAME> <<EMAIL>>", "<REMOTE URL>",
+                  "<private/public>"),
+    ".ai/state/ROLE_POLICY.md": ("<YYYY-MM-DD HH:MM:SS>", "(<timezone>)",
+                                 "by <who>", "<List standing "),
+}
+
 # Where an authorization lives (§6): the directory v2.0 mandated ("one stage = one
 # authorization file") but gave no canonical home, so nothing could read it back.
 AUTHORIZATIONS_SUBDIR = "state/authorizations"

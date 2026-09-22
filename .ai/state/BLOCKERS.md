@@ -1,15 +1,15 @@
 # Current Blockers
 
-> Last updated: 2026-09-22 10:32 (+10:00)
-> Updated by: qoder-cli (the dogfood stage is published; this file's premise
-> that it was stuck unpushed no longer holds).
+> Last updated: 2026-09-22 12:20 (+10:00)
+> Updated by: qoder-cli (PR #2 merged as `0bc4d7f`; wave 1c running, unreviewed).
 
 ## Active blocker
 
-No technical blocker. [PR #2](https://github.com/Beicxxxx/cross-harness-sync/pull/2)
-is open with the stage on it, so what is parked are three decisions only the user
-can make: merge it, tag `v2.1.0` with a GitHub Release, and whether wave 1c starts
-now. Nothing is waiting on a mechanism that does not exist.
+Nothing technical. Two things gate wave 1c closing: this increment has had **no
+review**, so `.ai/state/authorizations/2026-09-22-wave1c.md` reads
+`verdict: pending` and no text here may imply it was reviewed; and PR #3 is open
+rather than merged. The user's own decisions remain merge, tag/Release, and how
+much of the deferred minor list to fund.
 
 ## Not blockers
 

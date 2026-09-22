@@ -76,17 +76,21 @@ outside a repo the secret checks cannot answer and report `[FAIL]`.
 python scripts/init_sync.py /path/to/repo
 ```
 
-Then fill in every `<placeholder>` (remote URL, commit identity, project red
-lines), declare project-specific checks in `.ai/sync_config.json`, run
+Then fill in the `<placeholder>`s that describe the project's work (its red lines
+and the state skeletons). `init_sync.py` resolves the slots only it can know —
+project name, remote URL and commit identity in `AGENTS.md`, the Adopted line in
+`ROLE_POLICY.md` — and the `unfilled template slots` check reports any it could
+not. Declare project-specific checks in `.ai/sync_config.json`, run
 `python .ai/scripts/sync_verify.py` until `FAILED:` is absent and every line
 reads `[PASS]` or a named `[SKIP]`, then commit and push. A default install
 registers no project checks and declares no protected paths, so it ends
-`== 20/24 checks passed, 4 skipped ==` at exit 0 (measured at `3546c08`). The
+`== 21/25 checks passed, 4 skipped ==` at exit 0 (measured on the tree this file
+ships in). The
 four skips are `registered project checks`, `path coverage`
 (`SKIP(no-protected-paths)`), `pin violation` (`SKIP(no-authorizations)`) and
 `role policy integrity` (`SKIP(no-sha-pinned)`), and each names which reason it
 took. The same install after `python scripts/init_sync.py <repo> --migrate`
-reads `== 21/24 checks passed, 3 skipped ==`. Neither figure is a failure to fix
+reads `== 22/25 checks passed, 3 skipped ==`. Neither figure is a failure to fix
 and neither is green — nothing in this protocol can be green, only named.
 `rc == 0` is never sufficient; read the lines.
 
@@ -184,7 +188,7 @@ exit 0 while someone else holds it.
 2. Update `CURRENT.md` + `LATEST.md` (and `--handoff` to archive the old one)
 3. `python .ai/scripts/checkpoint.py --unlock --agent <name>` (the name is
    required; bare `--unlock` is a usage error at exit 2)
-4. `git add -A && git commit && git push` with the project's human identity
+4. `git add <the paths this stage owns> && git commit && git push` with the project's human identity
 
 ## Scripts
 

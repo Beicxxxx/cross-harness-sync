@@ -1,15 +1,15 @@
 # Current Project State — the single source of truth for progress
 
-> Last updated: 2026-09-22 10:32 (+10:00) by qoder-cli (spec 10.D published as PR #2).
+> Last updated: 2026-09-22 12:15 (+10:00) by qoder-cli (PR #2 merged; wave 1c running).
 > Budget: this file stays ≤ 60 lines (enforced by `.ai/scripts/sync_verify.py`).
 
 ## At a glance (for humans; machines treat this as authoritative)
 
 | Item | State |
 |---|---|
-| Current stage | Spec 10.D dogfood published as open PR #2; `main` awaits the user's merge call |
-| Authorization | `.ai/state/authorizations/2026-09-22-wave1b-dogfood.md` (T2, accepted) |
-| Blockers | none technical; three decisions are the user's — merge PR #2, tag/release, open wave 1c |
+| Current stage | Wave 1c open as PR #3 (unreviewed); PR #2 merged as `0bc4d7f` |
+| Authorization | runtime: `.ai/state/authorizations/2026-09-22-wave1c.md` (pending) · release: `docs/release-authorizations/2026-09-22-wave1c-product-changes.md` |
+| Blockers | none technical; this increment is unreviewed and unpushed, and tag/Release is the user's |
 | Health check | `python .ai/scripts/sync_verify.py` |
 | Red lines | no "all green", no "enforced", no "cross-family"; no tag or release without the user |
 
@@ -26,9 +26,9 @@ on demand, never inline.
 `.ai/state/authorizations/2026-09-22-wave1b-dogfood.md` — no digest pinned: a stage record
 that changes while it is executed is not a freezing artifact.
 Executor: qoder-cli controller. Reviewer: a qoder-cli subagent with no shared
-context — same model family, so this is a separate-context review and must never
-be described as cross-family verification (rule R5 records family, it does not
-gate on it).
+context. Its model family was never recorded, so the honest value is
+`NOT_REPORTED` rather than "same family": R5 forbids guessing the field either
+way, and an unverifiable attribution is the same failure as an overclaimed one.
 
 ## 3. Where the work stands
 
@@ -36,8 +36,8 @@ gate on it).
 |---|---|
 | Wave 1a | merged; 26 of 27 defects fixed, D14 was the single deferral |
 | Wave 1b | merged as PR #1 (`3a5f2a9`): governance records, coverage walk, `--review-prompt`, `--migrate`, D14, N1 |
-| This repo's own install | `.ai/` landed here — spec 10.D, published on `v2.1-dogfood-10d` as open PR #2 |
-| Wave 1c | not started; needs its own authorization record before touching `scripts/` or `templates/` |
+| This repo's own install | `.ai/` is on `main` (PR #2 merged as `0bc4d7f`) |
+| Wave 1c | in progress: policy/R3-R5, `git add -A` and unfilled-slot defects fixed red-first; review and 14 minors open |
 | Release | undecided: no tag, no GitHub Release |
 
 ## 4. Stage history

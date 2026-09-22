@@ -1,9 +1,9 @@
 {
   "agent": "qoder-cli",
-  "reason": "wave1b dogfood: install this protocol into its own repository (spec 10.D)",
-  "acquired_at": "2026-09-22T08:37:29+10:00",
-  "expires_at": "2026-09-22T12:37:29+10:00",
-  "released_at": "2026-09-22T09:27:19+10:00",
-  "epoch": 1,
+  "reason": "wave 1c: governance defects (unfilled ROLE_POLICY, R3/R5 conflict, installer identity placeholder)",
+  "acquired_at": "2026-09-22T11:05:02+10:00",
+  "expires_at": "2026-09-22T15:05:02+10:00",
+  "released_at": "2026-09-22T12:08:23+10:00",
+  "epoch": 3,
   "released_by": "qoder-cli"
 }

@@ -10,6 +10,7 @@
 | Date | Stage | File | Tier | Verdict |
 |---|---|---|---|---|
 | 2026-09-22 | wave 1b dogfood — install the protocol into its own repo (spec 10.D) | 2026-09-22-wave1b-dogfood.md | T2 | accepted |
+| 2026-09-22 | wave 1c — this repo's own runtime face; shipped `scripts/`/`templates/` are authorised outside this index | 2026-09-22-wave1c.md | T2 | pending |
 
 - One file per stage, named `<YYYY-MM-DD>-<stage>.md`, from
   `.ai/templates/AUTHORIZATION.md`.

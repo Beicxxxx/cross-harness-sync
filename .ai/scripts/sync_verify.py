@@ -587,6 +587,30 @@ def load_config(path: Path | None = None) -> tuple[dict, set]:
     return merge_config(DEFAULT_CONFIG, cfg)
 
 
+def check_unfilled_slots() -> None:
+    # Wave 1c C1. The slot list lives in `ai_common.INSTALLER_SLOTS` beside the
+    # installer that fills them, so the writer and the checker cannot drift into
+    # disagreeing about what counts as unfinished.
+    hits = []
+    for rel, slots in ai_common.INSTALLER_SLOTS.items():
+        try:
+            body = (ROOT / rel).read_text("utf-8")
+        except FileNotFoundError:
+            continue  # absence is `required …`'s and the layout check's verdict
+        except (OSError, UnicodeDecodeError) as exc:
+            hits.append(f"{rel}: unreadable ({type(exc).__name__})")
+            continue
+        found = [slot for slot in slots if slot in body]
+        if found:
+            hits.append(f"{rel}: {', '.join(found)}")
+    if hits:
+        record("unfilled template slots", False,
+               "; ".join(hits) + " -- the installer left its own slots blank")
+    else:
+        record("unfilled template slots", True,
+               f"{len(ai_common.INSTALLER_SLOTS)} installer-owned files carry no slot")
+
+
 def check_required_files(required_files: list) -> None:
     # Ruling (lane B3a, on lane S1's finding 1): this one STAYS a FAIL now that
     # `record()` can skip. A config declaring zero required files has removed a
@@ -1556,6 +1580,7 @@ def main() -> int:
     for label, run_check in (
             ("required files",
              lambda: check_required_files(cfg["required_files"])),
+            ("unfilled template slots", check_unfilled_slots),
             ("protocol version", check_protocol_version),
             ("line budgets", lambda: check_line_budgets(cfg, nulled)),
             ("secrets ignored", lambda: check_secrets_ignored(cfg)),
