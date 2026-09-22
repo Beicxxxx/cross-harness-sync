@@ -31,38 +31,15 @@ pinned end-to-end through the CLI.
 """
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
 from pathlib import Path
 
 import pytest
-from helpers import SCRIPTS, run_python
+from helpers import load_script, run_python
 
 
-def _load_sync_verify():
-    """The repo's `sync_verify.py`, loaded under a private name.
-
-    Importing it runs its own `from ai_common import ...`, which registers the
-    repo copy under the shared name; that value is restored so an in-process
-    load in another test file still executes the install next to it.
-    """
-    saved = sys.modules.pop("ai_common", None)
-    name = "_sync_verify_under_test_config_merge"
-    try:
-        spec = importlib.util.spec_from_file_location(name, SCRIPTS / "sync_verify.py")
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules[name] = mod
-        spec.loader.exec_module(mod)
-        return mod
-    finally:
-        sys.modules.pop(name, None)
-        sys.modules.pop("ai_common", None)
-        if saved is not None:
-            sys.modules["ai_common"] = saved
-
-
-sync_verify = _load_sync_verify()
+sync_verify = load_script("sync_verify.py",
+                          "_sync_verify_under_test_config_merge")
 
 
 def write_cfg(repo: Path, data) -> None:

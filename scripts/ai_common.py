@@ -386,6 +386,21 @@ AUTHORIZATIONS_SUBDIR = "state/authorizations"
 # stage authorization.
 AUTHORIZATION_INDEX_NAME = "INDEX.md"
 
+
+def resolve_authorizations_dir(root: Path, ai_dir: Path, cfg: dict) -> Path:
+    """Where stage records live: empty key -> `ai_dir/AUTHORIZATIONS_SUBDIR`.
+
+    A relative `authorizations_dir` resolves as `root / rel` ONLY. Wave 1e Q12:
+    `checkpoint.py` used to probe `ai_dir / rel` as a second spelling, so a config
+    of `state/authorizations` made the review prompt count records the coverage
+    walk never saw (and the other way around). One resolver, checkout-root only.
+    """
+    rel = str((cfg or {}).get("authorizations_dir", "") or "").strip()
+    if not rel:
+        return ai_dir / AUTHORIZATIONS_SUBDIR
+    return root / rel
+
+
 # The anchor `--migrate` writes when the tree genuinely has no commit to anchor a
 # coverage window on — an empty repo, or one outside git altogether. It is a NAMED
 # skip, not a rev: `git log <x>..HEAD` would otherwise be asked about nothing.

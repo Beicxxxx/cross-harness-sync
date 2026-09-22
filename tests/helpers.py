@@ -22,6 +22,7 @@ deliberate keys win), so pinning an encoding cannot reintroduce git state.
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 import subprocess
 import sys
@@ -32,6 +33,45 @@ from typing import Sequence
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = REPO_ROOT / "scripts"
 TEMPLATES_DIR = REPO_ROOT / "templates"
+
+
+def load_module(name: str, path: Path, *, keep: bool = False):
+    """Import a script by path without poisoning ``sys.modules['ai_common']``.
+
+    Shipped scripts do ``from ai_common import ...``. Registering this checkout's
+    copy under that plain name makes a later in-process load of an *installed*
+    script resolve to this object instead of the file beside it. This helper
+    saves/restores that binding and, by default, unregisters ``name`` once the
+    module has executed (``@dataclass`` only needs it while the class body runs).
+
+    Pass ``keep=True`` when the caller still needs the module in ``sys.modules``
+    (use a unique ``name`` per call to avoid collisions).
+    """
+    saved = sys.modules.pop("ai_common", None)
+    spec = importlib.util.spec_from_file_location(name, path)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules[name] = mod
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        if not keep:
+            sys.modules.pop(name, None)
+        sys.modules.pop("ai_common", None)
+        if saved is not None:
+            sys.modules["ai_common"] = saved
+    return mod
+
+
+def load_ai_common(name: str = "_helpers_ai_common", *, keep: bool = False):
+    """Load ``scripts/ai_common.py`` under a private registration name."""
+    return load_module(name, SCRIPTS / "ai_common.py", keep=keep)
+
+
+def load_script(filename: str, name: str | None = None, *, keep: bool = False):
+    """Load a basename under ``scripts/`` (unique ``name`` when ``keep``)."""
+    if name is None:
+        name = f"_helpers_{Path(filename).stem}"
+    return load_module(name, SCRIPTS / filename, keep=keep)
 
 
 def is_inside_repo(path: Path | str) -> bool:

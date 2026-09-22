@@ -1,5 +1,47 @@
 # Changelog
 
+## v2.1.1 — wave 1e (void queue closures + release), 2026-09-23
+
+Wave 1d left implementable void rows open and three known limits named. This
+release closes the implementable set, disposition the limits, and publishes the
+first tagged skill release on `main` after the #3/#4/#5 merge stack.
+
+### What is now shipped
+
+- **Q6 — one test loader.** `tests/helpers.py` exports `load_module` /
+  `load_ai_common` / `load_script`; the duplicated `_load*` copies across the
+  suite are gone.
+- **Q8 — sidecar divergence cannot look healthy.** `governing copy` FAILs when
+  `.ai/scripts/*.py.new` remains. `--migrate` that writes a sidecar exits
+  `MIGRATE_INCOMPLETE`, does not stamp `VERSION`, writes `MIGRATION.json` with
+  `incomplete: true` and `to: null` (so a re-run after adopting the sidecar
+  continues rather than verify-only against a stale stamp), and the incomplete
+  commit message does not claim `vN -> PROTOCOL`.
+- **Q11 — omit vs empty `release_paths`.** Unknown top-level config keys are
+  `malformed`. Omitting `release_paths` is still `SKIP(no-release-paths)` (this
+  tree ships nothing). A present empty list is FAIL. Fresh-install /
+  migrated-install tripwires stay `21/27` / `22/27` after re-measure.
+- **Q12 — one `authorizations_dir` resolver.** `ai_common.resolve_authorizations_dir`
+  is checkout-root only; `sync_verify` and `checkpoint --review-prompt` share it.
+- **Q15 — empty post-commit listing.** `git show` rc 0 with zero bytes is named
+  degradation (containment recheck did not run), never `0 path(s) committed`.
+
+### Known limits left named (not defects)
+
+- **Q9 (stale-grant rule).** An accepted record's `## Editable files` grants never
+  expire inside the coverage window; `status: open|closed` answers concurrency
+  only and was never given a grant-expiry meaning.
+- **Q10 (runtime-record globs).** The runtime walk still accepts wildcard bullets
+  (including `*`) that `release authorization` refuses; refusing them would
+  rewrite this repository's already-approved runtime grants after the fact.
+- **Q14 (runtime guard escapes).** `path coverage` still does not fire on its
+  four named escapes (closed-status exempt, no-base runtime unbound, empty-anchor
+  SKIP, de-accept empties the range); the full disclosure lives in
+  `templates/AUTHORIZATION.md` and the queue row.
+
+Q13 remains cannot-be-resolved (eight private ledger ids with no tracked
+definition).
+
 ## v2.1.0 — wave 1d (the deferred queue, published and then worked), 2026-09-22
 
 Wave 1c ended owing two kinds of debt: shipped behaviour it had named but not

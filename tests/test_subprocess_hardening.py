@@ -24,7 +24,6 @@ red-before-green work; the commit bodies say which tests were actually red.
 from __future__ import annotations
 
 import ast
-import importlib.util
 import json
 import locale
 import os
@@ -34,7 +33,7 @@ import sys
 
 import pytest
 
-from helpers import SCRIPTS, run_python
+from helpers import SCRIPTS, load_script, run_python
 
 # The one summary line format, pinned rather than eyeballed. The skip count
 # shares the line with the fraction so it cannot be scrolled past; it is
@@ -44,25 +43,9 @@ SUMMARY_RE = re.compile(r"== (\d+)/(\d+) checks passed(?:, (\d+) skipped)? ==")
 
 
 def _load_sync_verify():
-    """A fresh import of the shipped verifier, for the in-process pins.
-
-    `ai_common` is popped around it (same dance as
-    `tests/test_config_errors.py`): the module imports it by name, and a
-    stale entry would hand a test a half-initialised copy.
-    """
-    saved = sys.modules.pop("ai_common", None)
-    name = "_sync_verify_under_test_subprocess_hardening"
-    try:
-        spec = importlib.util.spec_from_file_location(name, SCRIPTS / "sync_verify.py")
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules[name] = mod
-        spec.loader.exec_module(mod)
-        return mod
-    finally:
-        sys.modules.pop(name, None)
-        sys.modules.pop("ai_common", None)
-        if saved is not None:
-            sys.modules["ai_common"] = saved
+    """A fresh import of the shipped verifier, for the in-process pins."""
+    return load_script("sync_verify.py",
+                       "_sync_verify_under_test_subprocess_hardening")
 
 
 # --------------------------------------------------------------------------

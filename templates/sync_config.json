@@ -26,7 +26,6 @@
   "protected_paths_case": "case-sensitive",
   "authorizations_dir": ".ai/state/authorizations",
   "role_policy_sha256": "",
-  "release_paths": [],
   "release_authorizations_dir": "docs/release-authorizations",
   "release_window_start_commit": "",
   "governance": {

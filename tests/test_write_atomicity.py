@@ -12,17 +12,15 @@ The third and fourth tests pin what that fix exposed: on Windows a concurrent
 `os.replace` makes both the replacing call and the paired read fail
 transiently, so both go through one bounded retry.
 """
-import importlib.util
 import json
 import os
 import re
 import shutil
-import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
-from helpers import SCRIPTS, run_python
+from helpers import SCRIPTS, load_script, run_python
 
 CHECKPOINT = SCRIPTS / "checkpoint.py"
 
@@ -33,11 +31,7 @@ def shutil_copy(name, dest_dir):
 
 def _load_checkpoint(name):
     """Load scripts/checkpoint.py as a module so write_json can be pinned."""
-    spec = importlib.util.spec_from_file_location(name, CHECKPOINT)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
+    return load_script("checkpoint.py", name, keep=True)
 
 
 def _tmp_names_used_by_the_repo_source():

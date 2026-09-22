@@ -12,33 +12,16 @@ install can be required to have a file nothing creates.
 """
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
 from pathlib import Path
 
-from helpers import SCRIPTS, TEMPLATES_DIR, run_python, scaffold
+from helpers import TEMPLATES_DIR, load_ai_common, run_python, scaffold
 
 INDEX_REL = ".ai/state/authorizations/INDEX.md"
 RECORD_KEYS = ("tier", "executor", "reviewer", "verdict")
 
 
-def _load(name: str, path: Path):
-    saved = sys.modules.pop("ai_common", None)
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    try:
-        spec.loader.exec_module(mod)
-    finally:
-        sys.modules.pop(name, None)
-        sys.modules.pop("ai_common", None)
-        if saved is not None:
-            sys.modules["ai_common"] = saved
-    return mod
-
-
-ai_common = _load("_b3_records_ai_common", SCRIPTS / "ai_common.py")
+ai_common = load_ai_common("_b3_records_ai_common")
 
 
 # ---------------------------------------------------------------------------

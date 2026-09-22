@@ -1,49 +1,41 @@
 # Latest Handoff
 
-> Updated: 2026-09-23 02:31 (+10:00) by cursor: owner-authorized merge of PR
-> #3 → #4 → #5 into `main`. Budget: ≤ 80 lines.
+> Updated: 2026-09-23 03:17 (+10:00) by cursor: wave 1e accepted after F1
+> re-review ACCEPT. Budget: ≤ 80 lines.
 
 ## 1. Done
 
-- Merged PR #3 into `main` (`dc364f5`).
-- Retargeted PR #4 to `main`, merged (`53fcfb9`).
-- Retargeted PR #5 to `main`, merged (`22f460d`).
-- Local `main` fast-forwarded to `22f460d`. Wave 1d auth records left as
-  accepted/live; not edited at merge.
-- Re-measured on that tip (this session): `sync_verify` `== 28/28 checks passed
-  ==`, no `FAILED:`; `path coverage: 97 protected touches covered`; `release
-  authorization: 122 release-face (commit, path) pairs … (2 record(s))`; `swarm
-  boundary: … 1 live, 2 closed`; suite via extra_checks `538 passed, 5 skipped`.
+- Void queue: Q6/Q8/Q11/Q12/Q15 closed in code; Q9/Q10/Q14 closed by decision;
+  Q13 remains cannot-be-resolved.
+- F1 blocker fixed: incomplete migrate writes `to: null` / `incomplete: true`;
+  adopting sidecar then re-migrate stamps PROTOCOL. F2–F5 closed.
+- Both wave-1e records `verdict: accepted`. Wave 1d stayed `status: closed`.
+- Measured pre-push: suite `549 passed, 5 skipped`; verify `28/28` (re-run after
+  accept before quoting as the acceptance tip).
 
 ## 2. Not done
 
-- Tag, GitHub Release, version bump — not asked.
-- Void rows Q6, Q8–Q12, Q14, Q15 — not funded.
-- Closing wave-1d records by `status` — deferred; still 1 live accepted pair.
+- Land on `main`, tag `v2.1.1`, GitHub Release (protocol stamp stays `2.1.0`).
 
 ## 3. Evidence pointers
 
-- Merge commits: `dc364f5` (#3), `53fcfb9` (#4), `22f460d` (#5).
-- Stage facts remain `docs/evidence/wave1d-facts.md` / `wave1c-facts.md` (those
-  rows name older commits; do not quote them as this tip without re-run).
-- Queue: `docs/evidence/wave1d-queue.md`.
+- `docs/evidence/wave1e-facts.md` — measurements + F1–F5 table.
+- `docs/evidence/wave1d-queue.md` — row statuses.
+- Auth: `.ai/state/authorizations/2026-09-23-wave1e.md`,
+  `docs/release-authorizations/2026-09-23-wave1e-void-and-release.md`.
 
 ## 4. Warnings
 
-- Pre-merge handoff quoted 78 coverage / 75 in V13; this tip measured 97 / 122.
-  Merge commits touched protected and release paths — re-run before quoting.
-- Re-acquiring the writer lock overwrites `.ai/runtime/WRITER_LOCK.json`, which
-  evidence cites as a live record. Release at close-out.
-- Do not describe the window guard as enforcement (Q14).
+- Protocol stamp is still `2.1.0`; the skill release tag is `v2.1.1`.
+- Re-run verify after the acceptance commit before publishing coverage totals.
+- Q14 escapes remain; do not call the window "enforced".
 
 ## 5. Next step
 
-Nothing until the owner funds a void row or asks for tag/Release/version bump.
-If coding resumes, open a new authorization pair before touching `scripts/` or
-`templates/`.
+Push branch, merge to `main`, `git tag v2.1.1`, `gh release create`, unlock.
 
 ## 6. Must-read list
 
-- `.ai/state/CURRENT.md` §2–3 — merged tip, no funded task.
-- `docs/evidence/wave1d-queue.md` — what still needs funding.
-- `.ai/state/ROLE_POLICY.md` §1–3 — before any new stage.
+- `docs/evidence/wave1e-facts.md` F1 row.
+- `docs/evidence/wave1d-queue.md` Q8/Q11/Q15.
+- `.ai/state/ROLE_POLICY.md` §1–3.

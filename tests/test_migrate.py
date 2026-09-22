@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.util
 import json
 import os
 import re
@@ -23,29 +22,12 @@ import subprocess
 import sys
 from pathlib import Path
 
-from helpers import (REPO_ROOT, SCRIPTS, git, make_repo, run_python, scaffold,
-                     write_lock)
+from helpers import (REPO_ROOT, SCRIPTS, git, load_ai_common, load_script,
+                     make_repo, run_python, scaffold, write_lock)
 
 
-def _load(name: str, path: Path):
-    """Import a shipped script by path without poisoning `sys.modules['ai_common']`
-    (the reason `tests/test_governance_record.py` spells the same helper)."""
-    saved = sys.modules.pop("ai_common", None)
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    try:
-        spec.loader.exec_module(mod)
-    finally:
-        sys.modules.pop(name, None)
-        sys.modules.pop("ai_common", None)
-        if saved is not None:
-            sys.modules["ai_common"] = saved
-    return mod
-
-
-init_sync = _load("_b3_migrate_init_sync", SCRIPTS / "init_sync.py")
-ai_common = _load("_b3_migrate_ai_common", SCRIPTS / "ai_common.py")
+init_sync = load_script("init_sync.py", "_b3_migrate_init_sync")
+ai_common = load_ai_common("_b3_migrate_ai_common")
 
 INDEX_REL = ".ai/state/authorizations/INDEX.md"
 MIGRATION_REL = ".ai/protocol/MIGRATION.json"
@@ -139,10 +121,13 @@ def test_migrate_records_head_index_and_pins_the_role_policy(tmp_path):
     record = json.loads((repo / MIGRATION_REL).read_text("utf-8"))
     # The record's exact shape, pinned: `warnings`/`degraded` are there so an
     # rc-only caller (a hook, a wrapper script) can see a `.new`-sidecar
-    # divergence — a run that exits 0 having NOT delivered every script.
+    # divergence — and wave 1e Q8 makes that run exit MIGRATE_INCOMPLETE
+    # rather than 0, so the record is the detail behind the non-zero rc.
     assert set(record) == {"from", "to", "started", "completed",
-                           "files_touched", "warnings", "degraded"}, record
+                           "files_touched", "warnings", "degraded",
+                           "incomplete"}, record
     assert record["warnings"] == [] and record["degraded"] is False, record
+    assert record["incomplete"] is False, record
     assert record["to"] == init_sync.PROTOCOL_VERSION, record
     # this install's own stamp is the `from`: the migration records the upgrade
     # it actually performed, and a re-run of the same version says so honestly.
@@ -309,7 +294,9 @@ def test_a_diverged_script_gets_a_new_sidecar_and_keeps_its_bytes(tmp_path):
     git(repo, "commit", "-q", "-m", "customised the verifier")
 
     res = migrate(repo)
-    assert res.rc == 0, res.stdout + res.stderr
+    # Wave 1e Q8: sidecar means the OLD script still runs -- MIGRATE_INCOMPLETE.
+    assert res.rc == init_sync.MIGRATE_INCOMPLETE, res.stdout + res.stderr
+    assert "MIGRATE INCOMPLETE" in res.stdout, res.lines
     sidecar = repo / ".ai/scripts/sync_verify.py.new"
     assert sidecar.is_file(), res.lines
     assert sidecar.read_bytes() == (SCRIPTS / "sync_verify.py").read_bytes()
@@ -321,9 +308,59 @@ def test_a_diverged_script_gets_a_new_sidecar_and_keeps_its_bytes(tmp_path):
                    for ln in res.lines), res.lines
     record = json.loads((repo / MIGRATION_REL).read_text("utf-8"))
     assert ".ai/scripts/sync_verify.py.new" in record["files_touched"], record
+    assert record["degraded"] is True, record
+    assert record.get("incomplete") is True, record
+    assert record.get("to") is None, record
+    # VERSION must NOT be listed as advanced while the old script still runs.
+    assert any("NOT advanced" in ln or "protocol stamp" in ln
+               for ln in res.lines), res.lines
+    assert ".ai/protocol/VERSION" not in record["files_touched"], record
+    # Commit must not claim vN -> PROTOCOL while incomplete.
+    assert "incomplete from" in res.stdout or "NOT advanced" in res.stdout, \
+        res.lines
+    assert f"-> v{init_sync.PROTOCOL_VERSION}" not in res.stdout, res.lines
     # the journal names it as not reversible by a revert of the migration commit.
     journal = (repo / JOURNAL_REL).read_text("utf-8")
     assert "sync_verify.py" in journal and "NOT reversible" in journal, journal
+
+
+def test_adopting_a_sidecar_then_re_migrating_stamps_the_protocol(tmp_path):
+    """F1 recovery: incomplete must not trap a fixed tree in verify-only.
+
+    Sidecar migrate leaves VERSION at the pre-upgrade stamp and writes an
+    incomplete record (`to` is null). After the operator replaces the installed
+    script with the `.new` bytes, a second `--migrate` must continue — stamp
+    PROTOCOL_VERSION and exit 0 — not `already migrated` + protocol-stamp FAIL.
+    """
+    repo = installed(make_repo(tmp_path))
+    target = repo / ".ai/scripts/sync_verify.py"
+    target.write_bytes(target.read_bytes() + b"\n# local customisation\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "customised the verifier")
+    before = (repo / ".ai/protocol/VERSION").read_text("utf-8").strip()
+
+    first = migrate(repo)
+    assert first.rc == init_sync.MIGRATE_INCOMPLETE, first.stdout + first.stderr
+    sidecar = repo / ".ai/scripts/sync_verify.py.new"
+    assert sidecar.is_file(), first.lines
+    record = json.loads((repo / MIGRATION_REL).read_text("utf-8"))
+    assert record.get("to") is None and record.get("incomplete") is True, record
+    assert (repo / ".ai/protocol/VERSION").read_text("utf-8").strip() == before
+
+    # Operator adopts the shipped sidecar.
+    target.write_bytes(sidecar.read_bytes())
+    sidecar.unlink()
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "adopt shipped sync_verify")
+
+    second = migrate(repo)
+    assert second.rc == 0, second.stdout + second.stderr
+    assert "already migrated" not in second.stdout, second.lines
+    stamp = (repo / ".ai/protocol/VERSION").read_text("utf-8").strip()
+    assert stamp == init_sync.PROTOCOL_VERSION, stamp
+    done = json.loads((repo / MIGRATION_REL).read_text("utf-8"))
+    assert done.get("to") == init_sync.PROTOCOL_VERSION, done
+    assert not done.get("incomplete"), done
 
 
 def test_a_pristine_script_is_refreshed_and_an_identical_one_is_untouched(
@@ -744,11 +781,11 @@ def test_verify_migration_accepts_only_a_real_anchor_or_the_sentinel(tmp_path):
 
 
 def test_a_sidecar_divergence_is_recorded_not_just_printed(tmp_path):
-    """`warnings[]` + `degraded` in MIGRATION.json.
+    """`warnings[]` + `degraded` in MIGRATION.json, and MIGRATE_INCOMPLETE.
 
-    A preserved customised script exits 0 (the migration itself completed), so
-    the ONLY way a caller that reads the exit code — a hook, a wrapper — learns
-    this install still runs an old script is the record saying so.
+    Wave 1e Q8: a preserved customised script must not exit 0. The record still
+    names which scripts stayed old; verify_migration FAILs (not WARN) on the
+    leftover `.new` so a re-run cannot look done.
     """
     repo = installed(make_repo(tmp_path))
     target = repo / ".ai/scripts/checkpoint.py"
@@ -757,15 +794,21 @@ def test_a_sidecar_divergence_is_recorded_not_just_printed(tmp_path):
     git(repo, "commit", "-q", "-m", "customised the writer")
 
     res = migrate(repo)
-    assert res.rc == 0, res.stdout + res.stderr
+    assert res.rc == init_sync.MIGRATE_INCOMPLETE, res.stdout + res.stderr
+    assert "MIGRATE INCOMPLETE" in res.stdout, res.lines
     record = json.loads((repo / MIGRATION_REL).read_text("utf-8"))
     assert record["degraded"] is True, record
+    assert record.get("incomplete") is True, record
+    assert record.get("to") is None, record
     assert any(".ai/scripts/checkpoint.py" in w and ".new" in w
                for w in record["warnings"]), record
     assert (repo / ".ai/scripts/checkpoint.py.new").is_file()
-    # and the verifying re-run still says so out loud rather than going quiet
+    # Incomplete record must not take the verify-only path: a second run with
+    # the sidecar still present re-enters migrate and stays incomplete.
     again = migrate(repo)
-    assert any(ln.startswith("[WARN] migrate verify") and ".new" in ln
+    assert again.rc == init_sync.MIGRATE_INCOMPLETE, again.stdout + again.stderr
+    assert "already migrated" not in again.stdout, again.lines
+    assert any("sidecar" in ln.lower() or ".new" in ln or "NOT advanced" in ln
                for ln in again.lines), again.lines
 
 
@@ -774,7 +817,8 @@ def test_the_record_names_a_commit_that_did_not_land(tmp_path, monkeypatch):
     repo = installed(make_repo(tmp_path))
     monkeypatch.setattr(
         init_sync, "_migration_commit",
-        lambda root, installed_: (False, "simulated: `git commit` exited 128"))
+        lambda root, installed_, **_kw: (False,
+                                         "simulated: `git commit` exited 128"))
     rc = init_sync.run_migration(repo, argparse.Namespace(
         authorizations_dir=None))
     assert rc == 0, rc
@@ -824,6 +868,31 @@ def test_splice_json_refuses_a_parent_segment_that_is_not_an_object():
 # driven by that same empty list — silently did not run. The case below is the
 # one that makes the third option, "say which of the two you did not see",
 # load-bearing rather than a comment.
+
+
+def test_an_empty_post_commit_listing_names_the_recheck_it_skipped(
+        tmp_path, monkeypatch):
+    """Wave 1e Q15: rc 0 with zero bytes is the same class as listing.ok False."""
+    repo = installed(make_repo(tmp_path))
+    (repo / ".ai" / "state" / "CURRENT.md").write_text(
+        "# written by the migration\n", encoding="utf-8")
+    real = init_sync.run_git
+
+    def empty_ok_show(root_, args, timeout=60):
+        if args and args[0] == "show":
+            return ai_common.GitResult(rc=0, stdout=b"", stderr=b"",
+                                       timed_out=False)
+        return real(root_, args, timeout=timeout)
+
+    monkeypatch.setattr(init_sync, "run_git", empty_ok_show)
+    ok, detail = init_sync._migration_commit(repo, "2.0.0")
+    assert ok is True, detail
+    assert "recheck did not run" in detail, detail
+    assert "wrote nothing" in detail, detail
+    assert "0 path(s) committed" not in detail, detail
+    monkeypatch.setattr(init_sync, "run_git", real)
+    files = commit_files(repo)
+    assert files and all(f.startswith(".ai/") for f in files), files
 
 
 def test_a_failed_post_commit_listing_names_the_recheck_it_skipped(

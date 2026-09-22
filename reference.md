@@ -196,7 +196,6 @@ never block, never write state files — hooks remind, the agent writes.
   "protected_paths": [],
   "protected_paths_case": "case-sensitive",
   "authorizations_dir": ".ai/state/authorizations",
-  "release_paths": [],
   "release_authorizations_dir": "docs/release-authorizations",
   "release_window_start_commit": "",
   "role_policy_sha256": "",
@@ -271,11 +270,13 @@ never block, never write state files — hooks remind, the agent writes.
   `INDEX.md` set aside case-insensitively because an index is not an
   authorization. A record in a subdirectory is seen by neither command — one
   agreement, not two near-misses; keep one file per stage in this directory.
-- `release_paths`: what the repository PUBLISHES, as forward-slash globs — empty
-  by default, because most projects ship nothing of theirs to other people. Separate
-  from `protected_paths` on purpose: that list governs how a stage may edit this
-  tree, while a release face needs an authorisation nobody reading the runtime records
-  could write. Register shipped code in both and the distinction collapses.
+- `release_paths`: what the repository PUBLISHES, as forward-slash globs.
+  Omit the key when this tree ships nothing (`SKIP(no-release-paths)`). A present
+  empty list is FAIL (wave 1e Q11: opened a release face that publishes nothing).
+  Separate from `protected_paths` on purpose: that list governs how a stage may
+  edit this tree, while a release face needs an authorisation nobody reading the
+  runtime records could write. Register shipped code in both and the distinction
+  collapses.
 - `release_authorizations_dir`: where those records live, repo-relative and inside
   the checkout. The same shape refusal as `authorizations_dir` applies, because one
   key choosing where authorisation is read from is one key that could read another
