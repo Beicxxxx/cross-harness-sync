@@ -40,7 +40,8 @@
     }
   ],
   "protected_paths": [
-    "docs/evidence/*"
+    "docs/evidence/*",
+    "docs/release-authorizations/*"
   ],
   "protected_paths_case": "case-sensitive",
   "authorizations_dir": ".ai/state/authorizations",

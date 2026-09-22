@@ -109,3 +109,17 @@ the mechanism — it pointed that mechanism at files other people install, which
 counts as newly reachable. This stage's own record enumerates one path per bullet for that
 reason. Closing it needs a refusal or a bound in `sync_verify`, not a comment here.
 Scope: both record kinds; `hazard 3` in `handoff/NEXT_PROMPT.md` predates this and stays.
+
+## 2026-09-22 14:35 (+10:00): The release authority is itself under governance
+
+Decided by: qoder-cli on the gate's second review, which found that
+`docs/release-authorizations/*` was in neither `protected_paths` nor `release_paths`, so
+changing one word — `pending` to `accepted` — flipped the release line from FAIL to PASS
+with no other file in the commit. A record that certifies publications but is certified by
+nothing is self-approval with extra steps.
+Rationale: the file now sits in the runtime walk, so a verdict change must be covered by an
+accepted runtime record enumerating it, which is the same `is_accepted()` door everything
+else uses. Accepted before that door existed, the pair would have looked like one review
+authorising the other; the ordering is what makes it circular-in-a-good-way rather than void.
+Scope: this checkout's `protected_paths`. The shipped default remains `[]`, and a project
+that does not publish a face of its own registers neither list.

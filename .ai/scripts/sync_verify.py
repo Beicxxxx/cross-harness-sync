@@ -1403,13 +1403,10 @@ def check_release_authorization(cfg: dict) -> None:
         record("release authorization", None,
                "SKIP(no-release-paths): this tree registers nothing it publishes")
         return
+    # No empty-value arm here on purpose: `release_authorizations_dir: ""` is refused
+    # by the config shape check at rc 2 before any check runs, so a branch for it
+    # would be unreachable code claiming to be a guard.
     rel_dir = str(cfg.get("release_authorizations_dir") or "").strip()
-    if not rel_dir:
-        record("release authorization", False,
-               "`release_paths` is set while `release_authorizations_dir` is empty: "
-               "a release face with no source of authorisation cannot be covered, so "
-               "the configuration is the gap, not the history")
-        return
     governance = cfg.get("governance") or {}
     # The release face starts where the concept starts. Falling back to the runtime
     # window would reach back through every commit made before a repository had any
@@ -1430,6 +1427,15 @@ def check_release_authorization(cfg: dict) -> None:
     if not is_git_repo(ROOT):
         record("release authorization", False,
                "no git repository to walk, so what ships here is unverifiable")
+        return
+    shallow = ai_common.is_shallow(ROOT)
+    if shallow != "FALSE":
+        # Same rule as the runtime walk: a truncated history cannot distinguish
+        # "never authorised" from "authorised, then the object went away", and
+        # UNKNOWN halts for the same reason.
+        record("release authorization", False,
+               f"shallow or indeterminate history ({shallow.lower()}): the bounded "
+               f"walk cannot certify coverage of window {window[:8]}..HEAD")
         return
     pathspec = _protected_pathspec(paths, cfg)
     rev = f"{window}..HEAD"
@@ -1492,8 +1498,8 @@ def check_release_authorization(cfg: dict) -> None:
             return
         if kind is None:
             record("release authorization", True,
-                   f"0 release-face touches covered ({len(entries)} record(s) in "
-                   f"{rel_dir})")
+                   f"0 release-face (commit, path) pairs covered "
+                   f"({len(entries)} record(s) in {rel_dir})")
             return
         print("[WARN] release authorization: no tracked file matches any of the "
               f"{len(paths)} release_paths pattern(s), so this line governs nothing")
@@ -1516,13 +1522,16 @@ def check_release_authorization(cfg: dict) -> None:
     if uncovered:
         shown = ", ".join(f"<{sha[:8]} {rel}>" for sha, rel in uncovered[:8])
         more = f" (+{len(uncovered) - 8} more)" if len(uncovered) > 8 else ""
+        files = len({rel for _sha, rel in touched})
         record("release authorization", False,
-               f"{len(uncovered)} uncovered of {len(touched)} release-face touches: "
+               f"{len(uncovered)} uncovered of {len(touched)} release-face "
+               f"(commit, path) pairs across {files} files: "
                f"{shown}{more} -- {origin}, {pending} not accepted. A pending record "
                "certifies nothing: an unreviewed stage cannot publish on its own word")
         return
     record("release authorization", True,
-           f"{len(touched)} release-face touches covered by accepted record(s) "
+           f"{len(touched)} release-face (commit, path) pairs covered by "
+           f"accepted record(s) "
            f"({origin})")
 
 

@@ -242,3 +242,69 @@ def test_c4_12_the_release_directory_cannot_be_the_runtime_one(ai_repo):
     assert res.rc == 2, (res.rc, res.lines[-5:])
     assert any("release_authorizations_dir" in ln and "runtime" in ln
                for ln in res.lines), res.lines
+
+
+def _set_cfg(repo, **keys):
+    cfg_path = repo / ".ai" / "sync_config.json"
+    cfg = json.loads(cfg_path.read_text("utf-8"))
+    cfg.update(keys)
+    cfg_path.write_text(json.dumps(cfg, indent=2) + chr(10), encoding="utf-8")
+
+
+def test_c4_13_an_empty_authorisations_directory_stops_the_run(ai_repo):
+    """Unusable config, not a FAIL line: rc 2 before any check reads the key.
+
+    There is deliberately no "directory is empty" branch in the check itself — the
+    shape refusal happens first, so such a branch would be unreachable code claiming
+    to be a guard.
+    """
+    setup(ai_repo, release_paths=["scripts/*"], release_authorizations_dir="")
+    res = run(ai_repo)
+    assert res.rc == 2, (res.rc, res.lines[-4:])
+    assert any("release_authorizations_dir" in ln for ln in res.lines), res.lines
+
+
+def test_c4_14_a_non_commit_anchor_fails_rather_than_reading_empty(ai_repo):
+    """The shape guard applies to the release window, not only the runtime one."""
+    setup(ai_repo, release_paths=["scripts/*"])
+    empty_release_dir(ai_repo)
+    _set_cfg(ai_repo, release_window_start_commit="HEAD")
+    res = run(ai_repo)
+    bad = line(res, "[FAIL] release authorization:")
+    assert bad and "commit id" in bad, res.lines
+
+
+def test_c4_15_no_window_at_all_skips_by_name(ai_repo):
+    """No anchor anywhere is 'nothing to govern yet', never 'covered'."""
+    setup(ai_repo, release_paths=["scripts/*"])
+    empty_release_dir(ai_repo)
+    _set_cfg(ai_repo, release_window_start_commit="",
+             governance={"window_start_commit": ""})
+    res = run(ai_repo)
+    skip = line(res, "[SKIP] release authorization:")
+    assert skip and "no-window" in skip, res.lines
+
+
+def test_c4_16_a_shallow_history_cannot_certify_a_release(ai_repo, tmp_path):
+    """Truncated history cannot tell 'never authorised' from 'authorised, object gone'.
+
+    `--no-local` matters: a plain-path clone is hardlinked and stays a full
+    repository, and the first cut of this test therefore passed by walking an
+    ordinary history while claiming to test a shallow one. `is_shallow_true` asks
+    git directly rather than importing the shipped module — putting `scripts/` on
+    sys.path leaked into `test_ai_common.py`, which checks that an installed script
+    loads the `ai_common` beside it.
+    """
+    setup(ai_repo, release_paths=["scripts/*"])
+    empty_release_dir(ai_repo)
+    git(ai_repo, "add", ".ai")
+    git(ai_repo, "commit", "-q", "-m", "test: commit the install for cloning")
+    shallow = tmp_path / "shallow"
+    git(ai_repo, "clone", "--quiet", "--no-local", "--depth", "1",
+        str(tmp_path / "project"), str(shallow))
+    assert git(shallow, "rev-parse", "--is-shallow-repository") == "true", \
+        "the clone is not shallow; this would certify nothing about truncated history"
+    _set_cfg(shallow, release_paths=["scripts/*"])
+    res = run_python(shallow / ".ai" / "scripts" / "sync_verify.py", [], cwd=shallow)
+    bad = line(res, "[FAIL] release authorization:")
+    assert bad and "shallow" in bad, res.lines

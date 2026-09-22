@@ -283,7 +283,8 @@ never block, never write state files — hooks remind, the agent writes.
 - `release_window_start_commit`: the commit before the first release-face change to
   govern, falling back to `governance.window_start_commit`. Give it its own anchor
   when the concept arrived later than the history: sharing the runtime window made
-  this repository report 46 uncovered of 46, most of them predating the rule.
+  this repository report every shipped commit ever made as unauthorised, most of
+  them predating the rule; `git log --name-only` over either anchor shows which.
 
 - `role_policy_sha256`: the digest `.ai/state/ROLE_POLICY.md` must hash to. `""`
   means not pinned and the check is `SKIP(no-sha-pinned)`; anything else must be

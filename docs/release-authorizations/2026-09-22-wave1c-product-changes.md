@@ -12,14 +12,17 @@
 
 ## What ships
 
-Six files under `scripts/` and `templates/` — the surface a downstream project
-installs. Each line is why it is wrong today, not what the diff does.
+The published surface a downstream project installs: the files named in
+`## Editable files` below, which is authoritative over any count in this sentence —
+an earlier draft of this line said "six" while its own table listed eight rows and its
+own bullets enumerated eleven paths. Each line is why it is wrong today, not what the diff does.
 
 | File | Defect in the shipped product |
 |---|---|
 | `templates/ROLE_POLICY.md` | R3 makes a different model family a requirement at T2/T3 while R5 says family is recorded and never gates. A harness that can load one family is told on three sides it cannot do protected work at all. |
 | `templates/TASK.md`, `templates/CURRENT.md`, `templates/handoff/NEXT_PROMPT.md` | The same unconditional requirement is restated in the files agents fill in, so every install inherits the contradiction. |
 | `templates/AGENTS.md` | Orders `git add -A && git commit && git push` two lines above its own rule against committing secrets — an instruction that ships the bug it warns about. |
+| `templates/sync_config.json` | Ships the three `release_*` keys. Added after the fact: this branch changed the file, the record enumerated eleven other paths and omitted it, and an accepted record that misses a file it touched is not safe, only quiet. |
 | `scripts/ai_common.py`, `scripts/sync_verify.py` | `required <file>` asks whether a state file exists and `budget <file>` asks how long it is, so a verbatim template copy answers both and prints PASSes. Nothing detected a ROLE_POLICY whose authorship line still read `by <who>` — and that file is digest-pinned. |
 | `scripts/init_sync.py` | Copied `<NAME> <<EMAIL>>`, `<PROJECT NAME>`, `<REMOTE URL>` and the Adopted line verbatim, then told the user to fill in "every placeholder" — including the ones only the installer could know. |
 

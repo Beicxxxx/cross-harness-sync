@@ -65,11 +65,14 @@
 
 ## 5. Next step
 
-PR #4: the release-face check (a commit touching `scripts/` or `templates/` names an
-accepted release record), red-first, plus the `22/25` tripwire. Then close PR #3 —
-accepting its record only if the review is honestly attributed: this session's logs
-held one segment, every model field `qfmodel`, no per-agent attribution, so no
-cross-family attestation may be written (W14).
+One more fresh-context review of PR #4: it grew four guards, a shared
+ancestry predicate and a governed authority file since its last review, and
+each earlier round found a hole the round before it had not. If that comes
+back clean, set both records to `verdict: accepted` in one commit — the walk
+unions every accepted record in the window regardless of commit order, so
+flipping the release file and the runtime file together is coherent, and
+`docs/release-authorizations/*` is now inside `protected_paths`, which is what
+stops a lone verdict edit from self-approving. Then merge #3, then #4.
 
 ## 6. Must-read list
 
