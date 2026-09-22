@@ -124,3 +124,26 @@ def test_d_6_an_unreadable_side_fails_rather_than_skipping(ai_repo):
     found = line(res, "[FAIL] governing copy:")
     assert found and "ai_common.py" in found, res.lines
     assert "could not be read" in found, found
+
+
+def test_d_7_a_stranger_named_init_sync_is_not_read_as_the_source_checkout(ai_repo):
+    """The witness is a filename, and a filename can collide (review finding).
+
+    A project that owns its own `scripts/init_sync.py` — a deploy script, say — is
+    an ordinary install. Under the single-file witness alone it was read as the
+    skill's checkout and answered `[FAIL] governing copy: 3 of 3 installed files
+    are not the bytes their source says`, a red it cannot configure away and has no
+    way to interpret. The tightened answer requires the witness AND at least one
+    installed name actually appearing in `scripts/`: one shared name is enough to
+    be the checkout (D-4 still fails when a second twin is missing), zero shared
+    names is a directory holding something else entirely.
+    """
+    (ai_repo / "scripts").mkdir(exist_ok=True)
+    (ai_repo / "scripts" / "init_sync.py").write_text("# my own deploy script\n",
+                                                      encoding="utf-8")
+    res = run(ai_repo)
+    found = line(res, "[SKIP] governing copy:")
+    assert found and "not-source-checkout" in found, res.lines
+    assert "shares no file name" in found, found
+    assert not any(ln.startswith("[FAIL] governing copy:") for ln in res.lines), \
+        res.lines

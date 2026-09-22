@@ -78,8 +78,12 @@ user_authorized: n/a
   (`release_window_start_commit`, `governance.window_start_commit`) that has left a
   LIVE accepted record's declared base behind, because a window is one config line
   and moving it forward drops the commits before it out of the range, where they
-  read as neither covered nor uncovered — nothing looks at them. Closing a finished
-  stage (`status: closed`, above) is how a project re-anchors for its next wave.
+  read as neither covered nor uncovered — nothing looks at them. A declared base is
+  asked the same question in the other direction: one that is not a
+  40-lowercase-hex id, or names a commit absent from this history, is its own FAIL,
+  because a base that cannot be resolved bounds nothing while looking like it does.
+  Closing a finished stage (`status: closed`, above) is how a project re-anchors for
+  the next wave.
   Optional on the runtime side for one reason, and it is a reason about history:
   records written before that field existed carry no such line, an ACCEPTED record
   cannot be edited to add one, and refusing them all would be answered by rewriting
