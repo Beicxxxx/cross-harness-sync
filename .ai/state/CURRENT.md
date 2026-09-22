@@ -26,9 +26,9 @@ on demand, never inline.
 `.ai/state/authorizations/2026-09-22-wave1b-dogfood.md` — no digest pinned: a stage record
 that changes while it is executed is not a freezing artifact.
 Executor: qoder-cli controller. Reviewer: a qoder-cli subagent with no shared
-context — same model family, so this is a separate-context review and must never
-be described as cross-family verification (rule R5 records family, it does not
-gate on it).
+context. Its model family was never recorded, so the honest value is
+`NOT_REPORTED` rather than "same family": R5 forbids guessing the field either
+way, and an unverifiable attribution is the same failure as an overclaimed one.
 
 ## 3. Where the work stands
 
