@@ -1,7 +1,7 @@
 # Active Task
 
-> Last updated: 2026-09-22 19:55 (+10:00)
-> Updated by: qoder-cli (wave 1c, both authorizations accepted).
+> Last updated: 2026-09-23 01:45 (+10:00)
+> Updated by: qoder-cli (wave 1d reviewed; both records still `pending`).
 
 ## Standing state — do not rewrite
 
@@ -13,54 +13,54 @@
 
 ## The one active task
 
-Wave 1c, on branch `v2.1-wave1c-release-gate` (stacked on
-`v2.1-wave1c-governance-defects`): retire the defects the dogfood
-found, each under its own authority. `scripts/` and `templates/` are the release
-face and answer to
-`docs/release-authorizations/2026-09-22-wave1c-product-changes.md`; this
+Wave 1d, on branch `v2.1-wave1d-deferred-queue`: work the queue
+`docs/evidence/wave1d-queue.md` — the deferred items wave 1c named and did not
+fund — and publish the ones that cannot be resolved as unresolvable rather than as
+rows. Two authorities, unchanged from wave 1c: `scripts/`, `templates/`, `tests/`,
+`README.md`, `SKILL.md` and `reference.md` are the release face and answer to
+`docs/release-authorizations/2026-09-22-wave1d-product-changes.md`; this
 repository's own state answers to
-`.ai/state/authorizations/2026-09-22-wave1c.md`. A runtime record does not certify
-a shipped file — that separation is itself one of this stage's products.
+`.ai/state/authorizations/2026-09-22-wave1d.md`. A runtime record does not certify
+a shipped file, and `path coverage` no longer catches it when one tries.
 
 ## Role ownership
 
 - **Executor:** qoder-cli controller (inline fixes, red-first per R4).
-- **Reviewer:** fresh-context subagents with no shared history; findings and
-  dispositions are in `docs/evidence/wave1c-facts.md` (W13, W15, W17, W18), and
-  their model families were not readable from this host's logs (W14). Cross-family
-  where a second family is reachable, otherwise same-family with no shared context,
-  recorded in those words (R3 as amended 2026-09-22; R5 records, it does not gate).
+- **Reviewer:** two fresh-context subagent passes, the second pointed at the first
+  one's closures. Findings and dispositions are rows W1-W9 and X1-X8 of
+  `docs/evidence/wave1d-facts.md`; their model families are not readable from this
+  host's logs, so the value recorded is `NOT_REPORTED` (R5 records, it does not
+  gate; no sentence here says cross-family, and one of the dispatched passes died
+  in the service and was not repeated).
 - **User:** merge, any push to `main`, tag, Release, the global git config.
 
 ## Required work
 
-1. Done — R3/R5 reconciliation across the policy and the four documents that
-   restated it; `git add -A` removed from the shipped instructions; installer-owned
-   slots filled by `init_sync.py` and residue reported by `sync_verify.py`;
-   `tests/test_lane_1c_governance.py` shown red against `0bc4d7f` first.
-2. Done — `release authorization` gates the shipped surface on a record in
-   `docs/release-authorizations/`, and `status` is now separate from `verdict` so a
-   finished stage stops being able to un-authorize its own commits (W19).
-3. Done — three fresh-context passes on those two (W17, W22, W24), then both
-   records' `verdict` and the wave-1b record's `status: closed` in one commit. A
-   clone cannot reach `.superpowers/`, so the PR bodies carry red-at-base output.
-4. Open — wave 1d, on branch `v2.1-wave1d-deferred-queue`: the queue in
-   `docs/evidence/wave1d-queue.md` (Q1-Q13), whose rows Q1-Q5 and Q7 are this
-   stage. The "14 wave-1b minors" this file used to name were unresolvable ids;
-   the queue says so and what remains of them.
+1. Done — Q1: check 10, `governing copy`, comparing every `.ai/scripts/*.py` to its
+   `scripts/` twin, with the name-collision case (D-7) and the undecidable tree
+   (X1) split into two named SKIPs.
+2. Done — Q2/Q3: the runtime window is guarded by the same `_base_conflicts` the
+   release face uses, reading the records before it walks, and one predicate
+   (`ai_common.is_full_sha`) answers "is this a commit id" for both commands.
+3. Done — Q4/Q5/Q7: the two arms no test reached now have cases; the published
+   verifier figures were re-measured; and the release-document entries wave 1c owed
+   are in `CHANGELOG.md`, for wave 1c as well as wave 1d.
+4. Open — acceptance: the two wave-1d records go to `verdict: accepted` and wave 1c
+   goes to `status: closed` in the same commit, then the branch is pushed and PR
+   #3/#4/#5 left ready to merge. Merge, tag and Release stay the user's.
 
 ## Explicitly not authorized
 
 Any edit under `scripts/` or `templates/` without the release record; any tag,
-Release, version bump, merge, or push to `main`; treating a wave-1b figure as this
-tree's, now that `protected_paths` no longer registers the release face.
+Release, version bump, merge, or push to `main`; treating a wave-1b or wave-1c
+figure as this tree's; editing an accepted record to satisfy a check it now
+refuses — the answer to that is `status`, or a new stage.
 
 ## Completion condition
 
-Met, and stated as a command rather than a remembered number: with both records
-`accepted` and the wave-1b record `status: closed`, `python .ai/scripts/sync_verify.py`
-exits 0 with no FAILED line and no `[SKIP]`, and `pytest tests/ -n 8 -o addopts= -q`
-is green. Re-run them; a total copied out of this file describes its own tree. The suite is green at
-`516 passed, 5 skipped` (`python -m pytest tests/ -n 8 -o addopts= -q`) as of this
-writing; re-run it, do not quote this line. What remains before this task can close
-is review and acceptance, not more code.
+Stated as commands, not as numbers remembered here. With both wave-1d records
+`accepted`, wave 1c `status: closed`: `python .ai/scripts/sync_verify.py` reports no
+FAILED line, `path coverage` and `release authorization` each report every protected
+touch covered, and `python -m pytest tests/ -n 8 -o addopts= -q` is green on the tree
+you ran it on. The figures live in `docs/evidence/wave1d-facts.md` with the commit
+each was measured at; if your tree is not that commit, re-run rather than quote.

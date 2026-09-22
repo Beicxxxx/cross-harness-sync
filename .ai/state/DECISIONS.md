@@ -172,3 +172,20 @@ a PASS that mentions it, and a zero-touch window with nothing accepted is
 Scope: the release walk only. The runtime walk keeps the same empty-window hole and
 tolerates glob bullets (`docs/evidence/wave1c-facts.md` W18, W22) — widening it here
 would have been the check extending its own reach because other code was nearby.
+
+## 2026-09-23 01:50 (+10:00): a filename witness is not a structural test — two SKIPs where one assertion stood
+
+Decided by: qoder-cli on wave 1d's own review (finding X1). `governing copy`
+recognised "this is the skill's source checkout" from `scripts/init_sync.py` being
+present and called that structural. It is a name, and two different trees answer to
+it: a project owning its own `scripts/init_sync.py`, and a real checkout whose
+`scripts/` twins were deleted. The first was held permanently red over twins it never
+had; the fix then made the second report `SKIP(not-source-checkout): this tree is an
+install rather than the skill's own checkout` — a sentence the tree does not support.
+Rationale: the check cannot tell them apart from inside the tree, so it says which of
+the two it cannot decide (`SKIP(undecidable-source-walk)`) and compares nothing,
+rather than choosing the reading that keeps the line quiet. One shared name is still
+the checkout, so a lone drifted twin stays a FAIL (D-9, the case no test had).
+Scope: the release walk got the same anchor guard this stage (`_base_conflicts`
+shared), and four ways that guard does not fire are listed in
+`docs/evidence/wave1d-queue.md` Q14 rather than being described as enforcement.

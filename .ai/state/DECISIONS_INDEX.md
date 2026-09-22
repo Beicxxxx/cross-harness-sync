@@ -15,3 +15,4 @@
 | 2026-09-22 | Cross-family review is a preference; a same-family downgrade must be recorded | DECISIONS.md |
 | 2026-09-22 | A record verdict and its stage lifecycle are two fields (`verdict` vs `status`); retiring a stage must not retract its coverage | DECISIONS.md |
 | 2026-09-22 | Accepted release records must declare `window_start_commit`; a moved anchor that drops their commits is a FAIL, not a quieter PASS | DECISIONS.md |
+| 2026-09-23 | `governing copy` names its ambiguity with two SKIP tokens: a borrowed filename and a deleted source walk are not the same tree, and neither is a pass | DECISIONS.md |

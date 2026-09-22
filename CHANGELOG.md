@@ -59,9 +59,10 @@ that order: a queue a reader cannot open is not a queue.
   echo of the offending argument and the exit code.
 - **Published figures re-measured, not carried forward.** A default install ends
   `== 21/27 checks passed, 6 skipped ==`; after `--migrate`,
-  `== 22/27 checks passed, 5 skipped ==` (both measured at `7b44120` on this host,
+  `== 22/27 checks passed, 5 skipped ==`. Both are recorded in
+  `docs/evidence/wave1d-facts.md` (V2, V3) with the commit each was measured on,
   and pinned by name in `tests/test_authorization_records.py`, which is the
-  tripwire that pulls whenever a check arrives). The sixth skip is
+  tripwire that pulls whenever a check arrives. The sixth skip is
   `governing copy`, and it names the reason above.
 
 ### What this wave did not fix, in print
@@ -82,7 +83,8 @@ protocol made illegal in `extra_checks` and has not yet made illegal here.
 `--migrate` refuses at exit 2 while another agent holds the writer lock. The
 refusal names the holder, its expiry, and the three remedies that exist
 (wait / coordinate / `--force --reason "<why>"`, which records the takeover in the
-lock itself) — measured at `7b44120`, output quoted in the queue's Q7 row. Wave
+lock itself) — reproduced, and its output quoted in the queue's Q7 row and in
+`docs/evidence/wave1d-facts.md` V7 with the tree it was measured on. Wave
 1b's ledger filed that as a missing "release the lock first" hint; there is no
 such hint to add, because releasing someone else's pen is not a thing the protocol
 offers. What *is* owed and now written down is the behavior itself, in

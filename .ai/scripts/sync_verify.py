@@ -37,10 +37,12 @@ not hardcoded here. Checks, in order:
      bytes on both streams is a SKIP, never a pass; e.g. a freeze verifier)
   10. The copy that RUNS is the copy that SHIPS: every `.ai/scripts/*.py` must be
      byte-identical to its twin in this checkout's `scripts/` (`governing copy`).
-     A tree is read as the skill's own checkout only when `scripts/init_sync.py`
-     is there AND at least one installed name appears in `scripts/`; anywhere else
-     the check SKIPs by name — an ordinary install has no in-tree source to compare
-     against, and `scripts/` full of the project's own code is not one.
+     Two SKIPs, because two different trees ask for one: `not-source-checkout` when
+     `scripts/init_sync.py` is absent (an ordinary install has no in-tree source),
+     and `undecidable-source-walk` when the installer's name is present but none of
+     the installed names are — which is either an unrelated `scripts/` that borrowed
+     the filename or a source walk whose twins were deleted, and no comparison is
+     made either way.
 
 Exit 0 = every check that ran passed, 1 = at least one FAIL, 2 = no verdict
 (`ai_common.py` missing, install root unresolvable, config unusable). Every check prints
@@ -1031,10 +1033,15 @@ def check_governing_copy() -> None:
     `scripts/` directory does not — but it says it by FILENAME, and a filename can
     be taken: a project that keeps its own `scripts/init_sync.py` is an ordinary
     install, and the single-file witness alone read it as this repository's and
-    held it red over three "missing" twins it never had (D-7). So the second half
-    is that at least one installed name must actually appear in `scripts/`: zero
-    shared names is a directory holding something else, one shared name is enough
-    to be the source, and a lone missing twin stays the FAIL it was (D-4).
+    held it red over three "missing" twins it never had (D-7). So a second condition
+    asks that at least one installed name appear in `scripts/`, and the two together
+    give three honest outcomes: no witness is an install (`not-source-checkout`);
+    witness but no installed name is UNDECIDABLE, because a real source walk whose
+    twins were all deleted looks exactly like a stranger's `scripts/` that borrowed
+    the filename, and the line says which of the two it cannot tell rather than
+    picking one (`undecidable-source-walk`); and one shared name is the checkout,
+    where a drifted twin is a FAIL even if it is the only one left (D-9) and a
+    stranded copy is one too (D-4).
 
     Coverage limit, said rather than assumed: this checks that what RUNS matches
     what is in `scripts/`. It does not check the reverse direction — a source file
@@ -1048,6 +1055,13 @@ def check_governing_copy() -> None:
     inst_dir = AI_DIR / "scripts"
     rel_src = src_dir.relative_to(ROOT).as_posix()
     rel_inst = inst_dir.relative_to(ROOT).as_posix()
+    # Both this arm and an empty `installed` below are unreachable by layout:
+    # `resolve_roots()` refuses to run this script from anywhere but a real
+    # `<root>/.ai/scripts/`, and `ai_common` was imported from that directory two
+    # lines above, so the directory exists and holds at least one `.py`. Named here
+    # because the alternative is a reader re-deriving that each time the order of
+    # these three guards is questioned — it is the order, not the conditions, that
+    # decides which of them can ever be seen.
     if not inst_dir.is_dir():
         record("governing copy", False,
                f"{rel_inst}/ is not a directory while {rel_src}/ is a source walk: "
@@ -1057,19 +1071,26 @@ def check_governing_copy() -> None:
     installed = sorted(inst_dir.glob("*.py"), key=lambda p: p.name)
     shared = [p.name for p in installed if (src_dir / p.name).is_file()]
     witness = (src_dir / SOURCE_CHECKOUT_WITNESS).is_file()
-    if not witness or not shared:
-        # Named, not silent: an ordinary install of this protocol has no in-tree
-        # source, and reporting PASS about a comparison that never happened is the
-        # fail-open this wave's whole existence is a reply to.
-        reasons = []
-        if not witness:
-            reasons.append(f"no {rel_src}/{SOURCE_CHECKOUT_WITNESS} is here")
-        if installed and not shared:
-            reasons.append(f"{rel_src}/ shares no file name with {rel_inst}/")
+    if not witness:
         record("governing copy", None,
-               f"SKIP(not-source-checkout): {'; '.join(reasons)}, so this tree is "
-               f"an install rather than the skill's own checkout and there is no "
-               f"source to compare {rel_inst}/ against")
+               f"SKIP(not-source-checkout): no {rel_src}/"
+               f"{SOURCE_CHECKOUT_WITNESS} is here, so this tree is an install "
+               f"rather than the skill's own checkout and there is no source to "
+               f"compare {rel_inst}/ against")
+        return
+    if not shared:
+        # The witness is a NAME and a name can be taken, so two different trees
+        # arrive here: a project that happens to own `scripts/init_sync.py`, and a
+        # real source checkout whose `scripts/` twins were deleted. Nothing in this
+        # tree tells them apart, so the line says that instead of picking the
+        # reading that happens to be comfortable — and neither is booked as a pass.
+        record("governing copy", None,
+               f"SKIP(undecidable-source-walk): {rel_src}/{SOURCE_CHECKOUT_WITNESS} "
+               f"is present but {rel_src}/ holds none of the "
+               f"{len(installed)} installed name(s), so this check cannot tell "
+               f"'{rel_src}/ is unrelated code that borrows the installer's "
+               f"filename' from 'the source side of these copies was deleted'; "
+               f"neither reading is a pass and neither is compared")
         return
     problems = []
     matched = 0
