@@ -78,10 +78,10 @@ from typing import NamedTuple
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     from ai_common import (AUTHORIZATIONS_SUBDIR, DEFAULT_REQUIRED_FILES,
-                           RECORD_CLOSED, REQUIRED_FILE_FLOOR, RepoError,
-                           SHA_HEX_LEN, authorization_records, checkout_layout,
-                           commit_exists, decode, is_accepted,
-                           parse_governance_block, protect_stdio, record_status,
+                           REQUIRED_FILE_FLOOR, RepoError, SHA_HEX_LEN,
+                           authorization_records, checkout_layout,
+                           commit_exists, decode, is_accepted, is_live_stage,
+                           parse_governance_block, protect_stdio,
                            resolve_roots, run_argv, run_git,
                            with_required_file_floor, worktree_listing)
 except ImportError:
@@ -887,7 +887,10 @@ def _record_state(fields):
         return "legacy", "governance: absent"
     if not is_accepted(fields):
         return "declined", f"verdict: {fields.get('verdict') or '(no verdict key)'}"
-    if record_status(fields) == RECORD_CLOSED:
+    if not is_live_stage(fields):
+        # Reached only when `verdict: accepted` and `status: closed` together,
+        # because liveness is decided by the same predicate `swarm boundary`
+        # uses -- one definition of "live writer", two readers.
         return "closed", ("status: closed (a finished stage: not the live writer "
                           "the boundary counts, still the authority over the "
                           "commits it names)")

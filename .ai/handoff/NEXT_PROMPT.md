@@ -49,7 +49,7 @@ ONE commit, because each verdict change alone is a self-approval:
 - `status: closed` on `.ai/state/authorizations/2026-09-22-wave1b-dogfood.md` —
   NOT its `verdict`, which is what covers wave 1b's own protected touches;
 - `python .ai/scripts/sync_verify.py` then exits 0 with no FAILED line. W19 holds
-  the dry-run measurements that define the gap (30 / 5 / 11 of 39, and 45 / 43 here).
+  the dry-run measurements that define the gap, each anchored to its tree.
 
 Merging PR #3 and #4 stays the user's call, in those terms.
 ## Then: wave 1c's deferred list

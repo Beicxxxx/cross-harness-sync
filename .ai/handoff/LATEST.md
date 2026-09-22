@@ -46,16 +46,16 @@
 ## 3. Evidence pointers
 
 - `docs/evidence/wave1c-facts.md` — W1…W23, each measured on this tree: the
-  red-at-base runs, the stale counts a reviewer caught (six now, W22's included),
-  and the acceptance dry-run (W19) that found the lifecycle defect.
+  red-at-base runs, the stale counts reviewers caught (W13, W17, W19, W22 are the
+  ones named in the file), and the acceptance dry-run (W19) that found the defect.
 - `docs/release-authorizations/2026-09-22-wave1c-product-changes.md` — what ships
   and why, authorised outside the runtime record.
 
 ## 4. Warnings
 
-- `python .ai/scripts/sync_verify.py` reads `== 25/27 ==` with `FAILED: path
-  coverage, release authorization`, and that is the mechanism rather than a
-  regression: a pending record certifies nothing. W19 holds the three measurements
+- `python .ai/scripts/sync_verify.py` names `path coverage, release authorization`
+  as FAILED, and that is the mechanism rather than a regression: a pending record
+  certifies nothing. Its counts are this tree's; run it. W19 holds the three measurements
   that locate the gap and the one rehearsal (reverted) that closes it.
 - `.ai/scripts/*` is synced by hand and has no drift check, so a green
   `sync_verify` does not prove the installed verifier matches `scripts/`.
