@@ -54,11 +54,10 @@
 
 ## 4. Warnings
 
-- `protected_paths` dropped `scripts/*` and `templates/*`, so `path coverage` counts
-  this repository's evidence commits only: `2 uncovered of 10 protected touches`,
-  rc 1, because the stage record is `pending` and an unaccepted record certifies
-  nothing. That FAIL is the mechanism, not a defect to argue away. What is genuinely
-  missing is a guard for the release face — see §2.
+- `protected_paths` dropped `scripts/*` and `templates/*`, so the walk counts this
+  repository's evidence commits alone and reads FAIL with rc 1 while the record is
+  `pending` — an unaccepted record certifies nothing, which is the mechanism working.
+  What is genuinely missing is a guard over the release face; see §2.
 - `.ai/scripts/*.py` was synced by hand this time and still has no drift check, so a
   green `sync_verify` does not prove the installed verifier matches `scripts/`.
 - Counts are pinned in three places at once (fresh, migrated, this repo). A new check
