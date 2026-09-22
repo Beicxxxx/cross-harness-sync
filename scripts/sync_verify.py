@@ -274,6 +274,9 @@ KEY_SHAPES = {
     "protected_paths": list,
     "protected_paths_case": str,
     "authorizations_dir": str,
+    "release_paths": list,
+    "release_authorizations_dir": str,
+    "release_window_start_commit": str,
     "role_policy_sha256": str,
     "governance": dict,
 }
@@ -460,7 +463,10 @@ def _check_shape(key: str, val) -> None:
         raise ConfigError(f"malformed: config key {key!r} must be a "
                           f"repo-relative path inside the checkout, got "
                           f"{val!r}")
-    if key == "authorizations_dir" and not _is_repo_relative_path(val):
+    if key in ("authorizations_dir", "release_authorizations_dir")             and not _is_repo_relative_path(val):
+        # `release_authorizations_dir` decides which files may authorise a
+        # publication, so an escaping path is the same hole one key over: one line
+        # would point the verifier at another tree's records and still print PASS.
         # Same class, one key over: this one retargets the RECORD SOURCE every
         # governance check reads, so an absolute or escaping path would let one
         # config line point the verifier at another tree's authorizations and
@@ -1195,6 +1201,39 @@ def _protected_set_is_void(pathspec):
     return (not [b for b in res.stdout.split(b"\x00") if b]), None
 
 
+def _degenerate_empty_window(window: str, pathspec):
+    """Why a walk that saw zero touches may be governing nothing, or None if not.
+
+    `(kind, evidence)` with kind in {"fail", "skip"}; None means the empty answer is
+    a genuinely quiet window and may be reported as coverage.
+
+    Called by `release authorization` only, and that is a scope decision rather than
+    an oversight: `test_a_protected_set_that_does_match_tracked_files_books_the_pass`
+    anchors at the tip on purpose and expects a PASS for a window with no protected
+    commit, so the same three lines turned two settled runtime-walk tests red. The
+    walk over this repository's own state has the hole as well. It is recorded in
+    `.ai/state/DECISIONS.md` and left alone here, because a check's reach should not
+    be widened by whatever else this PR happens to be touching.
+
+    Both shapes below produce the same permanently-green figure as a real quiet
+    window -- zero candidates, zero touches, one PASS -- and spec 4 forbids reading
+    either of them as a verdict.
+    """
+    tip = ai_common.run_git(ROOT, ["rev-parse", "HEAD"], timeout=15)
+    if tip.ok and tip.out().strip() == window:
+        return "fail", ("the window anchor IS the current tip (" + window[:8] +
+                         "), so `<anchor>..HEAD` is empty by construction and can "
+                         "cover nothing: name the commit before the first change "
+                         "meant to be governed")
+    void, void_why = _protected_set_is_void(pathspec)
+    if void_why is not None:
+        return "fail", ("cannot determine whether the registered set matches "
+                        f"anything: {void_why} -- not knowing is not a clean verdict")
+    if void:
+        return "skip", None
+    return None
+
+
 def check_coverage_walk(cfg: dict) -> None:
     """spec 6.3: every protected-path touch in the window is covered by an
     ACCEPTED authorization's own `## Editable files` list.
@@ -1369,7 +1408,7 @@ def check_release_authorization(cfg: dict) -> None:
         return
     touched = sorted(set(_walk_touches(nonmerge) + _walk_touches(merges)))
 
-    directory = ROOT / rel_dir
+    directory = ROOT / Path(rel_dir)
     try:
         entries = sorted(p for p in directory.iterdir()
                          if p.suffix.lower() == ".md" and p.name.upper() != "INDEX.MD")
@@ -1396,6 +1435,38 @@ def check_release_authorization(cfg: dict) -> None:
             accepted += _section_bullets(text, "Editable files")
         else:
             pending += 1
+
+    if not touched:
+        # Same predicate, one extra arm: a quiet release window whose only record
+        # could not be read is "cannot determine", and the shared helper has no way
+        # to know a record was unreadable.
+        kind, evidence = _degenerate_empty_window(window, pathspec) or (None, None)
+        if kind == "fail":
+            record("release authorization", False,
+                   f"{evidence} (an empty range is not authorisation)")
+            return
+        if unreadable:
+            record("release authorization", None,
+                   f"SKIP(release-records-unreadable): the window is quiet and "
+                   f"{len(unreadable)} record(s) could not be read "
+                   f"({', '.join(unreadable[:3])}) -- nothing was confirmed here, "
+                   "and an unreadable authorisation is not an absent one that proves "
+                   "there is nothing to publish")
+            return
+        if kind is None:
+            record("release authorization", True,
+                   f"0 release-face touches covered ({len(entries)} record(s) in "
+                   f"{rel_dir})")
+            return
+        print("[WARN] release authorization: no tracked file matches any of the "
+              f"{len(paths)} release_paths pattern(s), so this line governs nothing")
+        record("release authorization", None,
+               "SKIP(void-release-set): no tracked file matches any release_paths "
+               f"pattern ({', '.join(paths[:6])}"
+               f"{', ...' if len(paths) > 6 else ''}) -- a typo'd release set is "
+               "permanently green, which is exactly how it hides (spec 4: named, "
+               "never PASS)")
+        return
 
     uncovered = [(sha, rel) for sha, rel in touched
                  if not ai_common.glob_match(rel, accepted,

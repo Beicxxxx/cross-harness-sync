@@ -196,6 +196,9 @@ never block, never write state files — hooks remind, the agent writes.
   "protected_paths": [],
   "protected_paths_case": "case-sensitive",
   "authorizations_dir": ".ai/state/authorizations",
+  "release_paths": [],
+  "release_authorizations_dir": "docs/release-authorizations",
+  "release_window_start_commit": "",
   "role_policy_sha256": "",
   "governance": { "window_start_commit": "" }
 }
@@ -268,6 +271,20 @@ never block, never write state files — hooks remind, the agent writes.
   `INDEX.md` set aside case-insensitively because an index is not an
   authorization. A record in a subdirectory is seen by neither command — one
   agreement, not two near-misses; keep one file per stage in this directory.
+- `release_paths`: what the repository PUBLISHES, as forward-slash globs — empty
+  by default, because most projects ship nothing of theirs to other people. Separate
+  from `protected_paths` on purpose: that list governs how a stage may edit this
+  tree, while a release face needs an authorisation nobody reading the runtime records
+  could write. Register shipped code in both and the distinction collapses.
+- `release_authorizations_dir`: where those records live, repo-relative and inside
+  the checkout. The same shape refusal as `authorizations_dir` applies, because one
+  key choosing where authorisation is read from is one key that could read another
+  tree's records and still print `[PASS]`.
+- `release_window_start_commit`: the commit before the first release-face change to
+  govern, falling back to `governance.window_start_commit`. Give it its own anchor
+  when the concept arrived later than the history: sharing the runtime window made
+  this repository report 46 uncovered of 46, most of them predating the rule.
+
 - `role_policy_sha256`: the digest `.ai/state/ROLE_POLICY.md` must hash to. `""`
   means not pinned and the check is `SKIP(no-sha-pinned)`; anything else must be
   64 lowercase hex characters or the config is refused at exit 2 (`malformed:

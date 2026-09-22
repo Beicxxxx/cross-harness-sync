@@ -38,6 +38,15 @@ def setup(repo, **keys):
     return base
 
 
+def empty_release_dir(repo):
+    """The directory exists and holds only its index: an empty source, not a missing one."""
+    directory = repo / "docs" / "release-authorizations"
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "INDEX.md").write_text("# index", encoding="utf-8")
+    git(repo, "add", str(directory.relative_to(repo).as_posix()))
+    git(repo, "commit", "-q", "-m", "docs: open the release directory")
+
+
 def write_release_record(repo, verdict, editable="`scripts/*`", name="2026-09-22-ship.md"):
     directory = repo / "docs" / "release-authorizations"
     directory.mkdir(parents=True, exist_ok=True)
@@ -124,3 +133,67 @@ def test_c4_6_an_unreadable_record_is_neither_absent_nor_accepted(ai_repo, tmp_p
     res = run(ai_repo)
     found = line(res, "[FAIL] release authorization:")
     assert found and "unreadable" in found, res.lines
+
+
+def test_c4_7_a_misspelled_release_set_governs_nothing(ai_repo):
+    """`scrips/*` matches nothing, so the walk would report a clean 0 of 0.
+
+    `path coverage` already refuses this shape through `_protected_set_is_void`;
+    copying that guard is the point, because a permanently green line is how a typo
+    hides. Named SKIP, never PASS.
+    """
+    setup(ai_repo, release_paths=["scrips/*"])
+    empty_release_dir(ai_repo)
+    res = run(ai_repo)
+    assert line(res, "[PASS] release authorization:") is None, res.lines
+    skip = line(res, "[SKIP] release authorization:")
+    assert skip and "void-release-set" in skip, res.lines
+
+
+def test_c4_8_an_anchor_at_the_tip_is_not_a_window(ai_repo):
+    """`window = HEAD` makes `HEAD..HEAD` empty, which is a config error wearing a verdict.
+
+    The shape predicate accepts a 40-hex tip, so this passes the older guard and
+    books `PASS, 0 touches covered` while an unauthorised shipped commit sits in the
+    range the operator meant to write.
+    """
+    setup(ai_repo, release_paths=["scripts/*"])
+    empty_release_dir(ai_repo)
+    # The anchor has to BE the tip at run time; taken before setup() commits, the
+    # seed sha is merely older than the tip and the window is legitimately empty.
+    head = git(ai_repo, "rev-parse", "HEAD").strip()
+    cfg_path = ai_repo / ".ai" / "sync_config.json"
+    cfg = json.loads(cfg_path.read_text("utf-8"))
+    cfg["release_window_start_commit"] = head
+    cfg_path.write_text(json.dumps(cfg, indent=2) + chr(10), encoding="utf-8")
+    res = run(ai_repo)
+    assert line(res, "[PASS] release authorization:") is None, res.lines
+    bad = line(res, "[FAIL] release authorization:")
+    assert bad and "tip" in bad, res.lines
+
+
+def test_c4_9_the_release_directory_cannot_point_outside_the_repo(ai_repo):
+    """One config key retargets the authorisation SOURCE; it must be repo-relative.
+
+    `authorizations_dir` learned this the hard way (an escaping path let one line
+    read another tree's records and still print PASS). A new sibling key with the
+    same power needs the same refusal on the day it is written, not later.
+    """
+    setup(ai_repo, release_paths=["scripts/*"],
+          release_authorizations_dir="../elsewhere-authorizations")
+    res = run(ai_repo)
+    assert res.rc == 2, (res.rc, res.lines[-6:])
+
+
+def test_c4_10_an_unreadable_record_is_not_a_clean_window(ai_repo):
+    """Zero touches plus a record we could not read is 'cannot determine', not clean."""
+    setup(ai_repo, release_paths=["docs/nosuch/*"])
+    write_release_record(ai_repo, "accepted")
+    target = ai_repo / "docs" / "release-authorizations" / "2026-09-22-ship.md"
+    target.write_bytes(b"\xff\xfe\xfa not utf-8 at all\n")
+    git(ai_repo, "add", "-A")
+    git(ai_repo, "commit", "-q", "-m", "test: unreadable release record")
+    res = run(ai_repo)
+    assert line(res, "[PASS] release authorization:") is None, res.lines
+    skip = line(res, "[SKIP] release authorization:")
+    assert skip and "unreadable" in skip, res.lines
