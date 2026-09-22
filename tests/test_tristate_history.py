@@ -227,7 +227,16 @@ def test_log_paths_distinguishes_no_commits_from_failure(repo):
     bad_paths, bad_err = ai.log_paths(repo, ["--no-merges", "definitely-not-a-ref"],
                                       ["docs"])
     assert bad_paths is None
-    assert bad_err and "git log" in bad_err, bad_err
+    # The contract is WHAT the caller can act on, not which prefix our f-string
+    # happens to type (M-5: this asserted the substring `"git log"`, which stays
+    # green if the reason loses everything else and goes red if it is reworded
+    # while still telling the operator all they need). Measured on this host:
+    # `git log rc=128: fatal: bad revision 'definitely-not-a-ref'`. The exit code
+    # is the fact `None` cannot carry, and git's own words — which echo the
+    # offending argument — are the difference between "a query failed" and
+    # "this one, like this".
+    assert bad_err and "definitely-not-a-ref" in bad_err, bad_err
+    assert "128" in bad_err, bad_err
 
 
 def test_log_paths_survives_a_quoting_hostile_path(repo):

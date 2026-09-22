@@ -813,3 +813,43 @@ def test_splice_json_refuses_a_parent_segment_that_is_not_an_object():
     flat = '{\n  "budgets": {\n    "CURRENT.md": 60\n  }\n}\n'
     assert init_sync._splice_json(
         flat, [(("governance", "window_start_commit"), '"x"')]) == flat
+
+
+# ------------------------------------------- M-2 / queue Q4: the named arm ---
+#
+# `wave1d-queue.md` row Q4 records that this branch of `_migration_commit` was
+# written in wave 1b's final review and shipped untested: a commit HAD landed, so
+# returning `False` would have been its own lie, and returning an unqualified
+# `True` would have printed `0 path(s) committed` while the containment recheck —
+# driven by that same empty list — silently did not run. The case below is the
+# one that makes the third option, "say which of the two you did not see",
+# load-bearing rather than a comment.
+
+
+def test_a_failed_post_commit_listing_names_the_recheck_it_skipped(
+        tmp_path, monkeypatch):
+    repo = installed(make_repo(tmp_path))
+    (repo / ".ai" / "state" / "CURRENT.md").write_text(
+        "# written by the migration\n", encoding="utf-8")
+    real = init_sync.run_git
+
+    def failing_show(root_, args, timeout=60):
+        if args and args[0] == "show":
+            return ai_common.GitResult(rc=128, stdout=b"",
+                                       stderr=b"simulated: cannot read object",
+                                       timed_out=False)
+        return real(root_, args, timeout=timeout)
+
+    monkeypatch.setattr(init_sync, "run_git", failing_show)
+    ok, detail = init_sync._migration_commit(repo, "2.0.0")
+    # A commit did land, and the return value says so: failing here would tell the
+    # operator to revert something that is not in history in the way they think.
+    assert ok is True, detail
+    assert "listing unavailable" in detail, detail
+    assert "recheck did not run" in detail, detail
+    # The lie this arm exists to prevent: an empty list read as a clean commit.
+    assert "0 path(s) committed" not in detail, detail
+    assert "simulated" in detail, detail
+    monkeypatch.setattr(init_sync, "run_git", real)
+    files = commit_files(repo)
+    assert files and all(f.startswith(".ai/") for f in files), files

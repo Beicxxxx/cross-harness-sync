@@ -84,14 +84,15 @@ not. Declare project-specific checks in `.ai/sync_config.json`, run
 `python .ai/scripts/sync_verify.py` until `FAILED:` is absent and every line
 reads `[PASS]` or a named `[SKIP]`, then commit and push. A default install
 registers no project checks and declares no protected paths, so it ends
-`== 21/26 checks passed, 5 skipped ==` at exit 0 (measured on the tree this file
+`== 21/27 checks passed, 6 skipped ==` at exit 0 (measured on the tree this file
 ships in). The
-five skips are `registered project checks`, `path coverage`
+six skips are `registered project checks`, `governing copy`
+(`SKIP(not-source-checkout)`), `path coverage`
 (`SKIP(no-protected-paths)`), `release authorization`
 (`SKIP(no-release-paths)`), `pin violation` (`SKIP(no-authorizations)`) and
 `role policy integrity` (`SKIP(no-sha-pinned)`), and each names which reason it
 took. The same install after `python scripts/init_sync.py <repo> --migrate`
-reads `== 22/26 checks passed, 4 skipped ==`. Neither figure is a failure to fix
+reads `== 22/27 checks passed, 5 skipped ==`. Neither figure is a failure to fix
 and neither is green — nothing in this protocol can be green, only named.
 `rc == 0` is never sufficient; read the lines.
 
@@ -219,14 +220,19 @@ from the skill repo.
 - `scripts/sync_verify.py` — config-driven health check, in this order:
   `install layout`, `git usable` / `git repository`, `config readable`,
   `registered project checks`, `required <file>` (+ `required-file floor`),
-  `protocol version readable` (a stamp that disagrees with the installed scripts
-  prints the FAIL `protocol version matches installed scripts` **instead of** that
-  PASS, so a healthy run and a skewed run each show one protocol-version line),
+  `unfilled template slots`, `protocol version readable` (a stamp that disagrees
+  with the installed scripts prints the FAIL `protocol version matches installed
+  scripts` **instead of** that PASS, so a healthy run and a skewed run each show
+  one protocol-version line),
   `budget <file>` (+ `cap opt-out <file>`),
   `budget DECISIONS active entries`, `secret ignored: <file>`,
-  `secret mirror <a> vs <b>`, then the governance checks — `path coverage`,
-  `pin violation`, `role policy integrity`, `swarm boundary` — and then
-  `extra_checks`. Check 0 is booked as a PASS,
+  `secret mirror <a> vs <b>`, `extra_checks`, `governing copy` (every
+  `.ai/scripts/*.py` against its twin in this checkout's `scripts/`, which is
+  what distinguishes the verifier that ran from the verifier this tree ships;
+  SKIPs by name in an install that is not the skill's own checkout), then the
+  record-reading governance checks — `path coverage`,
+  `release authorization`, `pin violation`, `role policy integrity`,
+  `swarm boundary`. Check 0 is booked as a PASS,
   not left silent: a report that never mentions `install layout` did not run the
   gate, and a report that mentions it did.
 - `scripts/init_sync.py` — scaffold the `.ai/` tree into a repo, from the skill

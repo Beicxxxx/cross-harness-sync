@@ -1,90 +1,99 @@
-# Next Prompt — wave 1c is accepted; the deferred list is what remains
+# Next Prompt — wave 1d is pushed and open as PR #5; only the owner's merge is left
 
 You are the single active implementation executor. Read, in order:
-`.ai/state/ROLE_POLICY.md` (tiers, R1–R7 — R3 and R5 were reconciled on
-2026-09-22, so cross-family is a recorded preference, not a gate);
-`.ai/state/CURRENT.md` §5 and `.ai/state/BLOCKERS.md`; both wave-1c records
-(`.ai/state/authorizations/2026-09-22-wave1c.md` for the runtime face,
-`docs/release-authorizations/2026-09-22-wave1c-product-changes.md` for what ships);
-spec §2 (publishing red lines) under `docs/superpowers/specs/`. One rule shapes
-every step below: `scripts/` and `templates/` ship to other people, so they are
-authorised in `docs/release-authorizations/` and never by a record under
-`.ai/state/authorizations/` — the user's ruling of 2026-09-22, and
-`release authorization` enforces the separation now.
+`.ai/state/CURRENT.md` §2-3, `.ai/state/TASK.md`, `.ai/state/BLOCKERS.md` (binding
+disclosures), `.ai/state/ROLE_POLICY.md` §1-3, and the two wave-1d records:
+`.ai/state/authorizations/2026-09-22-wave1d.md` (runtime face) and
+`docs/release-authorizations/2026-09-22-wave1d-product-changes.md` (release face).
+Spec §2 (publishing red lines) is under `docs/superpowers/specs/`.
 
-## Where the branch stands
+## There is nothing to do here until the owner decides
 
-On `v2.1-wave1c-release-gate` (stacked on `v2.1-wave1c-governance-defects`; PR #3
-then PR #4), pushed through `4e99840`/`26e2788`:
+`v2.1-wave1d-deferred-queue` is pushed, tip `c9b56cf`-and-after, and open as PR #5
+against `v2.1-wave1c-release-gate`, which is PR #4 against PR #3's branch, which is
+PR #3 against `main`. Merging in that order, tagging, GitHub Release and any version
+bump are the owner's, each asked in its own terms. Do not start a queue row without
+him funding it, and do not "tidy" a document: the last 24 hours on this branch went
+mostly into prose about finished code.
 
-- Three release-face defects fixed red-first in
-  `tests/test_lane_1c_governance.py`: `R3`/`R5` contradicted each other; the shipped
-  instructions ordered `git add -A`; the installer's own slots were copied verbatim
-  and unchecked. `init_sync.py` now resolves only what its repository can know
-  (`git config --local`, never the machine's fallback) and drops ROLE_POLICY
-  section 7 with a `WARN` rather than inventing it.
-- `sync_verify.py` gained the `release authorization` gate
-  (`tests/test_lane_1c_release_gate.py`), and `verdict` was split from `status`:
-  closing a finished stage no longer retracts the coverage its own record grants
-  (`tests/test_swarm_boundary.py`, W19). `.ai/state/ROLE_POLICY.md` is re-pinned.
+If you are asked to continue anyway:
+1. `python .ai/scripts/checkpoint.py --lock --agent <your-name>` — the previous epoch
+   was released at close-out, and re-acquiring overwrites
+   `.ai/runtime/WRITER_LOCK.json`, which `docs/evidence/` cites as a live record.
+2. Re-run `python .ai/scripts/sync_verify.py` before quoting anything from this file.
 
-Two claims in an earlier version of this file were withdrawn: the identity defect
-was never in `templates/AGENTS.md` (it holds a placeholder; the sentence pointing at
-repo history was this repository's own), and the "third template defect" logged from
-it did not exist.
+## Where it actually stands
 
-## What is already closed
+On `v2.1-wave1d-deferred-queue`, tip `425b18b`, working tree clean, both wave-1d
+records `verdict: accepted`, wave 1c's two `accepted` + `status: closed` (closed by
+`status`, never by retracting a verdict — that is what keeps wave 1c's own coverage,
+W19). Measured on that committed tree, this session ran:
 
-Wave 1c is accepted: both records read `verdict: accepted`, the wave-1b dogfood
-record carries `status: closed` (never a rewritten `verdict` — that is what covers
-wave 1b's own touches, W19), and `sync_verify` exits 0 with no FAILED line. Merging
-PR #3 then PR #4 is the user's call, in those terms, as are tag and Release. W24's
-closures were accepted without a fourth pass, and that is disclosed rather than
-smoothed over.
+- `== 28/28 checks passed ==`, no `FAILED:` line;
+- `path coverage: 78 protected touches covered`;
+- `release authorization: 78 release-face (commit, path) pairs covered by accepted
+  record(s) (2 record(s) in docs/release-authorizations)`;
+- `swarm boundary: 3 accepted of 3 records … 1 live, 2 closed`;
+- suite, via its own `extra_checks` line: `538 passed, 5 skipped`.
 
-## Then: wave 1c's deferred list
+`docs/evidence/wave1d-facts.md` V13 prints 75 for coverage, not 78: it was measured on
+the pre-commit tree and says so, and the acceptance commit touched protected paths —
+the mechanism working. Quote neither figure without re-running.
 
-- Wave-1b minors: M-3, M-4, M-5, M-7..M-14; `checkpoint._review_is_sha` accepting
-  uppercase; `_migration_commit`'s post-commit listing check fixed without a test;
-  15 duplicated `_load` helpers across 5 signatures.
-- The governing-copy drift check: `.ai/scripts/*` is the copy that actually runs and
-  nothing detects it diverging from `scripts/`, so a green `sync_verify` is not
-  evidence the installed verifier matches the source — this stage copied by hand.
-  Fix = a drift check, not un-protecting the copy.
-- The stale-grant rule, and `*`-crosses-`/` for runtime records: `_section_bullets`
-  reads a bullet's FIRST path as an `fnmatch` pattern, so enumerate one path per
-  line (a packed bullet grants nothing to its second — W20) and never wildcard an
-  accepted record. Also open: the coverage walk's share of the degenerate-window
-  guard (W18), and a CHANGELOG entry per release document touched.
+## Why this stage took so long, so you do not repeat it
 
-## Hazards that bit this stage
+The code was done long before it was written down. Hours went into prose about the
+code — state files, handoffs, the facts table, the CHANGELOG — and into fixing claims
+in that prose that were false (17 of them across two review passes: a `git show` that
+exits 0 having written nothing treated as evidence; file counts of 23, 13 and 22 where
+one command answers one number; "reviewed by a different model" where no different
+model did it). Two habits caused most of it:
 
-1. Adding a check moves every pinned count (`20/24`→`21/25` fresh,
-   `21/24`→`22/25` migrated). `tests/test_authorization_records.py` is the
-   tripwire; when it pulls, re-measure rather than editing the expectation.
-2. Filling the installer's own slots makes the output differ from its template, so
-   `is_template_shaped()` starts calling every install hand-edited and `--force`
-   refreshes nothing. `installer_slot_lines()` is the fix — do not "simplify" it.
-3. Two host traps: reading `AGENTS.md` as UTF-8 crashed on a GBK file, and `exists()`
-   answers False for files this host merely denies, so it cannot guard that read;
-   `.ai/runtime/WRITER_LOCK.json` holds a released record `docs/evidence/` cites as
-   D5, and re-acquiring overwrites it (epoch 3, released at close-out).
-4. A figure copied from a handoff describes the tree it was written on; W13 and W17
-   are this stage's own instances, `13 uncovered of 13` among them.
-5. A value folded across lines in a `## Governance` block makes §6 reject the whole
-   block — `fields` comes back `{}` and the record can never be accepted (W17).
+- **Measuring, then mutating, then quoting the old green.** Three separate times a
+  total in a file was stale on arrival. Fix: after any commit or file copy, re-run
+  before quoting anything; if you cannot re-run, do not quote.
+- **Treating the description as the deliverable.** A row in a facts table is worth
+  exactly one command's output. If a sentence needs a second sentence to stay true,
+  the first sentence was the problem.
 
-## Mandatory outcome
+## What is left in the queue (not authorized to start)
 
-Every item fails against the tree it is meant to fix, with that output in the PR;
-`sync_verify.py` and `python -m pytest tests/ -n 8 -o addopts= -q` are run after the
-change and reported as they print, not as remembered.
+`docs/evidence/wave1d-queue.md`: Q6 (`_load` duplicated across 15 test files under 5
+signatures), Q8 (a diverged sidecar keeps running the old verifier), Q9 (a spent grant
+never expires inside its window), Q10 (runtime bullets still accept `*`, and `*`
+crosses `/`), Q11 (a typo'd `release_paths` is a silent SKIP), Q12 (`authorizations_dir`
+resolves differently in two readers), Q14 (four ways the window guard does not fire),
+Q15 (a `git show` that exits 0 and writes nothing still reads as a clean commit). Q13
+is not work: eight ids (M-3, M-8..M-14) have no definition any reader can reach. Each
+needs the user's funding before code.
+## Rules that bind every step
+
+- Two authorities. `scripts/`, `templates/`, `tests/`, `README.md`, `SKILL.md` and
+  `reference.md` ship to other people: authorised in `docs/release-authorizations/`
+  and never by a `.ai/state/authorizations/` record. `protected_paths` does not list
+  them, so `path coverage` will not catch the mistake.
+- A number may be published only from the tree it describes. `docs/evidence/` is the
+  citable source; `.superpowers/` is gitignored, so a figure that lives only there is
+  not evidence.
+- Adding a check moves every pinned count; `tests/test_authorization_records.py` is the
+  tripwire. Re-measure — never edit an expectation back to the old number.
+- `check_governing_copy` decides "is this the skill's source checkout" from
+  `scripts/init_sync.py` PLUS at least one shared installed name. Do not simplify it
+  back to one filename test: that version held an innocent install permanently red, and
+  the fix after it called a deleted source walk an install.
+- Windows host: printed strings must stay ASCII (cp936 console); `exists()` answers
+  False for files this host merely denies, so it cannot guard a read; `AGENTS.md` is
+  not necessarily UTF-8; a `## Governance` value folded across lines makes §6 reject
+  the whole block and the record can never be accepted.
+- Line budgets are hard: `CURRENT.md` ≤ 60, `LATEST.md` ≤ 80, `NEXT_PROMPT.md` ≤ 100,
+  `AGENTS.md` ≤ 65.
 
 ## Absolute stop boundary
 
-No tag, no Release, no version bump, no merge of any PR, no push to `main`, no
-change to the user's global git config — not credentials, not anything — without
-the user asking in terms. Never `git add -A`, never `git add -f` the gitignored
-`.superpowers/`, never force-push, never rewrite published history. No
-research-project content in this repository. A figure that exists only under
-`.superpowers/` is not evidence: a reader of the clone cannot reach it.
+No tag, no Release, no version bump, no merge of any PR, no push to `main`, no change
+to the user's global git config — not credentials, not anything — without the user
+asking in terms. Never `git add -A`, never `git add -f` the gitignored
+`.superpowers/`, never force-push, never rewrite published history, never edit an
+accepted record to satisfy a check it now refuses (close the stage, or open a new one).
+Commits carry this repository's LOCAL `user.name`/`user.email` — the owner's GitHub
+identity, not the school address and not the harness. No research-project content here.

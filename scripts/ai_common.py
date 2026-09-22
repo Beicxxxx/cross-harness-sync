@@ -394,6 +394,22 @@ NO_HISTORY = "NO_HISTORY"
 _WINDOW_SHA_RE = re.compile(r"[0-9a-f]{%d}" % SHA_HEX_LEN)
 
 
+def is_full_sha(value) -> bool:
+    """True for a 40-character LOWERCASE hex object id and nothing else.
+
+    The shape question on its own, so every caller that asks "may I treat this
+    field as a commit id" asks the same one. `checkpoint.py`'s review-window
+    predicate carried its own copy of this until wave 1d, and its copy listed
+    `ABCDEF` — which git resolves happily, so the divergence never showed up as a
+    wrong diff. It showed up as the two readers of one config line disagreeing
+    about whether the line says anything at all: the review prompt diffed from an
+    uppercase anchor while `path coverage` FAILed on the same bytes. Lowercase
+    only, because that is what `git rev-parse` writes and what `init_sync.py`
+    refuses to record any other way.
+    """
+    return bool(isinstance(value, str) and _WINDOW_SHA_RE.fullmatch(value))
+
+
 def window_is_valid(value) -> bool:
     """A coverage-window anchor is a 40-lowercase-hex commit id or `NO_HISTORY`.
 
@@ -406,8 +422,7 @@ def window_is_valid(value) -> bool:
     prefixes, uppercase ids and prose all fail the same way: a rev that resolves to
     something else would silently govern a different range than the one recorded.
     """
-    return value == NO_HISTORY or bool(
-        isinstance(value, str) and _WINDOW_SHA_RE.fullmatch(value))
+    return value == NO_HISTORY or is_full_sha(value)
 
 
 def authorization_records(directory):

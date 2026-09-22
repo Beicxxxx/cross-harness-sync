@@ -1,79 +1,78 @@
 # Latest Handoff
 
-> Updated: 2026-09-22 19:55 (+10:00) by qoder-cli: wave 1c is accepted on PR #3
-> and stacked PR #4, and nothing is merged. The gate and the split are the last in.
-> Budget: ≤ 80 lines. Background and boundary statements live in
-> `.ai/state/CURRENT.md` — link, never copy.
+> Updated: 2026-09-23 01:09 (+10:00) by qoder-cli: wave 1d is accepted on both faces
+> and wave 1c is closed by `status`; wave 1c sits on PR #3 + stacked PR #4, and
+> nothing is merged. Budget: ≤ 80 lines; background lives in `.ai/state/CURRENT.md`.
 
 ## 1. Done
 
-- PR #2 merged as `0bc4d7f`, so `main` carries `.ai/`. The §10.D figures belong to
-  the tree `docs/evidence/wave1b-facts.md` describes and are not restated here.
-- The user ruled on a contradiction inside the shipped policy (R3 required a
-  different model family at T2/T3; R5 says family is recorded, never gating).
-  Cross-family is now the default with a **recorded** `same-family` fallback.
-- Four release-face defect groups, each red-first: the R3/R5 contradiction,
-  `git add -A` ordered by the shipped instructions, slots no code ever filled while
-  the unfilled ROLE_POLICY was digest-pinned, and an installer that resolved them
-  from the machine instead of the repository. `tests/test_lane_1c_governance.py`.
-- `sync_verify.py` gained `release authorization`: the shipped surface is now
-  authorised in `docs/release-authorizations/`, not by a record under `.ai/`,
-  with its own window anchor, shape checks, glob refusal and empty-window arms.
-  `tests/test_lane_1c_release_gate.py`.
-- `verdict` and `status` are separate fields (W19): closing a finished stage no
-  longer retracts the coverage its record grants, and `swarm boundary` counts
-  live writers. `scripts/{ai_common,sync_verify,checkpoint}.py`,
-  `templates/AUTHORIZATION.md`, `tests/test_swarm_boundary.py`.
-- The gate's own review then found it advisory where it claimed to be a wall: an
-  unreadable release record sat under a coverage PASS, and `release_window_start_commit`
-  could be moved forward so the dropped commits read as covered. Accepted records must
-  now name their base, an anchor that passed one is a FAIL, and a zero-touch window with
-  nothing accepted is a named SKIP. `tests/test_lane_1c_release_gate.py` C4-18..C4-22.
-- Runtime face kept in step: ROLE_POLICY re-pinned, `AGENTS.md` states the
-  two-face rule, the `.ai/scripts/` copies synced by hand.
+- Wave 1c: accepted on `aecd536`, both faces. Not restated here —
+  `docs/evidence/wave1c-facts.md` W1…W24 is the record of it.
+- Wave 1d, on `v2.1-wave1d-deferred-queue`:
+  - **The deferred queue is a tracked file.** `docs/evidence/wave1d-queue.md`
+    replaced four artifacts' references to "14 minors: M-3, M-4, M-5, M-7..M-14" with
+    fifteen rows, and Q13 says outright that eight of those ids resolve to nothing a
+    reader can reach.
+  - **Check 10, `governing copy`** — every `.ai/scripts/*.py` digests to its twin in
+    `scripts/`, so the verifier reporting the invariant is the file this tree ships;
+    `path coverage` asks only whether an edit was authorised. D-1..D-9.
+  - **The runtime window got the release face's guard** — `_base_conflicts` shared,
+    records read before the walk; Q14 lists the four ways it still does not fire.
+  - **One anchor predicate** (`ai_common.is_full_sha`): `checkpoint`'s
+    uppercase-tolerant copy is gone, which is how the review prompt came to diff from
+    a window the verifier called unreadable. **Q4/Q5** gave two untested arms their
+    cases; **Q7** wrote the `CHANGELOG.md` entries wave 1c owed.
+- **Two fresh-context review passes**, the second aimed at the first one's closures,
+  because wave 1c accepted its own last batch without one (W24). Findings W1-W9 and
+  X1-X8, each with its disposition, are in `docs/evidence/wave1d-facts.md`.
+- **Accepted.** Both wave-1d records read `verdict: accepted` and wave 1c's two read
+  `status: closed` — the last by status, not by rewriting a verdict, which is what
+  keeps wave 1c's own coverage intact. V13 is the verifier and suite on that tree.
 
 ## 2. Not done
 
-- W24's own closures (the live/closed base rule, the unreadable and unanchored
-  arms) were accepted without a fourth pass, because the pass that would review a
-  fix can always ask for one more. Say so in anything that describes this stage.
-- The CHANGELOG entry for the release documents is not written, though
-  `README.md` and `SKILL.md` figures were re-measured.
-- Deferred: 14 wave-1b minors, the governing-copy drift check, the stale-grant
-  rule, `*`-crosses-`/` for runtime records, and the coverage walk's share of the
-  degenerate-window guard (W18 says why it is not wired).
+- One of the two dispatched review passes died in the model service and was not
+  repeated: recorded, not counted as a second review.
+- Left open by decision, in the queue: Q6 (duplicated `_load`), Q8-Q12, Q14, Q15 (a
+  `git show` that exits 0 writing nothing still reads as a clean commit).
 
 ## 3. Evidence pointers
 
-- `docs/evidence/wave1c-facts.md` — W1…W23, each measured on this tree: the
-  red-at-base runs, the stale counts reviewers caught (W13, W17, W19, W22 are the
-  ones named in the file), and the acceptance dry-run (W19) that found the defect.
-- `docs/release-authorizations/2026-09-22-wave1c-product-changes.md` — what ships
-  and why, authorised outside the runtime record.
+- `docs/evidence/wave1d-facts.md` — V1…V13 measured with their commits, and the two
+  finding tables: the citable source for the stage.
+- `docs/evidence/wave1d-queue.md` — what the deferred list actually is. Records:
+  `.ai/state/authorizations/2026-09-22-wave1d.md` (runtime),
+  `docs/release-authorizations/2026-09-22-wave1d-product-changes.md` (ships).
 
 ## 4. Warnings
 
-- `python .ai/scripts/sync_verify.py` exits 0 with no FAILED line and no `[SKIP]`
-  on the accepted tree; it goes red again the moment either verdict is moved back. W19 holds the three measurements
-  that locate the gap and the one rehearsal (reverted) that closes it.
-- `.ai/scripts/*` is synced by hand and has no drift check, so a green
-  `sync_verify` does not prove the installed verifier matches `scripts/`.
-- Counts are pinned in three places (fresh, migrated, this repo);
-  `test_authorization_records.py` is the tripwire. Any figure quoted from a
-  handoff is stale by construction — re-run the command.
+- `python .ai/scripts/sync_verify.py` on the accepted tree prints
+  `== 28/28 checks passed ==` with no `FAILED:` line (V13). Do not carry a total from
+  commits, so every later commit moves them, and `test_authorization_records.py` is
+  the tripwire that pulls when a check arrives or leaves — it pulled this stage.
+- The `Last updated:` headers in the previous two close-out commits ran ~40 minutes
+  ahead of this host's clock; the ones here are rewritten to the real time.
+- The guard binds a record's declared base. `status: closed`, an absent base, an
+  emptied anchor, or a de-accepted `verdict` each stop it binding, and all four are
+  self-reports: Q14, and `templates/AUTHORIZATION.md` says it to whoever writes the
+  record. Do not describe that as enforcement.
+- `governing copy` compares what runs to what is authored: not a stale copy from a
+  hand-edited one, not whether every authored file was installed, and where
+  `scripts/init_sync.py` is a borrowed name it says `SKIP(undecidable-source-walk)`.
+- `.ai/runtime/WRITER_LOCK.json` holds a released record that `docs/evidence/` cites;
+  re-acquiring overwrites it. This stage's epoch is released at close-out.
 
 ## 5. Next step
 
-Wave 1c's remaining work is the deferred list in `.ai/state/TASK.md` §Required
-work 4, and nothing else on this branch. Merging PR #3 then #4 is the user's call,
-in those terms; the acceptance is already committed, with wave 1b carrying
-`status: closed` rather than a rewritten `verdict` (W19) — that is what keeps its
-own commits covered.
+Nothing until the owner decides. The branch is pushed and open as PR #5 against
+`v2.1-wave1c-release-gate` (PR #4), which is PR #3 against `main`: merging in that
+order, tagging and Release are his, and the unfunded queue rows (Q6, Q8-Q12, Q14, Q15)
+need his go-ahead before anyone codes them.
 
 ## 6. Must-read list
 
-- `.ai/state/ROLE_POLICY.md` §1–3 as amended — the rule this stage changed.
-- `docs/evidence/wave1c-facts.md` W6, W10 and W19 — the two-face consequence, the
-  upgrade path breaking it would silently destroy, and the acceptance cycle.
-- `docs/superpowers/specs/2026-09-21-cross-harness-sync-v2.1-design.md` §2 — the
-  publishing red lines, binding on any text that leaves this repo.
+- `docs/evidence/wave1d-queue.md` rows Q14, Q15 and Q13 — the guard's reach, the
+  escape the new test does not close, and the ids that cannot be resolved.
+- `docs/evidence/wave1c-facts.md` W24 — why a review of the closures is a different
+  thing from a review of the code.
+- `.ai/state/ROLE_POLICY.md` §1–3 — tiers and the R3/R5 ruling, before executing.

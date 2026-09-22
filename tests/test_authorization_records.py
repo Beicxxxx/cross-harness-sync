@@ -144,23 +144,27 @@ def test_the_index_is_not_read_as_an_authorization_record(ai_repo, sv):
 def test_the_required_file_flip_moves_the_fresh_install_count_exactly(ai_repo,
                                                                       sv):
     """The count B1 baselined at `== 19/23 checks passed, 4 skipped ==`, then
-    `20/24` at the required-file flip, is now `21/25` at wave 1c's
-    `unfilled template slots` is one more check and one more PASS with no new
-    skip, and wave 1c's `release authorization` then adds one of each: a project
-    that ships nothing registers no `release_paths`, so the extra skip is a named
-    answer, not a machine that failed to look. NO unaccounted skip is the point.
+    `20/24` at the required-file flip, then `21/25` when wave 1c's
+    `unfilled template slots` arrived (one more check, one more PASS, no new
+    skip), then `21/26` when wave 1c's `release authorization` arrived (one of
+    each — a project that ships nothing registers no `release_paths`, so the
+    extra skip is a named answer, not a machine that failed to look), and now
+    `21/27` with wave 1d's `governing copy`, whose skip is named too: a fixture
+    install holds no in-tree `scripts/init_sync.py`, so it is an install and not
+    the skill's own checkout, and there is no source to compare against.
+    NO unaccounted skip is the point.
 
     Exact and positive on purpose (wave 1a's ruling). This is the tripwire the
     required-file flip is supposed to pull — B4 re-measures it against the
     merged tree, and a fourth skip here would mean the index arrived without
-    anything writing it. It has now pulled twice: a fifth check arriving without
-    the installer filling the slots it owns would read as a new SKIP here.
+    anything writing it. It has now pulled three times: each time, a check
+    arriving without its skip being re-measured from the run is what it caught.
     """
     res = run_python(sv, [], cwd=ai_repo)
     assert res.rc == 0, res.stdout + res.stderr
     summary = [ln for ln in res.lines if "checks passed" in ln]
     assert len(summary) == 1, res.lines
-    assert summary[0] == "== 21/26 checks passed, 5 skipped ==", summary[0]
+    assert summary[0] == "== 21/27 checks passed, 6 skipped ==", summary[0]
 
 
 def test_a_migrated_install_moves_only_the_skip_a_sha_pin_answers(tmp_path):
@@ -183,10 +187,10 @@ def test_a_migrated_install_moves_only_the_skip_a_sha_pin_answers(tmp_path):
         assert len(lines) == 1, res.lines
         return lines[0]
 
-    assert summary(run_python(verifier, [], cwd=repo))         == "== 21/26 checks passed, 5 skipped =="
+    assert summary(run_python(verifier, [], cwd=repo))         == "== 21/27 checks passed, 6 skipped =="
     assert scaffold(repo, "--migrate").rc == 0
     after = summary(run_python(verifier, [], cwd=repo))
-    assert after == "== 22/26 checks passed, 4 skipped ==", after
+    assert after == "== 22/27 checks passed, 5 skipped ==", after
 
 
 

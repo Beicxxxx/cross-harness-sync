@@ -46,7 +46,8 @@ def _cfg(repo, **kv):
     path.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
 
 
-def _auth(repo, name, editable, verdict="accepted", pinned=()):
+def _auth(repo, name, editable, verdict="accepted", pinned=(), base=None,
+          status=None):
     adir = repo / ".ai" / "state" / "authorizations"
     adir.mkdir(parents=True, exist_ok=True)
     lines = [f"# Authorization — {name}", "", "## Editable files", ""]
@@ -56,9 +57,14 @@ def _auth(repo, name, editable, verdict="accepted", pinned=()):
         lines += [f"- `{p}`: SHA-256 `{'a' * 64}`" for p in pinned]
     text = "\n".join(lines) + "\n"
     if verdict is not None:
-        text += ("\n## Governance\n\n```governance\n"
-                 "tier: T2\nexecutor: harness-a/model-1\n"
-                 f"reviewer: harness-b/model-2\nverdict: {verdict}\n```\n")
+        block = ("tier: T2\nexecutor: harness-a/model-1\n"
+                 "reviewer: harness-b/model-2\n"
+                 f"verdict: {verdict}\n")
+        if base:
+            block += f"window_start_commit: {base}\n"
+        if status:
+            block += f"status: {status}\n"
+        text += f"\n## Governance\n\n```governance\n{block}```\n"
     (adir / f"{name}.md").write_text(text, encoding="utf-8")
 
 
@@ -622,3 +628,97 @@ def test_an_indeterminate_void_check_cannot_book_the_pass(ai_repo, sv_mod,
     assert "unable to read index" in evidence, evidence
 
 
+
+
+# --------------------------------------- THE NARROWING GUARD (wave 1d Q2) ----
+#
+# `governance.window_start_commit` is one config line, and the walk's reach is
+# exactly that line: moving it forward drops the commits before it out of the
+# range, where they read as neither covered nor uncovered because nothing looks
+# at them any more. The release face closed this in wave 1c (C4-19/C4-20) by
+# asking each accepted record to declare the base it started from and refusing an
+# anchor that has passed one; the runtime face had no such question to ask until
+# runtime records carried `window_start_commit:` too. These four pin the guard
+# and — E-4, the one that keeps an old install working — what it deliberately
+# does NOT do.
+
+
+def _narrowing_tree(repo):
+    """(base, anchor) around one protected commit that only the wider window sees.
+
+    The protected work lands in the commit BEFORE `anchor`, so `anchor..HEAD`
+    walks an empty range: the shape that reads green today and is the whole
+    defect. `base` is what an honest record declares as where its stage began.
+    """
+    base = git(repo, "rev-parse", "HEAD")
+    (repo / "protected").mkdir()
+    (repo / "protected" / "model.py").write_text("x\n", encoding="utf-8")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-q", "-m", "protected work nobody re-authorised")
+    git(repo, "commit", "--allow-empty", "-q", "-m", "the commit a narrowed anchor starts at")
+    return base, git(repo, "rev-parse", "HEAD")
+
+
+def test_an_anchor_past_a_live_records_base_is_a_named_fail(ai_repo, sv):
+    base, anchor = _narrowing_tree(ai_repo)
+    _auth(ai_repo, "live-stage", ["protected/*"], base=base)
+    _cfg(ai_repo, protected_paths=["protected/*"],
+         governance={"window_start_commit": anchor})
+    res = run_python(sv, cwd=ai_repo)
+    fails = [ln for ln in res.lines if ln.startswith("[FAIL] path coverage:")]
+    assert len(fails) == 1, res.lines
+    assert "live-stage.md" in fails[0], fails[0]
+    assert "not at-or-after" in fails[0], fails[0]
+    assert not any(ln.startswith("[PASS] path coverage:") for ln in res.lines), \
+        res.lines
+
+
+def test_an_anchor_at_its_records_base_still_walks(ai_repo, sv):
+    """The control: the red above is the anchor's position, not a guard that
+    cannot read a window at all. Same tree, same record, honest anchor."""
+    base, _anchor = _narrowing_tree(ai_repo)
+    _auth(ai_repo, "live-stage", ["protected/*"], base=base)
+    _cfg(ai_repo, protected_paths=["protected/*"],
+         governance={"window_start_commit": base})
+    res = run_python(sv, cwd=ai_repo)
+    assert any(ln.startswith("[PASS] path coverage: 1 protected touches covered")
+               for ln in res.lines), res.lines
+    assert not any(ln.startswith("[FAIL] path coverage:") for ln in res.lines), \
+        res.lines
+
+
+def test_a_closed_record_does_not_bind_the_window_forever(ai_repo, sv):
+    """W24's finding, mirrored onto the runtime walk: re-anchoring at a new wave is
+    the lifecycle, and holding a finished stage's base in the window for good makes
+    the next wave red with "edit an approved record" as its only exit — strictly
+    worse than the hole it closes. So `status: closed` steps out, and this test
+    exists to keep that exemption from being quietly widened to live records.
+    """
+    base, anchor = _narrowing_tree(ai_repo)
+    _auth(ai_repo, "finished-stage", ["protected/*"], base=base,
+          status="closed")
+    _cfg(ai_repo, protected_paths=["protected/*"],
+         governance={"window_start_commit": anchor})
+    res = run_python(sv, cwd=ai_repo)
+    assert any(ln.startswith("[PASS] path coverage: 0 protected touches covered")
+               for ln in res.lines), res.lines
+
+
+def test_a_record_that_declares_no_base_bounds_nothing(ai_repo, sv):
+    """The asymmetry against the release face, pinned rather than assumed.
+
+    `release authorization` FAILs an accepted live record that states no base,
+    because that field is new and the template has required it from the first
+    release record. Runtime records predate it by three versions, and an accepted
+    one cannot be edited to add a line it never carried — so a missing base here
+    is no claim, and refusing the walk would make every existing install red for
+    its own history. What that leaves unguarded is named in
+    `docs/evidence/wave1d-queue.md` rather than hidden behind this PASS.
+    """
+    _base, anchor = _narrowing_tree(ai_repo)
+    _auth(ai_repo, "older-stage", ["protected/*"])
+    _cfg(ai_repo, protected_paths=["protected/*"],
+         governance={"window_start_commit": anchor})
+    res = run_python(sv, cwd=ai_repo)
+    assert any(ln.startswith("[PASS] path coverage: 0 protected touches covered")
+               for ln in res.lines), res.lines

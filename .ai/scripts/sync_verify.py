@@ -35,6 +35,14 @@ not hardcoded here. Checks, in order:
   9. Extra project checks (config "extra_checks": [{"name", "cmd"}]; PASS iff
      the command exits 0 AND wrote something — an exit 0 that produced zero
      bytes on both streams is a SKIP, never a pass; e.g. a freeze verifier)
+  10. The copy that RUNS is the copy that SHIPS: every `.ai/scripts/*.py` must be
+     byte-identical to its twin in this checkout's `scripts/` (`governing copy`).
+     Two SKIPs, because two different trees ask for one: `not-source-checkout` when
+     `scripts/init_sync.py` is absent (an ordinary install has no in-tree source),
+     and `undecidable-source-walk` when the installer's name is present but none of
+     the installed names are — which is either an unrelated `scripts/` that borrowed
+     the filename or a source walk whose twins were deleted, and no comparison is
+     made either way.
 
 Exit 0 = every check that ran passed, 1 = at least one FAIL, 2 = no verdict
 (`ai_common.py` missing, install root unresolvable, config unusable). Every check prints
@@ -986,6 +994,141 @@ def check_extra(cfg: dict) -> None:
             record(name, res.ok, f"cmd `{label}` rc={res.rc}; {evidence}")
 
 
+# The installer is the one file in a source checkout's `scripts/` that never gets
+# copied into `.ai/scripts/` (`SCRIPT_MAP` in `init_sync.py` lists the other three,
+# and this file is the thing a user runs before there is an `.ai/` to copy into).
+# It is a NAME, and wave 1d's own review showed a name can be taken, so it is only
+# half the answer: see `check_governing_copy` for the second half, which asks that
+# at least one installed name appear in `scripts/` too.
+SOURCE_CHECKOUT_WITNESS = "init_sync.py"
+
+
+def _sha256_or_error(path: Path):
+    """`(digest, error)` for one file, with the read failure kept as a string.
+
+    `FileNotFoundError` is separated from the rest of `OSError` because the two
+    answer different questions below — "this copy has no source" is a different
+    sentence from "this source could not be read" — and neither is a mismatch.
+    """
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest(), None
+    except FileNotFoundError:
+        return None, "missing"
+    except OSError as exc:
+        return None, f"could not be read: {type(exc).__name__}: {exc}"
+
+
+def check_governing_copy() -> None:
+    """Q1: the bytes that ran this report must be the bytes this tree ships.
+
+    `path coverage` cannot answer this. It asks whether an edit was authorised, and
+    a record naming both walks authorises a mismatch as readily as a match — wave
+    1c edited `scripts/` twice and hand-copied it across, going green on each
+    occasion without proving the governing verifier was the one it had written.
+    The invariant here is identity, so it is one comparison per installed file.
+
+    Which tree this is gets answered twice, because one answer was not enough.
+    `scripts/init_sync.py` is the installer, the one file in `scripts/` the
+    installer never copies, so its presence says "source checkout" where a bare
+    `scripts/` directory does not — but it says it by FILENAME, and a filename can
+    be taken: a project that keeps its own `scripts/init_sync.py` is an ordinary
+    install, and the single-file witness alone read it as this repository's and
+    held it red over three "missing" twins it never had (D-7). So a second condition
+    asks that at least one installed name appear in `scripts/`, and the two together
+    give three honest outcomes: no witness is an install (`not-source-checkout`);
+    witness but no installed name is UNDECIDABLE, because a real source walk whose
+    twins were all deleted looks exactly like a stranger's `scripts/` that borrowed
+    the filename, and the line says which of the two it cannot tell rather than
+    picking one (`undecidable-source-walk`); and one shared name is the checkout,
+    where a drifted twin is a FAIL even if it is the only one left (D-9) and a
+    stranded copy is one too (D-4).
+
+    Coverage limit, said rather than assumed: this checks that what RUNS matches
+    what is in `scripts/`. It does not check the reverse direction — a source file
+    that should have been installed and was not — because the list of what the
+    installer copies lives in `init_sync.py`, which is not itself installed, and
+    re-deriving it here would be a second copy of that promise to keep in step.
+    Nor can it tell a stale copy from a hand-edited one; it says only that the two
+    are not the same bytes, and which file.
+    """
+    src_dir = ROOT / "scripts"
+    inst_dir = AI_DIR / "scripts"
+    rel_src = src_dir.relative_to(ROOT).as_posix()
+    rel_inst = inst_dir.relative_to(ROOT).as_posix()
+    # Both this arm and an empty `installed` below are unreachable by layout:
+    # `resolve_roots()` refuses to run this script from anywhere but a real
+    # `<root>/.ai/scripts/`, and `ai_common` was imported from that directory two
+    # lines above, so the directory exists and holds at least one `.py`. Named here
+    # because the alternative is a reader re-deriving that each time the order of
+    # these three guards is questioned — it is the order, not the conditions, that
+    # decides which of them can ever be seen.
+    if not inst_dir.is_dir():
+        record("governing copy", False,
+               f"{rel_inst}/ is not a directory while {rel_src}/ is a source walk: "
+               f"the installed copy this check exists to compare is absent, so "
+               f"nothing here can be said about drift")
+        return
+    installed = sorted(inst_dir.glob("*.py"), key=lambda p: p.name)
+    shared = [p.name for p in installed if (src_dir / p.name).is_file()]
+    witness = (src_dir / SOURCE_CHECKOUT_WITNESS).is_file()
+    if not witness:
+        record("governing copy", None,
+               f"SKIP(not-source-checkout): no {rel_src}/"
+               f"{SOURCE_CHECKOUT_WITNESS} is here, so this tree is an install "
+               f"rather than the skill's own checkout and there is no source to "
+               f"compare {rel_inst}/ against")
+        return
+    if not shared:
+        # The witness is a NAME and a name can be taken, so two different trees
+        # arrive here: a project that happens to own `scripts/init_sync.py`, and a
+        # real source checkout whose `scripts/` twins were deleted. Nothing in this
+        # tree tells them apart, so the line says that instead of picking the
+        # reading that happens to be comfortable — and neither is booked as a pass.
+        record("governing copy", None,
+               f"SKIP(undecidable-source-walk): {rel_src}/{SOURCE_CHECKOUT_WITNESS} "
+               f"is present but {rel_src}/ holds none of the "
+               f"{len(installed)} installed name(s), so this check cannot tell "
+               f"'{rel_src}/ is unrelated code that borrows the installer's "
+               f"filename' from 'the source side of these copies was deleted'; "
+               f"neither reading is a pass and neither is compared")
+        return
+    problems = []
+    matched = 0
+    for inst in installed:
+        rel_inst_path = inst.relative_to(ROOT).as_posix()
+        inst_sum, inst_err = _sha256_or_error(inst)
+        if inst_err:
+            # A copy that cannot be read is not a copy that matched. Wave 1c's
+            # review made this rule explicit for the release walk: `exists()`
+            # answers False for files this host merely denies, so the read itself
+            # is the only witness, and it has to be believed in both directions.
+            problems.append(f"{rel_inst_path} {inst_err}")
+            continue
+        twin = src_dir / inst.name
+        src_sum, src_err = _sha256_or_error(twin)
+        rel_twin = twin.relative_to(ROOT).as_posix()
+        if src_err == "missing":
+            problems.append(f"{rel_inst_path} has no source twin in {rel_twin} -- the "
+                            f"copy that runs has no authored source in this tree")
+        elif src_err:
+            problems.append(f"{rel_twin} {src_err}, so {rel_inst_path} cannot be "
+                            f"compared to it")
+        elif src_sum != inst_sum:
+            problems.append(f"{rel_inst_path} digests to {inst_sum[:12]} but "
+                            f"{rel_twin} to {src_sum[:12]} -- the verifier that "
+                            f"ran this report is not the one this tree ships")
+        else:
+            matched += 1
+    if problems:
+        record("governing copy", False,
+               f"{len(problems)} of {len(installed)} installed files are not the "
+               f"bytes their source says: {'; '.join(problems)}")
+        return
+    record("governing copy", True,
+           f"{matched} installed files byte-identical to their twins "
+           f"in {rel_src}/ (sha-256 over the whole file)")
+
+
 # ---------------------------------------------------------------------------
 # Wave 1b: the governance surface (spec 6.1, 6.2, 6.3 and N1).
 #
@@ -1322,6 +1465,31 @@ def check_coverage_walk(cfg: dict) -> None:
                f"shallow/indeterminate history ({shallow.lower()}): the bounded "
                f"walk cannot certify coverage of window {window[:8]}..HEAD")
         return
+    # The records are read before the walk, not after it, and that ordering is the
+    # guard: a narrowed window sees an empty range, so a check that only ran on the
+    # uncovered-answer path would never be reached by exactly the case it exists to
+    # catch.
+    records, _absent = _authorization_records(cfg)
+    editable = []
+    bases = []
+    for rec in records:
+        if ai_common.is_accepted(rec["fields"]) and rec["text"] is not None:
+            editable += _section_bullets(rec["text"], "Editable files")
+            bases.append((rec["rel"],
+                          str((rec["fields"] or {}).get(
+                              "window_start_commit", "") or "").strip(),
+                          ai_common.is_live_stage(rec["fields"])))
+    conflicts = _base_conflicts(bases, window, "governance.window_start_commit",
+                                require_base=False)
+    if conflicts:
+        record("path coverage", False,
+               f"{len(conflicts)} accepted authorization(s) do not bound the "
+               f"window that was walked: "
+               + "; ".join(f"{name} {why}" for name, why in conflicts)
+               + " -- spec 6.3: the walk can only govern the range it is given, so "
+                 "an anchor moved past a live stage's own base reports that stage's "
+                 "protected work as absent rather than as uncovered")
+        return
     pathspec = _protected_pathspec(paths, cfg)
     rev = f"{window}..HEAD"
     nonmerge, why = ai_common.log_paths(
@@ -1367,11 +1535,6 @@ def check_coverage_walk(cfg: dict) -> None:
                    "renamed protected set governs nothing, and a permanently "
                    "green line is how that hides (spec 4: named, never PASS)")
             return
-    records, _absent = _authorization_records(cfg)
-    editable = []
-    for rec in records:
-        if ai_common.is_accepted(rec["fields"]) and rec["text"] is not None:
-            editable += _section_bullets(rec["text"], "Editable files")
     uncovered = [(sha, rel) for sha, rel in touched
                  if not ai_common.glob_match(rel, editable,
                                              case_sensitive=_case_sensitive(cfg))]
@@ -1499,7 +1662,8 @@ def check_release_authorization(cfg: dict) -> None:
                "authorises the whole release face for every later commit")
         return
 
-    conflicts = _release_base_conflicts(bases, window)
+    conflicts = _base_conflicts(bases, window, "release_window_start_commit",
+                                require_base=True)
     if conflicts:
         record("release authorization", False,
                f"{len(conflicts)} accepted release record(s) do not bound the "
@@ -1589,33 +1753,43 @@ def check_release_authorization(cfg: dict) -> None:
            f"({origin})")
 
 
-def _release_base_conflicts(bases, window):
-    """`(name, why)` for each LIVE accepted release record whose own base the
-    walked window has left behind; empty when every one still bounds its history.
+def _base_conflicts(bases, window, anchor_key, require_base):
+    """`(name, why)` for each LIVE accepted record whose own base the walked
+    window has left behind; empty when every one still bounds its history.
 
-    The anchor is a config line and the walk's reach is exactly that line, so
-    advancing `release_window_start_commit` past a record's declared base drops
-    the commits that record authorised — and they then read as COVERED, because
-    nothing walks them any more. `_degenerate_empty_window` catches the two
-    shapes that empty the range entirely; this catches the one that merely
-    narrows it.
+    Shared by both walks in wave 1d (Q2) — it was `_release_base_conflicts`, and
+    the runtime face had the same hole with no answer in it. The anchor is a
+    config line and the walk's reach is exactly that line, so advancing
+    `{anchor_key}` past a record's declared base drops the commits that record
+    authorised — and they then read as COVERED, because nothing walks them any
+    more. `_degenerate_empty_window` catches the two shapes that empty the range
+    entirely; this catches the one that merely narrows it.
 
     A `status: closed` record is exempt, and that is the same split W19 had to
-    make for `swarm boundary`: re-anchoring the release window at a new wave is
-    the lifecycle, so binding a finished stage's base to it forever would make
-    the second wave of any project permanently red — the remedy would then be to
-    edit or delete an approved record, which is strictly worse than the hole.
+    make for `swarm boundary`: re-anchoring at a new wave is
+    the lifecycle, so binding a finished stage's base to the window forever would
+    make the second wave of any project permanently red — the remedy would then be
+    to edit or delete an approved record, which is strictly worse than the hole.
     What is refused is shrinking the window out from under a stage still open.
-    An accepted record must still state its base: `verdict: accepted` naming no
-    range is a claim nobody can check.
+
+    `require_base` is where the two faces genuinely differ, and it is a fact about
+    history rather than a style choice. The release field is new: its template has
+    demanded a base since the first release record, so `verdict: accepted` naming
+    no range is a claim nobody can check and is refused. Runtime records predate
+    the field by three versions and an accepted one cannot be edited to add a line
+    it never carried, so a missing base on that side is no claim at all — and the
+    empty-window hole that leaves open is named in `docs/evidence/wave1d-queue.md`
+    instead of being papered over with a red every existing install would answer by
+    rewriting its own history.
     """
     out = []
     for name, base, live in bases:
         if not live:
             continue
         if not base:
-            out.append((name, "declares no `window_start_commit`, so the window it "
-                              "authorises cannot be checked against the one walked"))
+            if require_base:
+                out.append((name, "declares no `window_start_commit`, so the window it "
+                                  "authorises cannot be checked against the one walked"))
             continue
         if not ai_common.window_is_valid(base):
             out.append((name, f"names {base!r} as its base, which is not a commit "
@@ -1629,9 +1803,10 @@ def _release_base_conflicts(bases, window):
         if ai_common.git_ancestor(ROOT, window, base) != "TRUE":
             out.append((name, f"its base {base[:8]} is not at-or-after the walked "
                               f"window's anchor {window[:8]}: the anchor has been "
-                              "moved past the commits this record authorised, so "
-                              "the walk reports them neither uncovered nor covered "
-                              "-- it never looks"))
+                              f"moved past the commits this record authorised, so "
+                              f"the walk reports them neither uncovered nor covered "
+                              f"-- it never looks. `{anchor_key}` names the "
+                              "narrowed range"))
     return out
 
 
@@ -1953,6 +2128,10 @@ def main() -> int:
             ("secrets ignored", lambda: check_secrets_ignored(cfg)),
             ("secret mirrors", lambda: check_secret_mirrors(cfg)),
             ("extra checks", lambda: check_extra(cfg)),
+            # Wave 1d Q1: still an install-facing question (it compares the bytes
+            # under `.ai/` to the bytes in this checkout), so it sits with the
+            # group above rather than with the four that read the records.
+            ("governing copy", check_governing_copy),
             # Wave 1b: the four governance checks, last on purpose. Everything
             # above asks about THIS install; these ask about the records the
             # install keeps about its own history, and they need a config that
