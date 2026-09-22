@@ -84,7 +84,7 @@ accepted record prints `[FAIL] path coverage: … uncovered of … protected tou
 `git ls-remote` and `gh pr view 2` show the stage is public; every wave-1c item
 fails against `main` first, with that output in the PR; `python
 .ai/scripts/sync_verify.py` stays green on this tree with the figure re-measured
-after your change rather than copied — at `b32c818` it was `== 25/25 checks
+after your change rather than copied — at `56365c3` it was `== 25/25 checks
 passed ==`, rc 0, no `[SKIP]`, `path coverage: 31 protected touches covered`,
 `python test suite … 480 passed, 5 skipped`. Stop for one fresh-context review
 when done and call it "reviewed by a different model" only if a different model

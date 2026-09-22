@@ -52,7 +52,7 @@
 
 ## 5. Next step
 
-Publish this stage: `v2.1-dogfood-10d` (`ddcf5f9`, `b32c818`) is committed
+Publish this stage: `v2.1-dogfood-10d` (`20242cb`, `56365c3`) is committed
 locally with **no upstream** — `git push` dies in a non-interactive shell because
 Git Credential Manager cannot prompt (`/dev/tty` absent), while the `gh` token is
 still valid. `handoff/NEXT_PROMPT.md` carries both routes and the commands. Until
