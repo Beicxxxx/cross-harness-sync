@@ -65,14 +65,11 @@
 
 ## 5. Next step
 
-One more fresh-context review of PR #4: it grew four guards, a shared
-ancestry predicate and a governed authority file since its last review, and
-each earlier round found a hole the round before it had not. If that comes
-back clean, set both records to `verdict: accepted` in one commit — the walk
-unions every accepted record in the window regardless of commit order, so
-flipping the release file and the runtime file together is coherent, and
-`docs/release-authorizations/*` is now inside `protected_paths`, which is what
-stops a lone verdict edit from self-approving. Then merge #3, then #4.
+One more fresh-context review of PR #4, which grew four guards and a
+governed authority file since the last. Then flip both records to
+`verdict: accepted` in one commit — the walk unions every accepted record
+in the window, and `docs/release-authorizations/*` is now inside
+`protected_paths`, which is what stops a lone verdict edit approving itself.
 
 ## 6. Must-read list
 
