@@ -112,9 +112,10 @@ def test_mirror_check_skips_when_neither_side_exists(ai_repo, sv):
     # `registered project checks` from its unregistered SKIP into a PASS, so
     # the skips are this mirror pair's plus the four named governance ones
     # (`path coverage`, `release authorization`, `pin violation`, `role policy
-    # integrity`). The count is the contract: one more skip is a break here, and
-    # so is one that vanished.
-    assert ", 5 skipped" in summary[0], summary[0]
+    # integrity`) plus wave 1d's `governing copy`, which names this fixture as an
+    # install rather than the skill's own checkout. The count is the contract: one
+    # more skip is a break here, and so is one that vanished.
+    assert ", 6 skipped" in summary[0], summary[0]
 
 
 def test_mirror_check_fails_when_only_one_side_exists(ai_repo, sv):
