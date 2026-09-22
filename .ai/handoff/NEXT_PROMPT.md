@@ -33,8 +33,8 @@ Two routes; the user picks, and B routes their gh token into git:
 
 Then `gh pr create --base main --head v2.1-dogfood-10d --title "feat(10D): run
 this protocol in its own repository" --body-file
-.superpowers/sdd/2026-09-21-cross-harness-sync-v2.1-wave1b-governance-migration/pr2-body.md`.
-That body lives under gitignored `.superpowers/` and may be the only copy.
+.superpowers/sdd/2026-09-21-cross-harness-sync-v2.1-wave1b-governance-migration/pr2-body.md`
+— that body sits under gitignored `.superpowers/` and may be the only copy.
 
 ## Task 0 — the dogfood stage (authorized; nothing in it left undone)
 
@@ -76,9 +76,8 @@ accepted record prints `[FAIL] path coverage: … uncovered of … protected tou
 6. Exact counts are pinned (`480 passed, 5 skipped`; fresh `20/24 … 4 skipped`;
    migrated `21/24 … 3 skipped`); re-measure each test's own summary, since
    several edit config and differ from the baseline.
-7. `run_python` resolves a relative script path against `cwd` — pass absolute, or
-   rc 2 with empty output reads like an installer refusal. `helpers.git()` and
-   `make_repo()` refuse targets inside this repo; use a temp path.
+7. `run_python` resolves script paths against `cwd` — pass absolute, or rc 2 with
+   empty output reads like an installer refusal; `make_repo()` refuses in-repo.
 
 ## Mandatory outcome
 
