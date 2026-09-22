@@ -28,23 +28,16 @@ Advisory by design throughout: a refusal here names the layout and offers
 from __future__ import annotations
 
 import datetime as real_datetime
-import importlib.util
-import sys
 from pathlib import Path
 
 import pytest
 
-from helpers import SCRIPTS, git, run_python, scaffold
+from helpers import SCRIPTS, git, load_ai_common, load_module, load_script, run_python, scaffold
 
 # Loaded under private names (see tests/test_ai_common.py for why registering
 # either as its shipped name would poison an in-process load of an INSTALLED
 # script), and purged by the same convention the other lanes follow.
-_REPO_COMMON = "_validate_parity_ai_common"
-_spec = importlib.util.spec_from_file_location(_REPO_COMMON,
-                                               SCRIPTS / "ai_common.py")
-ai_common = importlib.util.module_from_spec(_spec)
-sys.modules[_REPO_COMMON] = ai_common
-_spec.loader.exec_module(ai_common)
+ai_common = load_ai_common("_validate_parity_ai_common", keep=True)
 
 # `init_sync.MANAGED_BLOCK` is the text this tool appends to a user's AGENTS.md,
 # so the promise it makes is read from the constant rather than guessed from the
@@ -53,46 +46,16 @@ _spec.loader.exec_module(ai_common)
 # Importing it has a side effect this file must undo: `init_sync` falls back to
 # `sys.path.insert(0, <its own directory>)` and `from ai_common import ...`, which
 # registers the REPO's `ai_common` under the plain name — precisely the poisoning
-# tests/test_ai_common.py guards against, because an in-process load of an
-# INSTALLED script then imports this object instead of the copy next to it. The
-# prior binding is saved and restored below rather than blindly deleted.
-_PRIOR_AI_COMMON = sys.modules.get("ai_common")
-_REPO_INIT = "_validate_parity_init_sync"
-_ispec = importlib.util.spec_from_file_location(_REPO_INIT,
-                                                SCRIPTS / "init_sync.py")
-init_sync = importlib.util.module_from_spec(_ispec)
-sys.modules[_REPO_INIT] = init_sync
-_ispec.loader.exec_module(init_sync)
-if _PRIOR_AI_COMMON is None:
-    sys.modules.pop("ai_common", None)
-else:  # pragma: no cover - only if a sibling file already registered it
-    sys.modules["ai_common"] = _PRIOR_AI_COMMON
+# tests/test_ai_common.py guards against. ``load_script`` restores that binding.
+init_sync = load_script("init_sync.py", "_validate_parity_init_sync", keep=True)
 
 # The governed file whose absence used to be reported as "all present".
 GOVERNANCE = ".ai/state/ROLE_POLICY.md"
 
 
 def _load_installed(script: Path):
-    """Import a `checkpoint.py` copied INTO a fixture repo.
-
-    The same leak as above, on a smaller scale: the installed script runs
-    `from ai_common import ...` and registers THAT copy under the plain name, so
-    the binding is restored afterwards. `tests/test_worktree_refusal.py`'s loader
-    has the same shape and is why this file does not leave it registered.
-    """
-    name = "_validate_parity_checkpoint"
-    prior = sys.modules.get("ai_common")
-    spec = importlib.util.spec_from_file_location(name, script)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    try:
-        spec.loader.exec_module(mod)
-    finally:
-        if prior is None:
-            sys.modules.pop("ai_common", None)
-        else:
-            sys.modules["ai_common"] = prior
-    return mod
+    """Import a `checkpoint.py` copied INTO a fixture repo."""
+    return load_module("_validate_parity_checkpoint", script, keep=True)
 
 
 def _verdict_lines(res):

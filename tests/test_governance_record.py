@@ -11,28 +11,10 @@ The absent-block case is the one that decides a run's outcome: it returns
 governance tier" into "it declared one the checker liked", which is the fail-open
 shape §7 refuses.
 """
-import importlib.util
-import sys
-
-from helpers import SCRIPTS
+from helpers import load_ai_common
 
 
-def _load(name):
-    # Private registration name: `@dataclass` on `GitResult` needs the module in
-    # `sys.modules` while its body runs, and binding the repo copy as `ai_common`
-    # is the poisoning tests/test_ai_common.py exists to prevent. Popped once the
-    # module has executed so no later test sees it either way.
-    spec = importlib.util.spec_from_file_location(name, SCRIPTS / "ai_common.py")
-    m = importlib.util.module_from_spec(spec)
-    sys.modules[name] = m
-    try:
-        spec.loader.exec_module(m)
-    finally:
-        sys.modules.pop(name, None)
-    return m
-
-
-ai = _load("_b0_gov_ai_common")
+ai = load_ai_common("_b0_gov_ai_common")
 
 # Prose around the block carries both things the contract must NOT scan: Chinese
 # angle punctuation and an unfilled-looking placeholder in a sentence.

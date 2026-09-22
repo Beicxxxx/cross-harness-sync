@@ -131,10 +131,11 @@ DEFAULT_CONFIG = {
     # Wave 1c C4: the release face. `protected_paths` governs how THIS install is
     # worked on; these govern what gets published from it, and they are separate
     # because a repository that uses the protocol must not be able to certify its
-    # own product by writing a record in its own runtime state. Empty means "this
-    # tree ships nothing", which is the honest answer for a normal project and
-    # skips by name.
-    "release_paths": [],
+    # own product by writing a record in its own runtime state. "This tree ships
+    # nothing" is answered by OMITTING `release_paths` (wave 1e Q11): an absent
+    # key is SKIP(no-release-paths); a present empty list is FAIL, because that
+    # is an opened release face that publishes nothing. The key stays in
+    # KEY_SHAPES so a project that does ship can declare it.
     "release_authorizations_dir": "docs/release-authorizations",
     "release_window_start_commit": "",
     # Wall-clock seconds one CHILD gets before it is NAMED as failed (D11).
@@ -579,13 +580,21 @@ def merge_config(defaults: dict, user: dict) -> tuple[dict, set]:
     from "cap declined" once the key is gone, and every check downstream reads
     only the merged dict (finding: the AGENTS.md opt-out left no trace).
 
+    Unknown top-level keys (not in `KEY_SHAPES` and not in `defaults`) raise
+    `ConfigError`: a typo like `release_path` must not silently disappear into a
+    SKIP (wave 1e Q11). Optional keys such as `release_paths` live in
+    `KEY_SHAPES` without a default so omit vs `[]` stay distinguishable.
+
     `defaults` is DEEP-copied, not shallow-copied: an unnamed key used to hand
     back `DEFAULT_CONFIG`'s own containers, so one in-process `.pop()` poisoned
     the module default for every later `load_config()` in the same interpreter.
     """
     merged = copy.deepcopy(defaults)
     nulled: set = set()
+    known = frozenset(KEY_SHAPES) | frozenset(defaults)
     for key, val in user.items():
+        if key not in known:
+            raise ConfigError(f"malformed: unknown config key {key!r}")
         _check_shape(key, val)
         policy = MERGE_POLICY.get(key, MERGE_REPLACE)
         if policy == MERGE_DEEP and isinstance(val, dict):
@@ -1068,6 +1077,18 @@ def check_governing_copy() -> None:
                f"the installed copy this check exists to compare is absent, so "
                f"nothing here can be said about drift")
         return
+    # Wave 1e Q8: a `.py.new` sidecar means migrate/scripts-only left the NEW
+    # bytes beside the OLD installed script that still runs. Folded into this
+    # check (no new count) and answered BEFORE the not-source-checkout SKIP so
+    # an ordinary install with a leftover sidecar cannot look healthier than it
+    # is.
+    sidecars = sorted(inst_dir.glob("*.py.new"), key=lambda p: p.name)
+    if sidecars:
+        names = ", ".join(p.relative_to(ROOT).as_posix() for p in sidecars)
+        record("governing copy", False,
+               f"{len(sidecars)} diverged sidecar(s) wait while the OLD "
+               f"installed script still runs: {names}")
+        return
     installed = sorted(inst_dir.glob("*.py"), key=lambda p: p.name)
     shared = [p.name for p in installed if (src_dir / p.name).is_file()]
     witness = (src_dir / SOURCE_CHECKOUT_WITNESS).is_file()
@@ -1162,11 +1183,13 @@ AUTHORIZATION_INDEX_NAME = ai_common.AUTHORIZATION_INDEX_NAME
 def _authorization_dir(cfg) -> Path:
     """The record source. An empty key falls back to the canonical home rather
     than to "look nowhere", which would turn a config typo into a silent
-    `SKIP(no-authorizations)` on a governed install."""
-    rel = str(cfg.get("authorizations_dir", "") or "").strip()
-    if not rel:
-        return AI_DIR / ai_common.AUTHORIZATIONS_SUBDIR
-    return ROOT / rel
+    `SKIP(no-authorizations)` on a governed install.
+
+    Resolution lives in `ai_common.resolve_authorizations_dir` so
+    `checkpoint.py --review-prompt` cannot probe a second spelling under `.ai/`
+    (wave 1e Q12).
+    """
+    return ai_common.resolve_authorizations_dir(ROOT, AI_DIR, cfg)
 
 
 def _authorization_dir_label(cfg) -> str:
@@ -1561,14 +1584,18 @@ def check_release_authorization(cfg: dict) -> None:
     what wave 1b's dogfood did to itself. Only an ACCEPTED record counts here; a
     pending one is a stage that has not been reviewed, and it publishes nothing.
     """
-    paths = list(cfg.get("release_paths") or [])
-    if not paths:
+    # Wave 1e Q11: omit vs empty are different answers. An absent key is the
+    # fresh-install / ships-nothing template (SKIP). A present empty list opened
+    # a release face that publishes nothing (FAIL). A typo'd key name never
+    # arrives here: `merge_config` refuses unknown keys at load time.
+    if "release_paths" not in cfg:
         record("release authorization", None,
                "SKIP(no-release-paths): this tree registers nothing it publishes")
         return
-    # No empty-value arm here on purpose: `release_authorizations_dir: ""` is refused
-    # by the config shape check at rc 2 before any check runs, so a branch for it
-    # would be unreachable code claiming to be a guard.
+    paths = list(cfg.get("release_paths") or [])
+    # No empty-value arm here on purpose for the DIR key: `release_authorizations_dir:
+    # ""` is refused by the config shape check at rc 2 before any check runs, so a
+    # branch for it would be unreachable code claiming to be a guard.
     rel_dir = str(cfg.get("release_authorizations_dir") or "").strip()
     governance = cfg.get("governance") or {}
     # The release face starts where the concept starts. Falling back to the runtime
@@ -1579,6 +1606,16 @@ def check_release_authorization(cfg: dict) -> None:
     # recorded rather than assumed, and the shape predicate still refuses a fake one.
     window = str(cfg.get("release_window_start_commit", "")
                  or governance.get("window_start_commit", "") or "")
+    if not paths:
+        # Present-but-empty is a declared empty face: FAIL. The absent-key arm
+        # above is the only SKIP for "ships nothing".
+        evidence = ("release_paths is present but empty: this tree opened a "
+                    "release face that publishes nothing")
+        if window not in ("", "NO_HISTORY"):
+            evidence += (f" while a release window is set "
+                         f"({window[:8] if len(window) >= 8 else window!r})")
+        record("release authorization", False, evidence)
+        return
     if window in ("", "NO_HISTORY"):
         record("release authorization", None, f"SKIP(no-window: {window or 'unset'})")
         return

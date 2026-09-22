@@ -15,23 +15,16 @@ printed line, never over the absence of output.
 """
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
 from pathlib import Path
 
-from helpers import SCRIPTS, run_python, scaffold
+from helpers import load_script, run_python, scaffold
 
 GITIGNORE_MARKER = "# cross-harness-sync"
 
 
 def _load_init_sync():
-    spec = importlib.util.spec_from_file_location("init_sync_t9",
-                                                  SCRIPTS / "init_sync.py")
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod
-    spec.loader.exec_module(mod)
-    return mod
+    return load_script("init_sync.py", "init_sync_t9", keep=True)
 
 
 def budgets(repo: Path) -> dict:

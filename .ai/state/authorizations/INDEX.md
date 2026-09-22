@@ -9,6 +9,7 @@
 
 | Date | Stage | File | Tier | Verdict |
 |---|---|---|---|---|
+| 2026-09-23 | wave 1e — void queue closures + version/tag/Release | 2026-09-23-wave1e.md | T2 | accepted |
 | 2026-09-22 | wave 1b dogfood — install the protocol into its own repo (spec 10.D) | 2026-09-22-wave1b-dogfood.md | T2 | accepted |
 | 2026-09-22 | wave 1c — this repo's own runtime face; shipped `scripts/`/`templates/` are authorised outside this index | 2026-09-22-wave1c.md | T2 | accepted |
 | 2026-09-22 | wave 1d — the deferred queue made public, plus the governing-copy and window-narrowing checks | 2026-09-22-wave1d.md | T2 | accepted |

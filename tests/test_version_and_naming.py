@@ -19,13 +19,11 @@ files (`git grep`), never `rglob`, which would read git-ignored scratch.
 """
 from __future__ import annotations
 
-import importlib.util
 import json
 import subprocess
-import sys
 from pathlib import Path
 
-from helpers import SCRIPTS, run_python
+from helpers import SCRIPTS, load_ai_common, load_script, run_python
 
 REPO = SCRIPTS.parent
 
@@ -34,22 +32,8 @@ REPO = SCRIPTS.parent
 # its shipped name is the poisoning tests/test_ai_common.py exists to prevent
 # (an in-process load of an INSTALLED script would then import this object
 # instead of the copy next to it). Same convention as test_validate_parity.py.
-_spec = importlib.util.spec_from_file_location("_t11_ai_common",
-                                               SCRIPTS / "ai_common.py")
-ai_common = importlib.util.module_from_spec(_spec)
-sys.modules["_t11_ai_common"] = ai_common
-_spec.loader.exec_module(ai_common)
-
-_PRIOR_AI_COMMON = sys.modules.get("ai_common")
-_ispec = importlib.util.spec_from_file_location("_t11_init_sync",
-                                                SCRIPTS / "init_sync.py")
-init_sync = importlib.util.module_from_spec(_ispec)
-sys.modules["_t11_init_sync"] = init_sync
-_ispec.loader.exec_module(init_sync)
-if _PRIOR_AI_COMMON is None:
-    sys.modules.pop("ai_common", None)
-else:  # pragma: no cover - only if a sibling file already registered it
-    sys.modules["ai_common"] = _PRIOR_AI_COMMON
+ai_common = load_ai_common("_t11_ai_common", keep=True)
+init_sync = load_script("init_sync.py", "_t11_init_sync", keep=True)
 
 # The D25 needle, spelled so that THIS file — a tracked file the sweep below
 # reads — does not contain the string it hunts for. Without this the grep can

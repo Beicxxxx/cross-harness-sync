@@ -37,28 +37,21 @@ purpose:
 """
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import stat
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
-from helpers import SCRIPTS, git, run_python, scaffold, write_lock
+from helpers import SCRIPTS, git, load_ai_common, load_module, run_python, scaffold, write_lock
 
 # Loaded under a PRIVATE name for the reason tests/test_ai_common.py gives:
 # registering it as `ai_common` would make an in-process load of an INSTALLED
 # script resolve `from ai_common import ...` to this object instead of the file
-# that ships. Purged after each use so no later lane inherits it.
-_REPO_COMMON = "_worktree_refusal_ai_common"
-_spec = importlib.util.spec_from_file_location(_REPO_COMMON,
-                                               SCRIPTS / "ai_common.py")
-ai_common = importlib.util.module_from_spec(_spec)
-sys.modules[_REPO_COMMON] = ai_common
-_spec.loader.exec_module(ai_common)
+# that ships. Kept registered so later pins can still find the module object.
+ai_common = load_ai_common("_worktree_refusal_ai_common", keep=True)
 
 # The words a refusal must use for each relocated mechanism, so a junction never
 # prints as a symlink and a symlink never prints as a junction.
@@ -575,12 +568,7 @@ def test_the_lock_is_not_written_twice_over_a_record_that_changed(ai_repo, cp,
 
 def load(cp_path):
     """Import the `checkpoint.py` that was copied INTO this fixture repo."""
-    name = "_worktree_refusal_checkpoint"
-    spec = importlib.util.spec_from_file_location(name, cp_path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[name] = mod
-    spec.loader.exec_module(mod)
-    return mod
+    return load_module("_worktree_refusal_checkpoint", cp_path, keep=True)
 
 
 class _LockArgs:

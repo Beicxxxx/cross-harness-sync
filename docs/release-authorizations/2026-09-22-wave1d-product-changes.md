@@ -85,7 +85,7 @@ tier: T2
 executor: qoder-cli/controller
 reviewer: qoder-cli general-purpose subagents, two fresh-context passes, the second at the first's closures; model family and tier NOT_REPORTED (unreadable from this host's logs, and one dispatch died unrepeated) -- no cross-family attestation (R5)
 verdict: accepted
-status: open
+status: closed
 window_start_commit: aecd536bc2e073e19d60ebc984ba614f1a6fc549
 red_before_green: true
 user_authorized: true

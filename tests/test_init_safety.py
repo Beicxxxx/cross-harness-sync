@@ -16,12 +16,11 @@ what we wrote) rather than by "not in stdout", which an empty run satisfies.
 """
 from __future__ import annotations
 
-import importlib.util
 import shutil
-import sys
 from pathlib import Path
 
-from helpers import REPO_ROOT, SCRIPTS, TEMPLATES_DIR, make_repo, run_python, scaffold
+from helpers import (REPO_ROOT, SCRIPTS, TEMPLATES_DIR, load_script, make_repo,
+                     run_python, scaffold)
 
 # Every destination init owns that holds the caller's work rather than the
 # skill's own files. Pinned here as a literal list (not imported from
@@ -41,12 +40,7 @@ PROTECTED = (
 
 
 def _load_init_sync():
-    spec = importlib.util.spec_from_file_location("init_sync_t8",
-                                                  SCRIPTS / "init_sync.py")
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod
-    spec.loader.exec_module(mod)
-    return mod
+    return load_script("init_sync.py", "init_sync_t8", keep=True)
 
 
 def edited(repo: Path, rel: str, text: str) -> Path:

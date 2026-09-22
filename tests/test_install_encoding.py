@@ -23,24 +23,17 @@ end pins its own scan floor so it cannot go vacuous by matching nothing.
 """
 from __future__ import annotations
 
-import importlib.util
-import sys
 from pathlib import Path
 
 import pytest
 
-from helpers import SCRIPTS, run_python, scaffold
+from helpers import SCRIPTS, load_script, run_python, scaffold
 
 MODULE_NAME = "init_sync_b5"
 
 
 def _load_init_sync():
-    spec = importlib.util.spec_from_file_location(MODULE_NAME,
-                                                 SCRIPTS / "init_sync.py")
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = mod
-    spec.loader.exec_module(mod)
-    return mod
+    return load_script("init_sync.py", MODULE_NAME, keep=True)
 
 
 def own_lines(n: int = 8) -> list[str]:

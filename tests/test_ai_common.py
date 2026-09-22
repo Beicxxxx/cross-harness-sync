@@ -20,7 +20,6 @@ in-process load actually executes.
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import io
 import json
 import os
@@ -29,7 +28,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from helpers import SCRIPTS, make_repo, run_python
+from helpers import SCRIPTS, load_ai_common, load_module, make_repo, run_python
 
 # The repo's copy, loaded under a PRIVATE name. Registration itself is not
 # optional — `@dataclass` on `GitResult` looks `sys.modules[cls.__module__]` up
@@ -39,11 +38,7 @@ from helpers import SCRIPTS, make_repo, run_python
 # object and never read the file that actually ships, so no change to an
 # installed `ai_common.py` could ever make such a test fail.
 _REPO_COMMON = "_repo_ai_common_under_test"
-_spec = importlib.util.spec_from_file_location(_REPO_COMMON,
-                                               SCRIPTS / "ai_common.py")
-ai_common = importlib.util.module_from_spec(_spec)
-sys.modules[_REPO_COMMON] = ai_common
-_spec.loader.exec_module(ai_common)
+ai_common = load_ai_common(_REPO_COMMON, keep=True)
 
 
 def _load(path: Path, name: str):
@@ -56,15 +51,7 @@ def _load(path: Path, name: str):
     reason as finding C: a cached copy from some other tmp install must not be
     what satisfies the script's own import.
     """
-    sys.modules.pop("ai_common", None)
-    try:
-        module_spec = importlib.util.spec_from_file_location(name, path)
-        mod = importlib.util.module_from_spec(module_spec)
-        sys.modules[name] = mod
-        module_spec.loader.exec_module(mod)
-        return mod
-    finally:
-        sys.modules.pop("ai_common", None)
+    return load_module(name, path, keep=True)
 
 
 def _stray(ai_repo: Path, name: str) -> Path:

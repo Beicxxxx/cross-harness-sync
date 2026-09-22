@@ -33,34 +33,17 @@ lane is rewriting those two functions.
 """
 from __future__ import annotations
 
-import importlib.util
 import json
-import sys
 from pathlib import Path
 
-from helpers import SCRIPTS, TEMPLATES_DIR, run_python
+from helpers import TEMPLATES_DIR, load_ai_common, load_script, run_python
 
 _CONFIG_REL = ".ai/sync_config.json"
 
 
-def _load(module_name: str, path: Path):
-    saved = sys.modules.pop("ai_common", None)
-    try:
-        spec = importlib.util.spec_from_file_location(module_name, path)
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = mod
-        spec.loader.exec_module(mod)
-        return mod
-    finally:
-        sys.modules.pop(module_name, None)
-        sys.modules.pop("ai_common", None)
-        if saved is not None:
-            sys.modules["ai_common"] = saved
-
-
-ai_common = _load("_ai_common_under_test_required_files", SCRIPTS / "ai_common.py")
-sync_verify = _load("_sync_verify_under_test_required_files",
-                    SCRIPTS / "sync_verify.py")
+ai_common = load_ai_common("_ai_common_under_test_required_files")
+sync_verify = load_script("sync_verify.py",
+                          "_sync_verify_under_test_required_files")
 
 
 def required_names(res) -> list[str]:

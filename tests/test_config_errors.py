@@ -29,32 +29,20 @@ No assertion below is satisfied by empty output: each one names a line.
 """
 from __future__ import annotations
 
-import importlib.util
 import json
 import os
 import sys
 from pathlib import Path
 
 import pytest
-from helpers import SCRIPTS, run_python
+from helpers import SCRIPTS, load_script, run_python
 
 _CONFIG_REL = ".ai/sync_config.json"
 
 
 def _load_sync_verify():
-    saved = sys.modules.pop("ai_common", None)
-    name = "_sync_verify_under_test_config_errors"
-    try:
-        spec = importlib.util.spec_from_file_location(name, SCRIPTS / "sync_verify.py")
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules[name] = mod
-        spec.loader.exec_module(mod)
-        return mod
-    finally:
-        sys.modules.pop(name, None)
-        sys.modules.pop("ai_common", None)
-        if saved is not None:
-            sys.modules["ai_common"] = saved
+    return load_script("sync_verify.py",
+                       "_sync_verify_under_test_config_errors")
 
 
 sync_verify = _load_sync_verify()

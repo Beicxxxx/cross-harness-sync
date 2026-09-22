@@ -78,8 +78,10 @@ Flags:
                      such as dubious ownership, `index.lock` contention) — the
                      last is its own halt, never the no-repository bucket; a
                      diverged script gets a `.new` sidecar instead of a clobber,
-                     recorded in the migration record's `warnings`/`degraded`; a
-                     re-run verifies instead of migrating again.
+                     recorded in the migration record's `warnings`/`degraded`,
+                     leaves the protocol stamp unadvanced, and exits
+                     MIGRATE_INCOMPLETE (1) because the OLD script still runs;
+                     a re-run verifies instead of migrating again.
     --authorizations-dir  where the stage records live. Never guessed: the flag
                      wins, then the config's `authorizations_dir`, then
                      `.ai/state/authorizations`.
@@ -1377,7 +1379,8 @@ def _acquire_writer_lock(root: Path) -> tuple:
     return True, detail
 
 
-def _migration_commit(root: Path, installed: str) -> tuple:
+def _migration_commit(root: Path, installed: str, *,
+                      incomplete: bool = False) -> tuple:
     """Commit `.ai/**` and nothing else. `(ok, detail)`; a failed commit is a
     NAMED outcome, never an absent one.
 
@@ -1392,6 +1395,10 @@ def _migration_commit(root: Path, installed: str) -> tuple:
        commit takes the WORKING-TREE content of the named paths and
        `.gitignore` deliberately un-ignores `WRITER_LOCK.json` - `git reset`
        alone would not have kept it out.
+
+    `incomplete=True` (wave 1e Q8): sidecar(s) remain, so the commit message
+    must NOT claim `v{installed} -> v{PROTOCOL_VERSION}` — the stamp was left
+    behind on purpose.
     """
     add = run_git(root, ["add", "-A", "--", ".ai"], timeout=120)
     if not add.ok:
@@ -1407,13 +1414,22 @@ def _migration_commit(root: Path, installed: str) -> tuple:
         return False, (f"the index holds {len(outside)} change(s) outside .ai/ "
                        f"before the commit: {_one_line(', '.join(outside))}. "
                        "No commit was created.")
-    message = (f"chore({MIGRATION_COMMIT_TAG}): v{installed} -> "
-               f"v{PROTOCOL_VERSION} governance records\n\n"
-               f"Written by `init_sync.py --migrate`: the authorization index, "
-               f"the config's governance namespaces, and "
-               f"{MIGRATION_JOURNAL_REL}.\n"
-               f"Revert this commit to undo the .ai/ part; "
-               f"{MIGRATION_JOURNAL_REL} names what a revert cannot undo.")
+    if incomplete:
+        message = (f"chore({MIGRATION_COMMIT_TAG}): incomplete from "
+                   f"v{installed}; protocol stamp NOT advanced "
+                   f"(sidecar(s) remain)\n\n"
+                   f"Written by `init_sync.py --migrate`: sidecars were left "
+                   f"for review. Re-run `--migrate` after replacing each "
+                   f"installed script with its `.new` twin; "
+                   f"{MIGRATION_JOURNAL_REL} names what a revert cannot undo.")
+    else:
+        message = (f"chore({MIGRATION_COMMIT_TAG}): v{installed} -> "
+                   f"v{PROTOCOL_VERSION} governance records\n\n"
+                   f"Written by `init_sync.py --migrate`: the authorization "
+                   f"index, the config's governance namespaces, and "
+                   f"{MIGRATION_JOURNAL_REL}.\n"
+                   f"Revert this commit to undo the .ai/ part; "
+                   f"{MIGRATION_JOURNAL_REL} names what a revert cannot undo.")
     commit = run_git(root, ["commit", "-q", "-m", message, "--", ".ai",
                             ":(exclude)" + WRITER_LOCK_REL], timeout=120)
     if commit.ok:
@@ -1431,6 +1447,12 @@ def _migration_commit(root: Path, installed: str) -> tuple:
                           f"{listing.rc}), so the containment recheck did not "
                           f"run: {_one_line(listing.err() or listing.out())}")
         files = [ln.strip() for ln in listing.out().splitlines() if ln.strip()]
+        # Wave 1e Q15: rc 0 with zero bytes is the same class as not-ok — the
+        # recheck is driven by this list, so an empty listing must not print
+        # `0 path(s) committed` as if containment had been seen.
+        if not files:
+            return True, ("committed; post-commit listing wrote nothing, so "
+                          "the containment recheck did not run")
         outside = [f for f in files
                    if not f.startswith(".ai/") or f == WRITER_LOCK_REL]
         if outside:
@@ -1559,9 +1581,12 @@ def verify_migration(root: Path) -> list:
             continue
         side = dst.parent / (dst.name + ".new")
         if side.is_file():
-            out.append(("WARN", rel,
+            # Wave 1e Q8: a leftover sidecar means the OLD installed script still
+            # runs. Named FAIL (not WARN) so a verifying re-run cannot look done.
+            out.append(("FAIL", rel,
                         "kept as installed, shipped copy at "
-                        f"{side.relative_to(root).as_posix()}"))
+                        f"{side.relative_to(root).as_posix()} -- old script "
+                        "still runs while the sidecar waits"))
         else:
             out.append(("FAIL", rel,
                         "neither the shipped copy nor a preserved `.new` "
@@ -1672,9 +1697,11 @@ def run_migration(root: Path, args) -> int:
                            f"{args.authorizations_dir!r}")
         adir_rel = norm
     # Degradations collected here are PRINTED and, when this run writes the
-    # record, RECORDED in it: `--migrate` exits 0 on a preserved customised
-    # script, so an rc-only caller (a hook, a wrapper) has only the file.
+    # record, RECORDED in it. A `.new` sidecar additionally forces
+    # MIGRATE_INCOMPLETE (wave 1e Q8): the install still runs the OLD script,
+    # so an rc-only caller must not see exit 0.
     warns: list = []
+    incomplete_scripts = False
     if not adir_rel.startswith(".ai/") and args.authorizations_dir:
         print(f"[WARN] {adir_rel} is outside .ai/, so the index this run "
               "creates is NOT in the migration commit (which is scoped to "
@@ -1719,8 +1746,12 @@ def run_migration(root: Path, args) -> int:
         # stamp is 2.1.0 while the record says `from: 2.0.0`, so that predicate
         # re-migrated on every later run: a rewritten MIGRATION.json, an
         # overwritten journal, and a second `cross-harness-sync-migrate` commit.
+        # Wave 1e Q8: an incomplete record (`incomplete: true` / `to` not the
+        # protocol) must NOT claim done — otherwise adopting the sidecar and
+        # re-running sticks forever on verify-only with a stale VERSION stamp.
         claims_done = (isinstance(prior, dict)
-                       and prior.get("to") == PROTOCOL_VERSION)
+                       and prior.get("to") == PROTOCOL_VERSION
+                       and not prior.get("incomplete"))
         prior_gov = cfg.get("governance")
         prior_window = str((prior_gov or {}).get("window_start_commit", "")
                            or "") if isinstance(prior_gov, dict) else ""
@@ -1808,6 +1839,8 @@ def run_migration(root: Path, args) -> int:
                 warns.append(f"{rel}: {detail}")
                 print(f"[WARN] {rel}: {detail}")
                 continue
+            if action in ("sidecar", "unknown-history", "unreadable"):
+                incomplete_scripts = True
             side = (root / rel).parent / (name + ".new")
             try:
                 side.write_bytes(src.read_bytes())
@@ -1828,8 +1861,18 @@ def run_migration(root: Path, args) -> int:
                   "by hand and re-run `--migrate`.")
 
     # 3. the protocol stamp, the missing state files, the placeholders.
-    _write_text(stamp_path, PROTOCOL_VERSION + "\n")
-    touched.append(".ai/protocol/VERSION")
+    # Wave 1e Q8: do NOT advance VERSION while a sidecar means the old script
+    # still runs — stamping 2.1 over that install would claim an upgrade the
+    # governing bytes have not received.
+    if incomplete_scripts:
+        warns.append(
+            f"protocol stamp: NOT advanced to {PROTOCOL_VERSION} while "
+            ".new sidecar(s) remain; this install still runs the old scripts")
+        print(f"[WARN] protocol stamp: left at {installed!r}; will not stamp "
+              f"{PROTOCOL_VERSION} while .new sidecar(s) remain")
+    else:
+        _write_text(stamp_path, PROTOCOL_VERSION + "\n")
+        touched.append(".ai/protocol/VERSION")
     for rel_src, rel_dst in FILE_MAP:
         if rel_dst == AUTHORIZATIONS_INDEX_REL and adir_rel != \
                 AUTHORIZATIONS_INDEX_REL.rsplit("/", 1)[0]:
@@ -1891,8 +1934,14 @@ def run_migration(root: Path, args) -> int:
                        adir_rel, sorted(set(touched)), not_reversible)
     _write_text(root / MIGRATION_JOURNAL_REL, journal)
     touched.append(MIGRATION_JOURNAL_REL)
-    record = {"from": installed, "to": PROTOCOL_VERSION, "started": started,
-              "completed": completed, "files_touched": sorted(set(touched)),
+    # Wave 1e Q8: incomplete must not write `to: PROTOCOL_VERSION` — that is
+    # exactly the claims_done predicate, and would trap the recovery re-run in
+    # verify-only with VERSION still at the pre-upgrade stamp.
+    record = {"from": installed,
+              "to": None if incomplete_scripts else PROTOCOL_VERSION,
+              "incomplete": bool(incomplete_scripts),
+              "started": started, "completed": completed,
+              "files_touched": sorted(set(touched)),
               "warnings": list(warns), "degraded": bool(warns)}
 
     def _write_record() -> None:
@@ -1901,6 +1950,8 @@ def run_migration(root: Path, args) -> int:
         one degradation that can only be learned by attempting it."""
         record["warnings"] = list(warns)
         record["degraded"] = bool(warns)
+        record["incomplete"] = bool(incomplete_scripts)
+        record["to"] = None if incomplete_scripts else PROTOCOL_VERSION
         _write_text(root / MIGRATION_REL,
                     json.dumps(record, indent=2, ensure_ascii=False) + "\n")
     _write_record()
@@ -1914,11 +1965,17 @@ def run_migration(root: Path, args) -> int:
               f"{MIGRATION_REL} into; the files are on disk, nothing is in "
               "history.")
     else:
-        ok, detail = _migration_commit(root, installed)
+        ok, detail = _migration_commit(root, installed,
+                                       incomplete=incomplete_scripts)
         if ok:
-            print(f"commit: {MIGRATION_COMMIT_TAG} v{installed} -> "
-                  f"v{PROTOCOL_VERSION} ({detail}); "
-                  f"{WRITER_LOCK_REL} was deliberately left out")
+            if incomplete_scripts:
+                print(f"commit: {MIGRATION_COMMIT_TAG} incomplete from "
+                      f"v{installed} ({detail}); protocol stamp NOT advanced; "
+                      f"{WRITER_LOCK_REL} was deliberately left out")
+            else:
+                print(f"commit: {MIGRATION_COMMIT_TAG} v{installed} -> "
+                      f"v{PROTOCOL_VERSION} ({detail}); "
+                      f"{WRITER_LOCK_REL} was deliberately left out")
         else:
             warns.append(f"the migration commit: {detail}")
             print(f"[WARN] commit failed: {detail}")
@@ -1950,6 +2007,15 @@ def run_migration(root: Path, args) -> int:
           "expected; silence is not.")
     print(f"  4. Release the pen when you are done: python "
           f".ai/scripts/checkpoint.py --unlock --agent {MIGRATION_AGENT}")
+    if incomplete_scripts:
+        print(f"\nMIGRATE INCOMPLETE: {PROTOCOL_VERSION} was not stamped and "
+              "at least one .ai/scripts/*.py.new sidecar remains while the "
+              "OLD installed script still runs. Review each sidecar, replace "
+              "the installed copy by hand, then re-run `--migrate` - the "
+              f"record at {MIGRATION_REL} is marked incomplete (`to` is null) "
+              "so that re-run continues the upgrade rather than verifying a "
+              "finished one.")
+        return MIGRATE_INCOMPLETE
     return 0
 
 

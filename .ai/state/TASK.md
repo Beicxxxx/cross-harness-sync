@@ -1,46 +1,37 @@
 # Active Task
 
-> Last updated: 2026-09-23 02:31 (+10:00)
-> Updated by: cursor (PR stack #3/#4/#5 merged; no new code funded).
+> Last updated: 2026-09-23 03:17 (+10:00) by cursor (wave 1e accepted).
 
 ## Standing state — do not rewrite
 
 > Published text may only claim what was measured on the tree being read.
-> No tag, no GitHub Release, no version bump without the user.
-> `.superpowers/` is private reasoning; it is never force-added to git.
-> Commits here carry the owner's GitHub identity from this repository's local
-> git config, not their global school address.
+> Commits carry this repository's LOCAL `user.name`/`user.email`.
 
 ## The one active task
 
-None. Wave 1d on `v2.1-wave1d-deferred-queue` is merged to `main` as PR #5
-(after #3 and #4). The owner-authorized merge stack is done. Until the user funds
-a void row or asks for tag/Release, do not open a new implementation stage.
+Land wave 1e on `main`, then tag `v2.1.1` and publish the GitHub Release. Product
+work for the void queue is done and accepted; remaining steps are outward.
 
 ## Role ownership
 
-- **Executor:** none active for product code.
-- **Reviewer:** n/a for this merge close-out (T1 docs/state only).
-- **User:** tag, Release, version bump, and which void rows (if any) to fund.
+- **Executor:** cursor agent.
+- **Reviewer:** fresh-context T2 + F1 re-review ACCEPT; family NOT_REPORTED (R5).
+- **User:** already authorized finishing every undone item.
 
 ## Required work
 
-1. Done — merge PR #3 (`v2.1-wave1c-governance-defects` → `main`).
-2. Done — retarget and merge PR #4 (`v2.1-wave1c-release-gate` → `main`).
-3. Done — retarget and merge PR #5 (`v2.1-wave1d-deferred-queue` → `main`).
-4. Done — pull `main` tip `22f460d` and re-run verify + suite on that tree.
-5. Stop — no void row, tag, or Release without a fresh user ask in terms.
+1. Done — Q6/Q8/Q11/Q12/Q15 + Q9/Q10/Q14 dispositions + F1–F5 closures.
+2. Done — both wave-1e records `verdict: accepted`.
+3. Commit + push branch; open/merge PR into `main` (or push if already on main path).
+4. Tag `v2.1.1` and `gh release create` from CHANGELOG wave 1e section.
+5. Close-out handoff; unlock.
 
 ## Explicitly not authorized
 
-Any edit under `scripts/` or `templates/` without a release record; any tag,
-Release, version bump; treating a pre-merge figure as this tree's; editing an
-accepted record to satisfy a check it now refuses — the answer is `status`, or
-a new stage; coding Q6/Q8–Q12/Q14/Q15 without funding.
+Force-push; rewrite published history; `git add -A`; force-add `.superpowers/`;
+changing the user's global git config; claiming protocol stamp moved (it did not).
 
 ## Completion condition
 
-Stated as commands. On `main` at the tip you claim: `python .ai/scripts/sync_verify.py`
-reports no FAILED line; quote coverage and suite figures only from that run (or
-from `docs/evidence/` rows that name the same commit). Pre-merge totals in
-`wave1d-facts.md` are not this tip's.
+`main` carries wave 1e; `git tag` shows `v2.1.1`; GitHub Release exists; verify on
+that tip has no FAILED line. Quote figures only from a re-run on that tip.

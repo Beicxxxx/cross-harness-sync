@@ -77,13 +77,14 @@ from typing import NamedTuple
 # second copy of the wrong-root path this removes (see scripts/ai_common.py).
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
-    from ai_common import (AUTHORIZATIONS_SUBDIR, DEFAULT_REQUIRED_FILES,
+    from ai_common import (DEFAULT_REQUIRED_FILES,
                            REQUIRED_FILE_FLOOR, RepoError,
                            authorization_records, checkout_layout,
                            commit_exists, decode, is_accepted, is_full_sha,
                            is_live_stage,
                            parse_governance_block, protect_stdio,
-                           resolve_roots, run_argv, run_git,
+                           resolve_authorizations_dir, resolve_roots,
+                           run_argv, run_git,
                            with_required_file_floor, worktree_listing)
 except ImportError:
     print("[FAIL] install layout: ai_common.py is missing from .ai/scripts/ -- "
@@ -792,28 +793,12 @@ def _review_rel(path):
 def _review_authorizations_dir(cfg):
     """`(dir, note)` — the configured home of the records, or the default one.
 
-    `authorizations_dir` is shared with `sync_verify.py` (B1 reads the same key),
-    and its documented value is repo-relative (`.ai/state/authorizations`). The
-    two spellings a project actually writes -- repo-relative and
-    install-relative -- are both tried before falling back, and a value that
-    resolves to nothing is NAMED rather than silently replaced with the default.
+    Same resolver as `sync_verify._authorization_dir` (wave 1e Q12): empty falls
+    back to `AI_DIR/AUTHORIZATIONS_SUBDIR`, a relative value is `ROOT / rel`
+    ONLY. Probing `AI_DIR / rel` as a second spelling made the review prompt
+    and the coverage walk disagree about which records exist.
     """
-    default = AI_DIR / AUTHORIZATIONS_SUBDIR
-    raw = cfg.get("authorizations_dir")
-    if not isinstance(raw, str) or not raw.strip():
-        return default, None
-    cand = Path(raw.strip())
-    if cand.is_absolute():
-        return (cand, None) if cand.is_dir() else (default,
-               f"authorizations: `authorizations_dir` names {raw!r}, which is "
-               f"not a directory here; the default {_review_rel(default)} was "
-               "used instead")
-    for probe in (ROOT / cand, AI_DIR / cand):
-        if probe.is_dir():
-            return probe, None
-    return default, (f"authorizations: `authorizations_dir` names {raw!r}, "
-                     f"which is not a directory here; the default "
-                     f"{_review_rel(default)} was used instead")
+    return resolve_authorizations_dir(ROOT, AI_DIR, cfg), None
 
 
 def _review_records(auth_dir):

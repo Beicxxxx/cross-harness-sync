@@ -7,26 +7,13 @@ looks `sys.modules[cls.__module__]` up while the class body runs. Registering it
 under the shipped name `ai_common` is the hazard test_ai_common.py exists to
 prevent (an in-process load of an INSTALLED script would then resolve
 `from ai_common import ...` to this object and never read the shipped file), so
-the private entry is popped again as soon as the module has executed.
+``load_ai_common`` pops the private entry again as soon as the module has
+executed.
 """
-import importlib.util
-import sys
-
-from helpers import SCRIPTS
+from helpers import load_ai_common
 
 
-def _load(name):
-    spec = importlib.util.spec_from_file_location(name, SCRIPTS / "ai_common.py")
-    m = importlib.util.module_from_spec(spec)
-    sys.modules[name] = m
-    try:
-        spec.loader.exec_module(m)
-    finally:
-        sys.modules.pop(name, None)
-    return m
-
-
-ai = _load("_b0_glob_ai_common")
+ai = load_ai_common("_b0_glob_ai_common")
 
 
 def test_d14_glob_is_case_sensitive_and_separator_stable():

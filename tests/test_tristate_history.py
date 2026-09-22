@@ -9,30 +9,12 @@ probe §6 rejects. The asymmetry is the point: ancestry for an sha git cannot re
 UNKNOWN, existence for the same sha in a whole repository is FALSE, and no boolean
 carries both facts.
 """
-import importlib.util
-import sys
-
 import pytest
 
-from helpers import SCRIPTS, git, make_repo
+from helpers import git, load_ai_common, make_repo
 
 
-def _load(name):
-    # Registered under a private name only while the module executes (see
-    # tests/test_ai_common.py finding C): binding the repo copy as `ai_common`
-    # makes an in-process load of an INSTALLED script import this object instead
-    # of the file that ships.
-    spec = importlib.util.spec_from_file_location(name, SCRIPTS / "ai_common.py")
-    m = importlib.util.module_from_spec(spec)
-    sys.modules[name] = m
-    try:
-        spec.loader.exec_module(m)
-    finally:
-        sys.modules.pop(name, None)
-    return m
-
-
-ai = _load("_b0_tri_ai_common")
+ai = load_ai_common("_b0_tri_ai_common")
 
 ABSENT_SHA = "0" * ai.SHA_HEX_LEN
 # `core.quotepath` (default true) makes git C-quote non-ASCII paths, so without `-z`
