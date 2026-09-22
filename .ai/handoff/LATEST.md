@@ -35,8 +35,12 @@
   `main`, two commits split by face: `06dc156` release, `c4a9586` runtime.
 - The CHANGELOG entry for the release documents is not written, though `README.md`
   and `SKILL.md` figures were re-measured.
-- Deferred: 14 wave-1b minors, the governing-copy drift check, the stale-grant
-  rule. All listed in `handoff/NEXT_PROMPT.md`.
+- The review's other findings are open, all reproducible, all in W13: `git add -A`
+  still in `scripts/init_sync.py:2162`; `reference.md` 72/307/310 still requires a
+  cross-family reviewer; `7 failed` should read `8` in the release record; `22/25`
+  has no tripwire test; and **nothing enforces the two-face split** — an edit to
+  `scripts/foo.py` under a runtime record now prints no FAIL anywhere.
+- Deferred: 14 wave-1b minors, the governing-copy drift check, the stale-grant rule.
 
 ## 3. Evidence pointers
 
