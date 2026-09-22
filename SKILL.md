@@ -84,13 +84,14 @@ not. Declare project-specific checks in `.ai/sync_config.json`, run
 `python .ai/scripts/sync_verify.py` until `FAILED:` is absent and every line
 reads `[PASS]` or a named `[SKIP]`, then commit and push. A default install
 registers no project checks and declares no protected paths, so it ends
-`== 21/25 checks passed, 4 skipped ==` at exit 0 (measured on the tree this file
+`== 21/26 checks passed, 5 skipped ==` at exit 0 (measured on the tree this file
 ships in). The
-four skips are `registered project checks`, `path coverage`
-(`SKIP(no-protected-paths)`), `pin violation` (`SKIP(no-authorizations)`) and
+five skips are `registered project checks`, `path coverage`
+(`SKIP(no-protected-paths)`), `release authorization`
+(`SKIP(no-release-paths)`), `pin violation` (`SKIP(no-authorizations)`) and
 `role policy integrity` (`SKIP(no-sha-pinned)`), and each names which reason it
 took. The same install after `python scripts/init_sync.py <repo> --migrate`
-reads `== 22/25 checks passed, 3 skipped ==`. Neither figure is a failure to fix
+reads `== 22/26 checks passed, 4 skipped ==`. Neither figure is a failure to fix
 and neither is green — nothing in this protocol can be green, only named.
 `rc == 0` is never sufficient; read the lines.
 

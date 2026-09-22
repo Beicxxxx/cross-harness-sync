@@ -144,9 +144,11 @@ def test_the_index_is_not_read_as_an_authorization_record(ai_repo, sv):
 def test_the_required_file_flip_moves_the_fresh_install_count_exactly(ai_repo,
                                                                       sv):
     """The count B1 baselined at `== 19/23 checks passed, 4 skipped ==`, then
-    `20/24` at the required-file flip, is now `21/25`: wave 1c's
-    `unfilled template slots` is one more check and one more PASS, and still
-    NO new skip.
+    `20/24` at the required-file flip, is now `21/25` at wave 1c's
+    `unfilled template slots` is one more check and one more PASS with no new
+    skip, and wave 1c's `release authorization` then adds one of each: a project
+    that ships nothing registers no `release_paths`, so the extra skip is a named
+    answer, not a machine that failed to look. NO unaccounted skip is the point.
 
     Exact and positive on purpose (wave 1a's ruling). This is the tripwire the
     required-file flip is supposed to pull — B4 re-measures it against the
@@ -158,7 +160,33 @@ def test_the_required_file_flip_moves_the_fresh_install_count_exactly(ai_repo,
     assert res.rc == 0, res.stdout + res.stderr
     summary = [ln for ln in res.lines if "checks passed" in ln]
     assert len(summary) == 1, res.lines
-    assert summary[0] == "== 21/25 checks passed, 4 skipped ==", summary[0]
+    assert summary[0] == "== 21/26 checks passed, 5 skipped ==", summary[0]
+
+
+def test_a_migrated_install_moves_only_the_skip_a_sha_pin_answers(tmp_path):
+    """README and SKILL publish a migrated-install figure; nothing guarded it.
+
+    Wave 1c's review found that by editing the number and watching no test
+    complain. Both ends of the same upgrade are pinned here, in one test, because
+    they are one claim: `--migrate` answers `role policy integrity` and must answer
+    nothing else. A check arriving or vanishing moves these two lines together,
+    which is the point of asserting the pair rather than the delta. This is a
+    regression pin, not a reproduction: it is green on the tree it ships with.
+    """
+    from helpers import make_repo, run_python, scaffold
+    repo = make_repo(tmp_path)
+    assert scaffold(repo).rc == 0
+    verifier = repo / ".ai" / "scripts" / "sync_verify.py"
+
+    def summary(res):
+        lines = [ln for ln in res.lines if "checks passed" in ln]
+        assert len(lines) == 1, res.lines
+        return lines[0]
+
+    assert summary(run_python(verifier, [], cwd=repo))         == "== 21/26 checks passed, 5 skipped =="
+    assert scaffold(repo, "--migrate").rc == 0
+    after = summary(run_python(verifier, [], cwd=repo))
+    assert after == "== 22/26 checks passed, 4 skipped ==", after
 
 
 

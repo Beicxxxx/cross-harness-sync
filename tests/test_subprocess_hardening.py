@@ -145,8 +145,9 @@ def test_an_install_that_declares_no_decision_log_is_a_skip_not_a_red(
     # coverage` (no `protected_paths`), `pin violation` (no authorization
     # record), `role policy integrity` (no SHA pinned). A fresh install carries
     # no governance anchors, so all three are the spec-7 defaults rather than a
-    # machine that failed to look; a sixth skip is still red.
-    assert skipped == "5", summary[0]
+    # machine that failed to look. Wave 1c's `release authorization` is the fifth:
+    # a tree that publishes nothing registers no `release_paths`. A seventh is red.
+    assert skipped == "6", summary[0]
     assert int(passed) < int(total), summary[0]
     assert "FAILED:" not in res.lines, res.lines
 
@@ -345,12 +346,12 @@ def test_a_silent_extra_check_is_a_named_skip_not_a_pass(ai_repo, sv):
     match = SUMMARY_RE.fullmatch(summary[0])
     assert match, summary[0]
     passed, total, skipped = match.groups()
-    # Wave 1b's baseline: this silent child's own skip plus the three named
-    # governance ones (`path coverage`, `pin violation`, `role policy
+    # This silent child's own skip plus the four named governance ones (`path
+    # coverage`, `release authorization`, `pin violation`, `role policy
     # integrity`); `registered project checks` PASSes because an extra check IS
     # registered here. Four skipped records, each one named by the run.
-    assert skipped == "4", summary[0]
-    assert int(passed) == int(total) - 4, summary[0]
+    assert skipped == "5", summary[0]
+    assert int(passed) == int(total) - 5, summary[0]
 
 
 def test_a_silent_failing_child_is_still_a_fail(ai_repo, sv):

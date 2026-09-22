@@ -49,6 +49,22 @@ boundaries for someone else's repository.
 - The suite's own totals, re-measured on the tree this table describes and
   reported in the PR rather than here.
 
+## Governance
+
+```governance
+tier: T2
+executor: qoder-cli/controller
+reviewer: qoder-cli/general-purpose subagent, separate context; model family and
+  tier NOT confirmed from this host's logs, so no cross-family claim is made here
+verdict: pending
+red_before_green: true
+user_authorized: true
+```
+
+`pending` until the review of PR #3 is accepted. `is_accepted()` reads this block,
+and `release authorization` in `sync_verify.py` refuses to let a pending record
+cover a shipped file: a stage cannot publish itself by writing its own verdict.
+
 ## Boundary
 
 No tag, no Release, no version bump. `SKILL.md` and `reference.md` document two

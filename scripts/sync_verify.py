@@ -120,6 +120,15 @@ DEFAULT_CONFIG = {
     "secret_files": [".env"],
     "secret_mirrors": [],
     "extra_checks": [],
+    # Wave 1c C4: the release face. `protected_paths` governs how THIS install is
+    # worked on; these govern what gets published from it, and they are separate
+    # because a repository that uses the protocol must not be able to certify its
+    # own product by writing a record in its own runtime state. Empty means "this
+    # tree ships nothing", which is the honest answer for a normal project and
+    # skips by name.
+    "release_paths": [],
+    "release_authorizations_dir": "docs/release-authorizations",
+    "release_window_start_commit": "",
     # Wall-clock seconds one CHILD gets before it is NAMED as failed (D11).
     # Before Task 6 the value lived only in hardcoded call sites, so an operator
     # with a governance script that never returns had one answer: kill the
@@ -1302,6 +1311,113 @@ def check_coverage_walk(cfg: dict) -> None:
     record("path coverage", True, f"{len(touched)} protected touches covered")
 
 
+def check_release_authorization(cfg: dict) -> None:
+    """Wave 1c C4: what gets published needs a release record, not a stage note.
+
+    Same walk as `path coverage`, different path set and a different directory,
+    because the two questions only look alike: "was this stage allowed to edit files
+    in its own tree" versus "did anyone accept shipping these files to other people".
+    Registering the release face under `protected_paths` merges them and lets the
+    repository that happens to host a product certify its own publication, which is
+    what wave 1b's dogfood did to itself. Only an ACCEPTED record counts here; a
+    pending one is a stage that has not been reviewed, and it publishes nothing.
+    """
+    paths = list(cfg.get("release_paths") or [])
+    if not paths:
+        record("release authorization", None,
+               "SKIP(no-release-paths): this tree registers nothing it publishes")
+        return
+    rel_dir = str(cfg.get("release_authorizations_dir") or "").strip()
+    if not rel_dir:
+        record("release authorization", False,
+               "`release_paths` is set while `release_authorizations_dir` is empty: "
+               "a release face with no source of authorisation cannot be covered, so "
+               "the configuration is the gap, not the history")
+        return
+    governance = cfg.get("governance") or {}
+    # The release face starts where the concept starts. Falling back to the runtime
+    # window would reach back through every commit made before a repository had any
+    # notion of a release record, and a rule cannot govern the period before it
+    # existed: measured here, a shared anchor reported 46 uncovered of 46, all but
+    # eight of them older than this check. An explicit anchor is how the boundary is
+    # recorded rather than assumed, and the shape predicate still refuses a fake one.
+    window = str(cfg.get("release_window_start_commit", "")
+                 or governance.get("window_start_commit", "") or "")
+    if window in ("", "NO_HISTORY"):
+        record("release authorization", None, f"SKIP(no-window: {window or 'unset'})")
+        return
+    if not ai_common.window_is_valid(window):
+        record("release authorization", False,
+               f"window anchor is not a commit id: {window!r} bounds no readable "
+               "range, and an unreadable bound is not the empty log it would print")
+        return
+    if not is_git_repo(ROOT):
+        record("release authorization", False,
+               "no git repository to walk, so what ships here is unverifiable")
+        return
+    pathspec = _protected_pathspec(paths, cfg)
+    rev = f"{window}..HEAD"
+    nonmerge, why = ai_common.log_paths(
+        ROOT, ["--no-merges", "--full-history", "--pretty=format:%H", rev], pathspec)
+    if nonmerge is None:
+        record("release authorization", False, f"walk halted: {why}")
+        return
+    merges, why = ai_common.log_paths(
+        ROOT, ["--merges", "-m", "--first-parent", "--pretty=format:%H", rev], pathspec)
+    if merges is None:
+        record("release authorization", False, f"walk halted: {why}")
+        return
+    touched = sorted(set(_walk_touches(nonmerge) + _walk_touches(merges)))
+
+    directory = ROOT / rel_dir
+    try:
+        entries = sorted(p for p in directory.iterdir()
+                         if p.suffix.lower() == ".md" and p.name.upper() != "INDEX.MD")
+    except (FileNotFoundError, NotADirectoryError):
+        record("release authorization", False,
+               f"`release_paths` registers {len(paths)} pattern(s) but {rel_dir} does "
+               "not exist: no record here can have authorised these commits")
+        return
+    except OSError as exc:
+        record("release authorization", False,
+               f"{rel_dir} could not be read ({type(exc).__name__}): a directory that "
+               "cannot be read is not a directory holding no authorisations")
+        return
+
+    accepted, pending, unreadable = [], 0, []
+    for path in entries:
+        try:
+            text = path.read_text("utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            unreadable.append(f"{path.name} ({type(exc).__name__})")
+            continue
+        fields, _gov_err = ai_common.parse_governance_block(text)
+        if ai_common.is_accepted(fields):
+            accepted += _section_bullets(text, "Editable files")
+        else:
+            pending += 1
+
+    uncovered = [(sha, rel) for sha, rel in touched
+                 if not ai_common.glob_match(rel, accepted,
+                                             case_sensitive=_case_sensitive(cfg))]
+    origin = f"{len(entries)} record(s) in {rel_dir}"
+    if unreadable:
+        # A record that cannot be read is not an absent one and not an accepted one;
+        # naming it keeps "we could not look" out of the PASS column.
+        origin += f", {len(unreadable)} unreadable: {', '.join(unreadable[:3])}"
+    if uncovered:
+        shown = ", ".join(f"<{sha[:8]} {rel}>" for sha, rel in uncovered[:8])
+        more = f" (+{len(uncovered) - 8} more)" if len(uncovered) > 8 else ""
+        record("release authorization", False,
+               f"{len(uncovered)} uncovered of {len(touched)} release-face touches: "
+               f"{shown}{more} -- {origin}, {pending} not accepted. A pending record "
+               "certifies nothing: an unreviewed stage cannot publish on its own word")
+        return
+    record("release authorization", True,
+           f"{len(touched)} release-face touches covered by accepted record(s) "
+           f"({origin})")
+
+
 def check_pin_violation(cfg: dict) -> None:
     """spec 6.1: the only proposed check whose falsifiable fact lies entirely
     inside the repo -- a pin on a fast-changing state file."""
@@ -1591,6 +1707,7 @@ def main() -> int:
             # install keeps about its own history, and they need a config that
             # parsed and a layout that held before they can mean anything.
             ("path coverage", lambda: check_coverage_walk(cfg)),
+            ("release authorization", lambda: check_release_authorization(cfg)),
             ("pin violation", lambda: check_pin_violation(cfg)),
             ("role policy integrity", lambda: check_role_policy_integrity(cfg)),
             ("swarm boundary", lambda: check_swarm_boundary(cfg))):
