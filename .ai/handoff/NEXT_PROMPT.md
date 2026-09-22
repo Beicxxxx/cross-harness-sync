@@ -1,18 +1,12 @@
-# Next Prompt — wave 1e accepted; land v2.1.1 on main
+# Next Prompt — nothing funded after v2.1.1
 
-You are finishing an already-authorized release. Read CURRENT.md §2–3, TASK.md,
-BLOCKERS.md, ROLE_POLICY.md §1–3.
+Read CURRENT.md, TASK.md, BLOCKERS.md. There is no active implementation task.
 
-## Task
-
-1. Ensure wave 1e is on `main` (merge PR if needed).
-2. Re-run `python .ai/scripts/sync_verify.py` on that tip; quote only those figures.
-3. Tag `v2.1.1` (protocol stamp stays `2.1.0`) and create the GitHub Release from
-   the CHANGELOG wave 1e section.
-4. Update handoff; unlock; stop.
+Do not start void follow-ups or a protocol bump without a fresh user ask in
+those terms. If asked to continue anyway: lock, re-run sync_verify before
+quoting figures, unlock at close-out.
 
 ## Absolute stop boundary
 
-No force-push, no history rewrite, no `git add -A`, no force-add of
-`.superpowers/`, no global git config edits, no protocol stamp claim that is not
-measured.
+No force-push, no history rewrite, no blanket add, no force-add of
+`.superpowers/`, no global git config edits.
