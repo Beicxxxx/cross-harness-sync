@@ -8,9 +8,9 @@ and §6 under `docs/superpowers/specs/`.
 ## The dogfood stage is published — wave 1c is the only work left
 
 [PR #2](https://github.com/Beicxxxx/cross-harness-sync/pull/2) is OPEN against
-`main`: 27 files, +4892/−9, six commits authored as `Beicxxxx`. Proven rather
-than claimed — `git ls-remote --heads origin | grep dogfood` prints the tip and
-`gh pr view 2` resolves.
+`main`, 27 files, every commit authored as `Beicxxxx`. Prove it rather than
+trusting this file: `git ls-remote --heads origin | grep dogfood` prints the live
+tip, and `gh pr view 2 --json state,additions,commits` answers for the rest.
 
 `main` still has no `.ai/`, because merging is the user's call. A reader of the
 default branch gets the protocol without the install until they say otherwise, so

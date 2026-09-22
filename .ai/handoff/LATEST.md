@@ -26,11 +26,11 @@
   `.ai/**` wildcard grant).
 - **Published.** `v2.1-dogfood-10d` is on origin and
   [PR #2](https://github.com/Beicxxxx/cross-harness-sync/pull/2) is open against
-  `main` — 27 files, +4892/−9. The credential failure that parked this was worked
-  around, not fixed: `GIT_TERMINAL_PROMPT=0 git -c credential.helper='!gh
+  `main`, 27 files. The credential failure that parked this was worked around, not
+  fixed: `GIT_TERMINAL_PROMPT=0 git -c credential.helper='!gh
   auth git-credential' push` authenticates non-interactively, per command, with
   nothing written to config. Plain `git push` still dies on GCM's prompt.
-- All six stage commits carry the owner's GitHub identity, set with
+- Every stage commit carries the owner's GitHub identity, set with
   `filter-branch --env-filter` before publication. `git rev-parse` of the
   pre-rewrite and post-rewrite trees is the same object (`c7d616e3…`), so content
   did not move; D7 in the evidence file has the hash mapping.
