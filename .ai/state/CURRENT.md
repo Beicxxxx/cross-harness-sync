@@ -1,6 +1,6 @@
 # Current Project State — the single source of truth for progress
 
-> Last updated: 2026-09-22 18:25 (+10:00) by qoder-cli (wave 1c, lifecycle split landed).
+> Last updated: 2026-09-22 19:55 (+10:00) by qoder-cli (wave 1c accepted; unmerged).
 > Budget: this file stays ≤ 60 lines (enforced by `.ai/scripts/sync_verify.py`).
 
 ## At a glance (for humans; machines treat this as authoritative)
@@ -8,8 +8,8 @@
 | Item | State |
 |---|---|
 | Current stage | Wave 1c on PR #3 + stacked PR #4; PR #2 merged as `0bc4d7f` |
-| Authorization | runtime: `.ai/state/authorizations/2026-09-22-wave1c.md` (pending) · release: `docs/release-authorizations/2026-09-22-wave1c-product-changes.md` (pending) |
-| Blockers | none technical; both records await the review whose condition they state |
+| Authorization | both wave-1c records `accepted`; wave 1b's dogfood record carries `status: closed` |
+| Blockers | merge only: PR #3 and PR #4 are the user's call, as are tag and Release |
 | Health check | `python .ai/scripts/sync_verify.py` |
 | Red lines | no "all green", no "enforced", no "cross-family"; no tag or release without the user |
 
@@ -25,8 +25,8 @@ on demand, never inline.
 
 `.ai/state/authorizations/2026-09-22-wave1c.md` (runtime face) and
 `docs/release-authorizations/2026-09-22-wave1c-product-changes.md` (what ships) —
-both `verdict: pending`, neither digest-pinned: a stage record that changes while
-it is executed is not a freezing artifact. Executor: qoder-cli controller.
+both `verdict: accepted` now, neither digest-pinned: a stage record that changes
+while it is executed is not a freezing artifact. Executor: qoder-cli controller.
 Reviewers: fresh-context subagents with no shared history; their model families
 were never readable from this host's logs, so the honest value is `NOT_REPORTED`
 rather than "same family" or "cross-family" — R5 forbids guessing either way.
@@ -38,7 +38,7 @@ rather than "same family" or "cross-family" — R5 forbids guessing either way.
 | Wave 1a | merged; 26 of 27 defects fixed, D14 was the single deferral |
 | Wave 1b | merged as PR #1 (`3a5f2a9`): governance records, coverage walk, `--review-prompt`, `--migrate`, D14, N1 |
 | This repo's own install | `.ai/` is on `main` (PR #2 merged as `0bc4d7f`) |
-| Wave 1c | in progress: policy/R3-R5, `git add -A`, unfilled-slot, release-gate and verdict-vs-`status` defects fixed red-first; 14 minors open |
+| Wave 1c | accepted on PR #3/#4, unmerged: policy/R3-R5, `git add -A`, unfilled slots, the release gate, and verdict-vs-`status`; 14 minors deferred |
 | Release | undecided: no tag, no GitHub Release |
 
 ## 4. Stage history

@@ -1,4 +1,4 @@
-# Next Prompt — close wave 1c: one review, then the acceptance commit
+# Next Prompt — wave 1c is accepted; the deferred list is what remains
 
 You are the single active implementation executor. Read, in order:
 `.ai/state/ROLE_POLICY.md` (tiers, R1–R7 — R3 and R5 were reconciled on
@@ -33,25 +33,15 @@ was never in `templates/AGENTS.md` (it holds a placeholder; the sentence pointin
 repo history was this repository's own), and the "third template defect" logged from
 it did not exist.
 
-## Step 1 — the review, before anything is accepted
+## What is already closed
 
-Two fresh-context passes have run since the gate landed and their findings are closed
-(W22, W23); nothing has looked at the closure. Same method: no shared history,
-`git diff main...HEAD`, mutants rather than comments to attack, every finding re-run
-before it is acted on, and the reviewer's model family recorded or recorded as
-unreadable (W14).
+Wave 1c is accepted: both records read `verdict: accepted`, the wave-1b dogfood
+record carries `status: closed` (never a rewritten `verdict` — that is what covers
+wave 1b's own touches, W19), and `sync_verify` exits 0 with no FAILED line. Merging
+PR #3 then PR #4 is the user's call, in those terms, as are tag and Release. W24's
+closures were accepted without a fourth pass, and that is disclosed rather than
+smoothed over.
 
-## Step 2 — the acceptance commit, exactly
-
-ONE commit, because each verdict change alone is a self-approval:
-
-- `verdict: pending` → `accepted` in both records;
-- `status: closed` on `.ai/state/authorizations/2026-09-22-wave1b-dogfood.md` —
-  NOT its `verdict`, which is what covers wave 1b's own protected touches;
-- `python .ai/scripts/sync_verify.py` then exits 0 with no FAILED line. W19 holds
-  the dry-run measurements that define the gap, each anchored to its tree.
-
-Merging PR #3 and #4 stays the user's call, in those terms.
 ## Then: wave 1c's deferred list
 
 - Wave-1b minors: M-3, M-4, M-5, M-7..M-14; `checkpoint._review_is_sha` accepting

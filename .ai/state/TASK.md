@@ -1,7 +1,7 @@
 # Active Task
 
-> Last updated: 2026-09-22 18:32 (+10:00)
-> Updated by: qoder-cli (wave 1c, on two separate authorizations, both pending).
+> Last updated: 2026-09-22 19:55 (+10:00)
+> Updated by: qoder-cli (wave 1c, both authorizations accepted).
 
 ## Standing state — do not rewrite
 
@@ -41,9 +41,9 @@ a shipped file — that separation is itself one of this stage's products.
 2. Done — `release authorization` gates the shipped surface on a record in
    `docs/release-authorizations/`, and `status` is now separate from `verdict` so a
    finished stage stops being able to un-authorize its own commits (W19).
-3. Open — one fresh-context pass on those two, then both records' `verdict` and the
-   wave-1b record's `status: closed` in one commit. A clone cannot reach
-   `.superpowers/`, so the PR body carries the red-at-base output inline.
+3. Done — three fresh-context passes on those two (W17, W22, W24), then both
+   records' `verdict` and the wave-1b record's `status: closed` in one commit. A
+   clone cannot reach `.superpowers/`, so the PR bodies carry red-at-base output.
 4. Open — the 14 deferred wave-1b minors, the governing-copy drift check, the
    stale-grant rule, and the CHANGELOG entry for each release document touched.
 
@@ -55,10 +55,10 @@ tree's, now that `protected_paths` no longer registers the release face.
 
 ## Completion condition
 
-Not met, and the target is stated as a command rather than a remembered number:
-`python .ai/scripts/sync_verify.py` exits 0 with no FAILED line on this tree once
-both records read `accepted` and the wave-1b record reads `status: closed`, with
-W19's dry-run measurements reproduced on the way. The suite is green at
+Met, and stated as a command rather than a remembered number: with both records
+`accepted` and the wave-1b record `status: closed`, `python .ai/scripts/sync_verify.py`
+exits 0 with no FAILED line and no `[SKIP]`, and `pytest tests/ -n 8 -o addopts= -q`
+is green. Re-run them; a total copied out of this file describes its own tree. The suite is green at
 `516 passed, 5 skipped` (`python -m pytest tests/ -n 8 -o addopts= -q`) as of this
 writing; re-run it, do not quote this line. What remains before this task can close
 is review and acceptance, not more code.

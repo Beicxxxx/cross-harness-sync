@@ -1,7 +1,7 @@
 # Latest Handoff
 
-> Updated: 2026-09-22 18:28 (+10:00) by qoder-cli, mid wave 1c: the release gate
-> and the verdict-vs-`status` split are pushed on PR #3 and stacked PR #4.
+> Updated: 2026-09-22 19:55 (+10:00) by qoder-cli: wave 1c is accepted on PR #3
+> and stacked PR #4, and nothing is merged. The gate and the split are the last in.
 > Budget: ≤ 80 lines. Background and boundary statements live in
 > `.ai/state/CURRENT.md` — link, never copy.
 
@@ -34,9 +34,9 @@
 
 ## 2. Not done
 
-- Neither record is accepted: both read `verdict: pending`. Four fresh-context
-  passes have run (W13, W17, twice in W22); the closure they produced has not been
-  looked at, and `window_start_commit` is new shipped behaviour since.
+- W24's own closures (the live/closed base rule, the unreadable and unanchored
+  arms) were accepted without a fourth pass, because the pass that would review a
+  fix can always ask for one more. Say so in anything that describes this stage.
 - The CHANGELOG entry for the release documents is not written, though
   `README.md` and `SKILL.md` figures were re-measured.
 - Deferred: 14 wave-1b minors, the governing-copy drift check, the stale-grant
@@ -53,9 +53,8 @@
 
 ## 4. Warnings
 
-- `python .ai/scripts/sync_verify.py` names `path coverage, release authorization`
-  as FAILED, and that is the mechanism rather than a regression: a pending record
-  certifies nothing. Its counts are this tree's; run it. W19 holds the three measurements
+- `python .ai/scripts/sync_verify.py` exits 0 with no FAILED line and no `[SKIP]`
+  on the accepted tree; it goes red again the moment either verdict is moved back. W19 holds the three measurements
   that locate the gap and the one rehearsal (reverted) that closes it.
 - `.ai/scripts/*` is synced by hand and has no drift check, so a green
   `sync_verify` does not prove the installed verifier matches `scripts/`.
@@ -65,11 +64,11 @@
 
 ## 5. Next step
 
-One fresh-context pass over W23's closures — the base cross-check, the unreadable
-and unanchored window arms, the review prompt's closed-record line. Then ONE commit
-that accepts both records and writes `status: closed` on
-`.ai/state/authorizations/2026-09-22-wave1b-dogfood.md` — never its `verdict`,
-which is what covers wave 1b's own touches. Merging is the user's call.
+Wave 1c's remaining work is the deferred list in `.ai/state/TASK.md` §Required
+work 4, and nothing else on this branch. Merging PR #3 then #4 is the user's call,
+in those terms; the acceptance is already committed, with wave 1b carrying
+`status: closed` rather than a rewritten `verdict` (W19) — that is what keeps its
+own commits covered.
 
 ## 6. Must-read list
 
