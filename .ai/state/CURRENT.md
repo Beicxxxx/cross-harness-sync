@@ -1,18 +1,17 @@
 # Current Project State — the single source of truth for progress
 
-> Last updated: 2026-09-23 01:09 (+10:00) by qoder-cli (wave 1d accepted; nothing
-> merged). The 01:40/01:50/02:05 headers this replaces ran ~40 min ahead of the clock.
+> Last updated: 2026-09-23 02:31 (+10:00) by cursor (PR #3/#4/#5 merged to main).
 > Budget: this file stays ≤ 60 lines (enforced by `.ai/scripts/sync_verify.py`).
 
 ## At a glance (for humans; machines treat this as authoritative)
 
 | Item | State |
 |---|---|
-| Current stage | Wave 1d on `v2.1-wave1d-deferred-queue`; wave 1c on PR #3 + stacked PR #4; PR #2 merged as `0bc4d7f` |
-| Authorization | both wave-1d records `verdict: accepted`; wave 1c's two are `accepted` and `status: closed` |
-| Blockers | merge only: PR #3, PR #4 and wave 1d's own PR are the user's call, as are tag and Release |
+| Current stage | Wave 1c + 1d merged on `main` tip `22f460d`; no next wave funded |
+| Authorization | wave-1d both faces still `verdict: accepted` (1 live); wave 1c `accepted` + `status: closed` |
+| Blockers | tag, GitHub Release, version bump, and void-queue funding are the user's |
 | Health check | `python .ai/scripts/sync_verify.py` |
-| Red lines | no "all green", no "enforced", no "cross-family"; no tag or release without the user |
+| Red lines | no "all green", no "enforced", no "cross-family"; no tag/Release without the user |
 
 ## 1. Objective (one sentence)
 
@@ -22,26 +21,21 @@ machines using files and git alone. Background: the v2.1 design spec under
 
 ## 2. Active authorization (this stage)
 
-`.ai/state/authorizations/2026-09-22-wave1d.md` (runtime face) and
-`docs/release-authorizations/2026-09-22-wave1d-product-changes.md` (what ships) —
-both `verdict: accepted`, after two fresh-context review passes. Their acceptance
-closes wave 1c by `status`, because two live accepted records in one window is the
-condition `swarm boundary` exists to refuse. Measurements and each review finding's
-disposition: `docs/evidence/wave1d-facts.md`; the open queue:
-`docs/evidence/wave1d-queue.md`. Reviewers were fresh-context subagents; their model
-families are not readable from this host's logs, so the honest value is
-`NOT_REPORTED` — R5 forbids guessing either way.
+No funded implementation row. Wave 1d's records remain the last accepted live
+pair (runtime `.ai/state/authorizations/2026-09-22-wave1d.md`, release
+`docs/release-authorizations/2026-09-22-wave1d-product-changes.md`). They were
+not edited at merge. Open void: `docs/evidence/wave1d-queue.md`.
 
 ## 3. Where the work stands
 
 | Stream | State |
 |---|---|
 | Wave 1a | merged; 26 of 27 defects fixed, D14 was the single deferral |
-| Wave 1b | merged as PR #1 (`3a5f2a9`): governance records, coverage walk, `--review-prompt`, `--migrate`, D14, N1 |
+| Wave 1b | merged as PR #1 (`3a5f2a9`) |
 | This repo's own install | `.ai/` is on `main` (PR #2 merged as `0bc4d7f`) |
-| Wave 1c | accepted on PR #3/#4, unmerged: policy/R3-R5, `git add -A`, unfilled slots, the release gate, and verdict-vs-`status` |
-| Wave 1d | accepted, unmerged, on its own branch: check 10 `governing copy`, the runtime window guard shared with the release face, one anchor predicate, and the deferred queue as a tracked file with every row dispositioned |
-| Release | undecided: no tag, no GitHub Release |
+| Wave 1c | merged via PR #3 then #4 (`dc364f5`, `53fcfb9`) |
+| Wave 1d | merged via PR #5 (`22f460d`) |
+| Release | undecided: no tag, no GitHub Release, no version bump |
 
 ## 4. Stage history
 

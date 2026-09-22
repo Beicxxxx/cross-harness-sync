@@ -1,9 +1,14 @@
 {
-  "agent": "qoder-cli",
-  "reason": "",
-  "acquired_at": "2026-09-22T22:34:54+10:00",
-  "expires_at": "2026-09-23T02:34:54+10:00",
-  "released_at": "2026-09-23T01:07:29+10:00",
-  "epoch": 4,
-  "released_by": "qoder-cli"
+  "agent": "cursor",
+  "reason": "post-merge-state-closeout after stash interrupted prior lock",
+  "acquired_at": "2026-09-23T02:27:00+10:00",
+  "expires_at": "2026-09-23T06:27:00+10:00",
+  "released_at": "2026-09-23T02:35:59+10:00",
+  "epoch": 5,
+  "forced_over": {
+    "agent": "qoder-cli",
+    "epoch": 4,
+    "acquired_at": "2026-09-22T22:34:54+10:00"
+  },
+  "released_by": "cursor"
 }
