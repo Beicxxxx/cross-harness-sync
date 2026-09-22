@@ -1988,7 +1988,15 @@ def fill_installer_slots(root: Path) -> list[str]:
         res = run_git(root, list(args), timeout=15)
         return res.out().strip() if res.ok else ""
 
-    name, email = git_text("config", "user.name"), git_text("config", "user.email")
+    # `--local` is the whole point of this line. Plain `git config user.name`
+    # resolves local -> global, and a repository created with `git init` inherits
+    # nothing until someone sets it, so on a machine whose GLOBAL identity is some
+    # school or employer address the installer would copy that into a stranger's
+    # AGENTS.md and call it resolved. Wave 1c's own review reproduced exactly that:
+    # a fresh `git init` answered the tester's global identity. An absent local
+    # value is a missing value, and the WARN below is the honest output.
+    name, email = (git_text("config", "--local", "user.name"),
+                   git_text("config", "--local", "user.email"))
     if name and email:
         identity = f"{name} <{email}>"
     else:

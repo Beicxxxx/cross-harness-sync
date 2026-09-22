@@ -53,3 +53,15 @@ boundaries for someone else's repository.
 No tag, no Release, no version bump. `SKILL.md` and `reference.md` document two
 of these behaviours (the placeholder instruction and the review tier), so they
 are part of this change, not a later one.
+
+## Amended after the review (W8, W13)
+
+`fill_installer_slots()` first read `git config user.name`, which resolves local ->
+global. A repository created by `git init` carries no `[user]` block, so on a
+machine whose global identity is an institutional address the installer wrote that
+address into a stranger's `AGENTS.md` and reported the slot as resolved — the very
+thing this project exists to prevent, reintroduced by the fix for it. It now reads
+`--local` only, and treats a missing local value as missing. The hermetic test HOME
+could not see this, which is why the first cut passed its own suite;
+`test_c3_a_global_identity_is_not_written_into_a_strangers_repo` injects
+`GIT_CONFIG_GLOBAL` so the fallback cannot return unreported.

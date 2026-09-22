@@ -28,7 +28,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from helpers import REPO_ROOT, git, make_repo, run_python, scaffold
+from helpers import REPO_ROOT, SCRIPTS, git, make_repo, run_python, scaffold
 
 TEMPLATE_ROLE = REPO_ROOT / "templates" / "ROLE_POLICY.md"
 TEMPLATE_AGENTS = REPO_ROOT / "templates" / "AGENTS.md"
@@ -181,3 +181,30 @@ def test_c3_control_an_unidentifiable_repo_is_named_not_guessed(tmp_path):
     out = res.stdout + res.stderr
     assert SLOT_NAME not in (repo / "AGENTS.md").read_text("utf-8")
     assert "identity" in out.lower(), out
+
+
+def test_c3_a_global_identity_is_not_written_into_a_strangers_repo(tmp_path):
+    """The fallback this stage's own review reproduced: no local identity, so git
+    answers from the machine's global config.
+
+    Plain `git config user.name` resolves local -> global and `git init` writes no
+    `[user]` block, so on a host whose global address is a school or employer one
+    the installer published it into someone else's `AGENTS.md` and called the slot
+    resolved — the exact thing this project exists to avoid, reintroduced by the
+    fix. `scaffold`'s hermetic HOME hides the global file, which is why the earlier
+    control above could never see it, so the child is handed one on purpose.
+    """
+    repo = make_repo(tmp_path)
+    git(repo, "config", "--remove-section", "user")
+    global_cfg = tmp_path / "global.gitconfig"
+    global_cfg.write_text("[user]\n\tname = Global Person\n"
+                          "\temail = global@machine.example\n", encoding="utf-8")
+    res = run_python(SCRIPTS / "init_sync.py", [str(repo)], cwd=repo,
+                     env={"GIT_CONFIG_GLOBAL": str(global_cfg),
+                          "GIT_CONFIG_SYSTEM": str(tmp_path / "absent")})
+    assert res.rc == 0, res.stdout + res.stderr
+    agents = (repo / "AGENTS.md").read_text("utf-8")
+    assert "global@machine.example" not in agents and "Global Person" not in agents, \
+        "the installer fell back to the machine's global identity"
+    assert SLOT_NAME not in agents
+    assert "identity" in (res.stdout + res.stderr).lower(), res.stdout
