@@ -78,9 +78,10 @@ from typing import NamedTuple
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     from ai_common import (AUTHORIZATIONS_SUBDIR, DEFAULT_REQUIRED_FILES,
-                           REQUIRED_FILE_FLOOR, RepoError, SHA_HEX_LEN,
+                           REQUIRED_FILE_FLOOR, RepoError,
                            authorization_records, checkout_layout,
-                           commit_exists, decode, is_accepted, is_live_stage,
+                           commit_exists, decode, is_accepted, is_full_sha,
+                           is_live_stage,
                            parse_governance_block, protect_stdio,
                            resolve_roots, run_argv, run_git,
                            with_required_file_floor, worktree_listing)
@@ -850,12 +851,14 @@ def _review_records(auth_dir):
 def _review_is_sha(value):
     """True for a FULL object id and nothing else.
 
-    One copy of the rule (40 hex chars, `SHA_HEX_LEN` from `ai_common`): the
-    window a config records and the window this command ends up diffing are the
-    same question asked twice, and two spellings of it drift.
+    Delegated to `ai_common.is_full_sha` in wave 1d (Q3). This was its own copy —
+    same length rule, plus `ABCDEF` in the character class — and git resolves an
+    uppercase id happily, so the only thing the second copy produced was
+    disagreement: this command diffed from an anchor `path coverage` FAILed on the
+    same bytes. The window a config records and the window this command ends up
+    diffing are one question, so they are now one predicate.
     """
-    return (isinstance(value, str) and len(value) == SHA_HEX_LEN
-            and all(c in "0123456789abcdefABCDEF" for c in value))
+    return is_full_sha(value)
 
 
 def _record_state(fields):

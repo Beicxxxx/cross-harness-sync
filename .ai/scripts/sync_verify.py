@@ -1426,6 +1426,31 @@ def check_coverage_walk(cfg: dict) -> None:
                f"shallow/indeterminate history ({shallow.lower()}): the bounded "
                f"walk cannot certify coverage of window {window[:8]}..HEAD")
         return
+    # The records are read before the walk, not after it, and that ordering is the
+    # guard: a narrowed window sees an empty range, so a check that only ran on the
+    # uncovered-answer path would never be reached by exactly the case it exists to
+    # catch.
+    records, _absent = _authorization_records(cfg)
+    editable = []
+    bases = []
+    for rec in records:
+        if ai_common.is_accepted(rec["fields"]) and rec["text"] is not None:
+            editable += _section_bullets(rec["text"], "Editable files")
+            bases.append((rec["rel"],
+                          str((rec["fields"] or {}).get(
+                              "window_start_commit", "") or "").strip(),
+                          ai_common.is_live_stage(rec["fields"])))
+    conflicts = _base_conflicts(bases, window, "governance.window_start_commit",
+                                require_base=False)
+    if conflicts:
+        record("path coverage", False,
+               f"{len(conflicts)} accepted authorization(s) do not bound the "
+               f"window that was walked: "
+               + "; ".join(f"{name} {why}" for name, why in conflicts)
+               + " -- spec 6.3: the walk can only govern the range it is given, so "
+                 "an anchor moved past a live stage's own base reports that stage's "
+                 "protected work as absent rather than as uncovered")
+        return
     pathspec = _protected_pathspec(paths, cfg)
     rev = f"{window}..HEAD"
     nonmerge, why = ai_common.log_paths(
@@ -1471,11 +1496,6 @@ def check_coverage_walk(cfg: dict) -> None:
                    "renamed protected set governs nothing, and a permanently "
                    "green line is how that hides (spec 4: named, never PASS)")
             return
-    records, _absent = _authorization_records(cfg)
-    editable = []
-    for rec in records:
-        if ai_common.is_accepted(rec["fields"]) and rec["text"] is not None:
-            editable += _section_bullets(rec["text"], "Editable files")
     uncovered = [(sha, rel) for sha, rel in touched
                  if not ai_common.glob_match(rel, editable,
                                              case_sensitive=_case_sensitive(cfg))]
@@ -1603,7 +1623,8 @@ def check_release_authorization(cfg: dict) -> None:
                "authorises the whole release face for every later commit")
         return
 
-    conflicts = _release_base_conflicts(bases, window)
+    conflicts = _base_conflicts(bases, window, "release_window_start_commit",
+                                require_base=True)
     if conflicts:
         record("release authorization", False,
                f"{len(conflicts)} accepted release record(s) do not bound the "
@@ -1693,33 +1714,43 @@ def check_release_authorization(cfg: dict) -> None:
            f"({origin})")
 
 
-def _release_base_conflicts(bases, window):
-    """`(name, why)` for each LIVE accepted release record whose own base the
-    walked window has left behind; empty when every one still bounds its history.
+def _base_conflicts(bases, window, anchor_key, require_base):
+    """`(name, why)` for each LIVE accepted record whose own base the walked
+    window has left behind; empty when every one still bounds its history.
 
-    The anchor is a config line and the walk's reach is exactly that line, so
-    advancing `release_window_start_commit` past a record's declared base drops
-    the commits that record authorised — and they then read as COVERED, because
-    nothing walks them any more. `_degenerate_empty_window` catches the two
-    shapes that empty the range entirely; this catches the one that merely
-    narrows it.
+    Shared by both walks in wave 1d (Q2) — it was `_release_base_conflicts`, and
+    the runtime face had the same hole with no answer in it. The anchor is a
+    config line and the walk's reach is exactly that line, so advancing
+    `{anchor_key}` past a record's declared base drops the commits that record
+    authorised — and they then read as COVERED, because nothing walks them any
+    more. `_degenerate_empty_window` catches the two shapes that empty the range
+    entirely; this catches the one that merely narrows it.
 
     A `status: closed` record is exempt, and that is the same split W19 had to
-    make for `swarm boundary`: re-anchoring the release window at a new wave is
-    the lifecycle, so binding a finished stage's base to it forever would make
-    the second wave of any project permanently red — the remedy would then be to
-    edit or delete an approved record, which is strictly worse than the hole.
+    make for `swarm boundary`: re-anchoring at a new wave is
+    the lifecycle, so binding a finished stage's base to the window forever would
+    make the second wave of any project permanently red — the remedy would then be
+    to edit or delete an approved record, which is strictly worse than the hole.
     What is refused is shrinking the window out from under a stage still open.
-    An accepted record must still state its base: `verdict: accepted` naming no
-    range is a claim nobody can check.
+
+    `require_base` is where the two faces genuinely differ, and it is a fact about
+    history rather than a style choice. The release field is new: its template has
+    demanded a base since the first release record, so `verdict: accepted` naming
+    no range is a claim nobody can check and is refused. Runtime records predate
+    the field by three versions and an accepted one cannot be edited to add a line
+    it never carried, so a missing base on that side is no claim at all — and the
+    empty-window hole that leaves open is named in `docs/evidence/wave1d-queue.md`
+    instead of being papered over with a red every existing install would answer by
+    rewriting its own history.
     """
     out = []
     for name, base, live in bases:
         if not live:
             continue
         if not base:
-            out.append((name, "declares no `window_start_commit`, so the window it "
-                              "authorises cannot be checked against the one walked"))
+            if require_base:
+                out.append((name, "declares no `window_start_commit`, so the window it "
+                                  "authorises cannot be checked against the one walked"))
             continue
         if not ai_common.window_is_valid(base):
             out.append((name, f"names {base!r} as its base, which is not a commit "
@@ -1733,9 +1764,10 @@ def _release_base_conflicts(bases, window):
         if ai_common.git_ancestor(ROOT, window, base) != "TRUE":
             out.append((name, f"its base {base[:8]} is not at-or-after the walked "
                               f"window's anchor {window[:8]}: the anchor has been "
-                              "moved past the commits this record authorised, so "
-                              "the walk reports them neither uncovered nor covered "
-                              "-- it never looks"))
+                              f"moved past the commits this record authorised, so "
+                              f"the walk reports them neither uncovered nor covered "
+                              f"-- it never looks. `{anchor_key}` names the "
+                              "narrowed range"))
     return out
 
 

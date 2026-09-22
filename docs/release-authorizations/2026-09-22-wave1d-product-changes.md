@@ -6,7 +6,7 @@
 
 ## What ships
 
-Four lines, each a gap wave 1c found by being bitten by the first, by its own
+Five lines, each a gap wave 1c found by being bitten by the first, by its own
 reviewers on the second and third, and by a count that moved under it on the
 fourth. Each row is the defect in the product as published, not a description of
 the diff.
@@ -16,6 +16,7 @@ the diff.
 | `scripts/sync_verify.py` | `.ai/scripts/*.py` are the copies that actually govern an installing repository, and nothing compared them to `scripts/*.py`. Wave 1c edited the source twice and hand-copied, reporting green each time while the governing verifier could have been anything. A protocol whose own installed copy can silently differ from what it ships has no answer to "which rules ran". |
 | `scripts/sync_verify.py` | The runtime coverage walk takes its window from one config line and compares it to nothing, so advancing `governance.window_start_commit` drops commits from the walk and they read as covered rather than as missing. Wave 1c closed this for the release face by asking each accepted record to declare its base; the runtime face has no such declaration, and the hole is the same shape. |
 | `scripts/checkpoint.py`, `scripts/ai_common.py` | `checkpoint._review_is_sha` accepts uppercase hex where `ai_common.window_is_valid` refuses it, so one repository carries two definitions of "is this a commit id" and the review prompt's window answer can disagree with the verifier's. One predicate, in `ai_common`, is the fix. |
+| `templates/AUTHORIZATION.md` | The template told a stage that `window_start_commit:` is "release records only". It is now the line that binds THIS repository's own coverage window too: a live accepted runtime record that states its base refuses an anchor moved past it, and one that states nothing is unguarded at its back edge. A field whose contract lives only in the checker is a field people get wrong. |
 | `README.md`, `SKILL.md` | Both publish the fresh-install and migrated-install verifier figures as measured numbers. A check added to the shipped verifier falsifies them on the day it lands, which is how wave 1c's own review found the pair unprotected; they are re-measured here rather than carried forward. |
 
 ## What is deliberately not in here
@@ -23,8 +24,10 @@ the diff.
 No new config key, and no change to `templates/sync_config.json`: the drift check
 compares the two installed copies by file name and digest, so it cannot be turned
 off by a project's config and cannot be widened to paths the install does not have.
-The narrowing guard reads committed history for the previous value of the anchor
-rather than inventing a field, because a field is a self-report and history is not.
+The narrowing guard reads the base each record already states rather than inventing
+a field, because a field is a self-report and history is not — which is why
+`templates/AUTHORIZATION.md` is in here: the field existed, and its contract on the
+runtime side existed only inside the checker.
 `tests/` is in the release face and is enumerated below, since a shipped test that
 pins a count is part of what a downstream project reads.
 
@@ -40,6 +43,7 @@ grants nothing to its second path and a wildcard grants too much forever.
 - `README.md`
 - `reference.md`
 - `SKILL.md`
+- `templates/AUTHORIZATION.md`
 - `tests/test_lane_1d_governing_copy.py`
 - `tests/test_coverage_walk.py`
 - `tests/test_authorization_records.py`
@@ -60,7 +64,11 @@ grants nothing to its second path and a wildcard grants too much forever.
 ## Completion condition
 
 Each row above has a case that was red against `aecd536bc2e073e19d60ebc984ba614f1a6fc549`
-first, in `tests/test_lane_1d_governing_copy.py` or `tests/test_coverage_walk.py`.
+first, in `tests/test_lane_1d_governing_copy.py` (D-1..D-6, the drift check),
+`tests/test_coverage_walk.py` (E-1..E-4, the narrowing guard) or
+`tests/test_review_prompt.py` (the uppercase anchor). E-2, E-3, E-4 and D-5 are
+controls: they pin what the new rules must NOT do, and they were green before and
+after, which is what makes them evidence rather than decoration.
 The check-count tripwire in `tests/test_authorization_records.py` is expected to
 pull when a check is added: re-measure the fresh-install and migrated totals from
 the run rather than editing the expectation to the old number.
