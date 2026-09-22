@@ -40,6 +40,9 @@
     }
   ],
   "protected_paths": [
+    ".ai/scripts/*",
+    ".ai/scripts/*.py",
+    ".ai/sync_config.json",
     "docs/evidence/*",
     "docs/release-authorizations/*"
   ],
@@ -54,7 +57,8 @@
     "templates/*",
     "README.md",
     "SKILL.md",
-    "reference.md"
+    "reference.md",
+    "tests/*"
   ],
   "release_authorizations_dir": "docs/release-authorizations",
   "release_window_start_commit": "0bc4d7f54a37a0cf0c15bc999af42eac320d073e"

@@ -451,6 +451,48 @@ def is_accepted(fields) -> bool:
         return False
     return str(fields.get("verdict", "") or "").strip().lower() == "accepted"
 
+
+RECORD_STATUS_KEY = "status"
+RECORD_OPEN = "open"
+RECORD_CLOSED = "closed"
+
+
+def record_status(fields) -> str:
+    """What the record itself says about whether its stage is still being worked.
+
+    Two questions get asked of one file and a single field cannot hold both:
+    `verdict` says the user accepted this stage — which is what makes its
+    `## Editable files` an AUTHORITY over the commits it names, for the rest of
+    the window — while `status` says whether a writer is still working under it.
+    Wave 1c answered the second question with the first field (`verdict:
+    retired`) and the coverage walk then reported the finished stage's own
+    commits as unauthorized.
+
+    Absent or empty is `open`, so a record written before this key existed keeps
+    the meaning it had then. A value that is neither word comes back verbatim and
+    is read as `open` by `is_live_stage`: the mistake direction must cost the
+    author a red line rather than silence a check.
+    """
+    if not fields:
+        return RECORD_OPEN
+    raw = fields.get(RECORD_STATUS_KEY)
+    value = "" if raw is None else str(raw).strip().lower()
+    return value or RECORD_OPEN
+
+
+def is_live_stage(fields) -> bool:
+    """Accepted AND not closed — the record `swarm boundary` counts as a writer.
+
+    Coverage and the release gate deliberately do not call this: they ask what
+    was authorised, and that answer does not decay when the stage finishes. The
+    claim is reviewable, not forge-proof — a record can always write
+    `status: closed` to step out of the concurrency count, exactly as it can
+    write a false `verdict`, and spec 6.3 already says a fabricated record looks
+    the same here.
+    """
+    return is_accepted(fields) and record_status(fields) != RECORD_CLOSED
+
+
 _GOVERNANCE_OPEN = "```governance"
 _GOVERNANCE_CLOSE = "```"
 _GOV_KEY = re.compile(r"^[a-z][a-z0-9_]*$")

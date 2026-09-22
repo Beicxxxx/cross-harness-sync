@@ -1,15 +1,15 @@
 # Current Blockers
 
-> Last updated: 2026-09-22 12:20 (+10:00)
-> Updated by: qoder-cli (PR #2 merged as `0bc4d7f`; wave 1c running, unreviewed).
+> Last updated: 2026-09-22 18:45 (+10:00)
+> Updated by: qoder-cli (wave 1c, both records pending acceptance).
 
 ## Active blocker
 
-Nothing technical. Two things gate wave 1c closing: this increment has had **no
-review**, so `.ai/state/authorizations/2026-09-22-wave1c.md` reads
-`verdict: pending` and no text here may imply it was reviewed; and PR #3 is open
-rather than merged. The user's own decisions remain merge, tag/Release, and how
-much of the deferred minor list to fund.
+Nothing technical. Two things gate wave 1c closing: the release gate and the
+`verdict`/`status` split have not had a fresh-context pass since W18/W19, so both
+records read `verdict: pending` and no text here may imply they were reviewed; and
+PR #3 and PR #4 are open rather than merged. The user's own decisions remain merge,
+tag/Release, and how much of the deferred minor list to fund.
 
 ## Not blockers
 

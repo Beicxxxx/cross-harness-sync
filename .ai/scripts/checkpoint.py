@@ -78,12 +78,12 @@ from typing import NamedTuple
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 try:
     from ai_common import (AUTHORIZATIONS_SUBDIR, DEFAULT_REQUIRED_FILES,
-                           REQUIRED_FILE_FLOOR, RepoError, SHA_HEX_LEN,
-                           authorization_records, checkout_layout,
+                           RECORD_CLOSED, REQUIRED_FILE_FLOOR, RepoError,
+                           SHA_HEX_LEN, authorization_records, checkout_layout,
                            commit_exists, decode, is_accepted,
-                           parse_governance_block, protect_stdio, resolve_roots,
-                           run_argv, run_git, with_required_file_floor,
-                           worktree_listing)
+                           parse_governance_block, protect_stdio, record_status,
+                           resolve_roots, run_argv, run_git,
+                           with_required_file_floor, worktree_listing)
 except ImportError:
     print("[FAIL] install layout: ai_common.py is missing from .ai/scripts/ -- "
           "re-run init_sync.py so the shared primitives are copied in")
@@ -859,7 +859,8 @@ def _review_is_sha(value):
 
 
 def _record_state(fields):
-    """`('accepted'|'declined'|'legacy', detail)` for one record.
+    """`('accepted'|'closed'|'declined'|'legacy'|'malformed'|'unreadable', detail)`
+    for one record.
 
     `accepted` is the verdict B1's swarm boundary counts, and it is decided the
     SAME WAY here — the one `ai_common.is_accepted` predicate, normalised
@@ -873,11 +874,22 @@ def _record_state(fields):
     predicate must not swallow. No `expires_at` at all is `n/a`: this protocol
     scopes an authorization to a stage, not to a TTL, and silence is the honest
     answer.
+
+    `status` IS consulted, and by both readers for the same reason: it is the
+    record's own claim that its stage has finished, which `sync_verify`'s
+    boundary answers with and its coverage walk does not. A record in this state
+    is `closed` here so the prompt cannot print a finished stage as the live
+    scope; its text is still shown, because it remains the authority over the
+    commits it names.
     """
     if fields is None:
         return "legacy", "governance: absent"
     if not is_accepted(fields):
         return "declined", f"verdict: {fields.get('verdict') or '(no verdict key)'}"
+    if record_status(fields) == RECORD_CLOSED:
+        return "closed", ("status: closed (a finished stage: not the live writer "
+                          "the boundary counts, still the authority over the "
+                          "commits it names)")
     raw = fields.get("expires_at")
     value = "" if raw is None else str(raw).strip()
     if not value or value in ("n/a", "NOT_REPORTED"):
@@ -940,6 +952,7 @@ def _review_authorization_block(cfg, notes):
                  f"{len(records)} record(s) and none of them is an accepted "
                  "authorization")
     for state, wording in (("declined", "not accepted"),
+                           ("closed", "finished stage, not the live scope"),
                            ("malformed", "governance block invalid"),
                            ("unreadable", "unreadable"),
                            ("legacy", "governance: absent")):

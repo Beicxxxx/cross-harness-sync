@@ -1,56 +1,71 @@
-# Next Prompt — finish wave 1c: the deferred minors, then the release documents
+# Next Prompt — close wave 1c: one review, then the acceptance commit
 
 You are the single active implementation executor. Read, in order:
-`.ai/state/ROLE_POLICY.md` (tiers, R1–R7 — note that R3 and R5 were reconciled on
-2026-09-22 and cross-family is now a recorded preference, not a gate);
-`.ai/state/CURRENT.md` §5 and `.ai/state/BLOCKERS.md` (binding disclosures);
-`.ai/state/authorizations/2026-09-22-wave1c.md` (runtime face) and
-`docs/release-authorizations/2026-09-22-wave1c-product-changes.md` (release face);
-spec §2 (publishing red lines) under `docs/superpowers/specs/`.
+`.ai/state/ROLE_POLICY.md` (tiers, R1–R7 — R3 and R5 were reconciled on
+2026-09-22, so cross-family is a recorded preference, not a gate);
+`.ai/state/CURRENT.md` §5 and `.ai/state/BLOCKERS.md`; both wave-1c records
+(`.ai/state/authorizations/2026-09-22-wave1c.md` for the runtime face,
+`docs/release-authorizations/2026-09-22-wave1c-product-changes.md` for what ships);
+spec §2 (publishing red lines) under `docs/superpowers/specs/`. One rule shapes
+every step below: `scripts/` and `templates/` ship to other people, so they are
+authorised in `docs/release-authorizations/` and never by a record under
+`.ai/state/authorizations/` — the user's ruling of 2026-09-22, and
+`release authorization` enforces the separation now.
 
-## Which face is which — the rule that shapes every step below
+## Where the branch stands
 
-`templates/` and `scripts/` ship to other people. They are authorised in
-`docs/release-authorizations/`, never by a record under `.ai/state/authorizations/`,
-and `protected_paths` no longer lists them: the previous stage registered the
-release face there, which let this repository's own runtime certify what gets
-published. The user ruled on this on 2026-09-22. Editing a shipped file under a
-runtime record is the exact error to avoid; `path coverage` will no longer catch it.
+On `v2.1-wave1c-release-gate` (stacked on `v2.1-wave1c-governance-defects`; PR #3
+then PR #4), pushed through `81ff416`:
 
-## Done, on branch `v2.1-wave1c-governance-defects`
+- Three release-face defects fixed red-first in
+  `tests/test_lane_1c_governance.py`: `R3`/`R5` contradicted each other; the shipped
+  instructions ordered `git add -A`; the installer's own slots were copied verbatim
+  and unchecked. `init_sync.py` now resolves only what its repository can know
+  (`git config --local`, never the machine's fallback) and drops ROLE_POLICY
+  section 7 with a `WARN` rather than inventing it.
+- `sync_verify.py` gained the `release authorization` gate
+  (`tests/test_lane_1c_release_gate.py`), and `verdict` was split from `status`:
+  closing a finished stage no longer retracts the coverage its own record grants
+  (`tests/test_swarm_boundary.py`, W19). `.ai/state/ROLE_POLICY.md` is re-pinned.
 
-- The three defects found by line number, all fixed on the release face with
-  red-first tests in `tests/test_lane_1c_governance.py` (9 cases): `R3`/`R5`
-  contradicted each other; the templates and `README.md`/`SKILL.md` ordered
-  `git add -A`; `<NAME> <<EMAIL>>` and the `Adopted:` line were copied verbatim and
-  nothing checked them.
-- `init_sync.py` now resolves the slots only it can know (project name, remote,
-  commit identity from the repository's own config) and `sync_verify.py` reports
-  what is left. Section 7 is dropped with a `WARN`, never invented for a stranger.
-- `.ai/state/ROLE_POLICY.md` is finished and re-pinned; `AGENTS.md` states the
-  two-face rule. Measurements: `docs/evidence/wave1c-facts.md`.
+Two claims in an earlier version of this file were withdrawn: the identity defect
+was never in `templates/AGENTS.md` (it holds a placeholder; the sentence pointing at
+repo history was this repository's own), and the "third template defect" logged from
+it did not exist. Measurements, including the dry-run numbers below, are in
+`docs/evidence/wave1c-facts.md` W1…W21.
 
-Two claims in the previous version of this file were wrong and are withdrawn: the
-identity defect was never in `templates/AGENTS.md` (which holds a placeholder, not
-a sentence pointing at repo history — the sentence was this repository's own), and
-the "third template defect" I logged from it did not exist.
+## Step 1 — the review, before anything is accepted
 
-## Still to do — wave 1c's deferred list
+One fresh-context pass on the release gate and the `verdict`/`status` split: a
+subagent with no shared history, `git diff main...HEAD`, and mutants rather than
+comments to attack. Re-run every finding before acting on it, and record what its
+model family was — or that it could not be read (W14).
+
+## Step 2 — the acceptance commit, exactly
+
+ONE commit, because each verdict change alone is a self-approval:
+
+- `verdict: pending` → `accepted` in both records;
+- `status: closed` on `.ai/state/authorizations/2026-09-22-wave1b-dogfood.md` —
+  NOT its `verdict`, which is what covers wave 1b's own protected touches;
+- `python .ai/scripts/sync_verify.py` then exits 0 with no FAILED line. W19 holds
+  the three dry-run measurements that define the gap (30 / 5 / 11 uncovered of 39).
+
+Merging PR #3 and #4 stays the user's call, in those terms.
+## Then: wave 1c's deferred list
 
 - Wave-1b minors: M-3, M-4, M-5, M-7..M-14; `checkpoint._review_is_sha` accepting
   uppercase; `_migration_commit`'s post-commit listing check fixed without a test;
   15 duplicated `_load` helpers across 5 signatures.
-- The governing-copy drift check: `.ai/scripts/*.py` is the copy that actually runs
-  and it is outside `protected_paths`. Nothing detects it diverging from `scripts/`,
-  so a green `sync_verify` is not evidence the installed verifier matches the source.
-  This stage hit that limit itself — the fix landed in `scripts/` and had to be
-  copied by hand. Fix = a drift check, not protecting the copy.
-- The stale-grant rule: coverage unions the editable lists of every accepted record
-  in the window, so a closed stage keeps authorising. `_section_bullets` reads each
-  bullet as an `fnmatch` pattern and `*` crosses `/`, so enumerate, never wildcard.
-- Re-measure the three figures `SKILL.md`/`README.md` publish, and land a CHANGELOG
-  entry per release document touched. Do not carry numbers from
-  `docs/evidence/wave1b-facts.md` — they belong to their own trees.
+- The governing-copy drift check: `.ai/scripts/*` is the copy that actually runs and
+  nothing detects it diverging from `scripts/`, so a green `sync_verify` is not
+  evidence the installed verifier matches the source — this stage copied by hand.
+  Fix = a drift check, not un-protecting the copy.
+- The stale-grant rule, and `*`-crosses-`/` for runtime records: `_section_bullets`
+  reads a bullet's FIRST path as an `fnmatch` pattern, so enumerate one path per
+  line (a packed bullet grants nothing to its second — W20) and never wildcard an
+  accepted record. Also open: the coverage walk's share of the degenerate-window
+  guard (W18), and a CHANGELOG entry per release document touched.
 
 ## Hazards that bit this stage
 
@@ -60,22 +75,20 @@ the "third template defect" I logged from it did not exist.
 2. Filling the installer's own slots makes the output differ from its template, so
    `is_template_shaped()` starts calling every install hand-edited and `--force`
    refreshes nothing. `installer_slot_lines()` is the fix — do not "simplify" it.
-3. Reading `AGENTS.md` as UTF-8 crashed on a GBK file. `exists()` answers False for
-   files this host merely denies, so it cannot guard that read either.
-4. `.ai/runtime/WRITER_LOCK.json` holds a released record that `docs/evidence/`
-   cites as D5; re-acquiring overwrites it. This stage holds epoch 3, released at
-   close-out, and the older record survives in the dogfood commits.
-5. `480 passed, 5 skipped` is wave 1b's number on wave 1b's tree. Read the suite's
-   own line on the tree you are writing about.
+3. Two host traps: reading `AGENTS.md` as UTF-8 crashed on a GBK file, and `exists()`
+   answers False for files this host merely denies, so it cannot guard that read;
+   `.ai/runtime/WRITER_LOCK.json` holds a released record `docs/evidence/` cites as
+   D5, and re-acquiring overwrites it (epoch 3, released at close-out).
+4. A figure copied from a handoff describes the tree it was written on; W13 and W17
+   are this stage's own instances, `13 uncovered of 13` among them.
+5. A value folded across lines in a `## Governance` block makes §6 reject the whole
+   block — `fields` comes back `{}` and the record can never be accepted (W17).
 
 ## Mandatory outcome
 
 Every item fails against the tree it is meant to fix, with that output in the PR;
-`python .ai/scripts/sync_verify.py` stays green on this tree with the figure
-re-measured after your change rather than copied; `python -m pytest tests/ -n 8
--o addopts= -q` reports its own totals. Stop for one review, cross-family where a
-second family is reachable, and record which it was — say "reviewed by a different
-model" only when one did.
+`sync_verify.py` and `python -m pytest tests/ -n 8 -o addopts= -q` are run after the
+change and reported as they print, not as remembered.
 
 ## Absolute stop boundary
 

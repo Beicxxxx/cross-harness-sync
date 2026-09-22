@@ -13,9 +13,9 @@
 ## What ships
 
 The published surface a downstream project installs: the files named in
-`## Editable files` below, which is authoritative over any count in this sentence —
-an earlier draft of this line said "six" while its own table listed eight rows and its
-own bullets enumerated eleven paths. Each line is why it is wrong today, not what the diff does.
+`## Editable files` below, which is authoritative over any count written here. Two
+drafts of this sentence were wrong before it was made a pointer rather than a number,
+and the row count below is the third thing to have drifted out of step with the list. Each line is why it is wrong today, not what the diff does.
 
 | File | Defect in the shipped product |
 |---|---|
@@ -25,6 +25,7 @@ own bullets enumerated eleven paths. Each line is why it is wrong today, not wha
 | `templates/sync_config.json` | Ships the three `release_*` keys. Added after the fact: this branch changed the file, the record enumerated eleven other paths and omitted it, and an accepted record that misses a file it touched is not safe, only quiet. |
 | `scripts/ai_common.py`, `scripts/sync_verify.py` | `required <file>` asks whether a state file exists and `budget <file>` asks how long it is, so a verbatim template copy answers both and prints PASSes. Nothing detected a ROLE_POLICY whose authorship line still read `by <who>` — and that file is digest-pinned. |
 | `scripts/init_sync.py` | Copied `<NAME> <<EMAIL>>`, `<PROJECT NAME>`, `<REMOTE URL>` and the Adopted line verbatim, then told the user to fill in "every placeholder" — including the ones only the installer could know. |
+| `scripts/ai_common.py`, `scripts/sync_verify.py`, `scripts/checkpoint.py`, `templates/AUTHORIZATION.md` | One governance field was answering two questions. `verdict: accepted` makes a record the authority over the commits it names AND says the stage is still live, so a repository that finished a second stage had two accepted records and `swarm boundary` went red forever; the only way out was to rewrite the finished record's verdict, which retracted its coverage and made its OWN commits read as unauthorized. `status: open\|closed` now answers the liveness question alone, read by the boundary and the review prompt and deliberately not by the coverage walk. |
 
 ## The ruling behind R3
 
@@ -62,8 +63,10 @@ this list is read one entry per line, so a packed line silently covers nothing.
 
 - `scripts/ai_common.py`
 - `scripts/sync_verify.py`
+- `scripts/checkpoint.py`
 - `scripts/init_sync.py`
 - `templates/AGENTS.md`
+- `templates/AUTHORIZATION.md`
 - `templates/CURRENT.md`
 - `templates/ROLE_POLICY.md`
 - `templates/TASK.md`
@@ -71,6 +74,17 @@ this list is read one entry per line, so a packed line silently covers nothing.
 - `README.md`
 - `SKILL.md`
 - `reference.md`
+- `tests/test_lane_1c_release_gate.py`
+- `tests/test_lane_1c_governance.py`
+- `tests/test_swarm_boundary.py`
+- `tests/test_review_prompt.py`
+- `tests/test_authorization_records.py`
+- `tests/test_subprocess_hardening.py`
+- `tests/test_second_machine.py`
+- `tests/test_harness_smoke.py`
+- `tests/test_coverage_walk.py`
+- `tests/test_ai_common.py`
+- `tests/helpers.py`
 - `templates/sync_config.json`
 
 ## Governance
@@ -80,6 +94,7 @@ tier: T2
 executor: qoder-cli/controller
 reviewer: qoder-cli general-purpose subagent, separate context
 verdict: pending
+status: open
 red_before_green: true
 user_authorized: true
 ```
@@ -87,7 +102,8 @@ user_authorized: true
 The reviewer's model family and tier could not be read from this host's logs (one
 segment, every model field `qfmodel`, no per-agent attribution), so no cross-family
 attestation is made here — R5 records `NOT_REPORTED` rather than guessing. `verdict`
-stays `pending` while the gate's own findings are open; see W17.
+stays `pending` while the gate's own findings are open (W17) and until the
+`verdict`/`status` split has had a fresh pass (W19).
 
 ## Boundary
 

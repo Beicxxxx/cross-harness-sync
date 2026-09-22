@@ -119,7 +119,27 @@ with no other file in the commit. A record that certifies publications but is ce
 nothing is self-approval with extra steps.
 Rationale: the file now sits in the runtime walk, so a verdict change must be covered by an
 accepted runtime record enumerating it, which is the same `is_accepted()` door everything
-else uses. Accepted before that door existed, the pair would have looked like one review
-authorising the other; the ordering is what makes it circular-in-a-good-way rather than void.
+else uses. What this actually buys is narrower than it first read: acceptedness is read from the
+working tree, so no verdict flip needs prior approval, and the pair only makes the
+second hop visible. The remaining real defence is that accepted release bullets are now
+refused for using globs — before that, one appended `- \`*\`` line was covered by the
+accepted runtime bullet and authorised every later shipped commit, which is what made my
+earlier wording here an overclaim.
 Scope: this checkout's `protected_paths`. The shipped default remains `[]`, and a project
 that does not publish a face of its own registers neither list.
+
+## 2026-09-22 18:22 (+10:00): A record's verdict and its stage's lifecycle are two fields
+
+Decided by: qoder-cli on the acceptance dry-run, which could not close the stage.
+`verdict: accepted` was doing double duty — authority over the commits a record names,
+and membership in the live-writer count — so the only way to say "this stage is
+finished" was to rewrite a verdict. Retiring wave 1b's that way uncovered six of its
+own protected touches, and leaving it accepted kept `swarm boundary` red for any
+repository that has run two stages, which is a permanent failure with no fix.
+Rationale: `status: open|closed` carries liveness alone, read by `swarm boundary` and
+by `checkpoint --review-prompt` and deliberately not by the coverage walk. An unknown
+value reads as `open`, so a typo costs a red line rather than silencing a check. The
+claim is reviewable, not forge-proof — the same envelope as a false `verdict`, which
+spec 6.3 already says.
+Scope: shipped in `templates/AUTHORIZATION.md`; a record predating the key has none
+and means `open`.
