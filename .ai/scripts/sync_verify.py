@@ -35,6 +35,11 @@ not hardcoded here. Checks, in order:
   9. Extra project checks (config "extra_checks": [{"name", "cmd"}]; PASS iff
      the command exits 0 AND wrote something — an exit 0 that produced zero
      bytes on both streams is a SKIP, never a pass; e.g. a freeze verifier)
+  10. The copy that RUNS is the copy that SHIPS: every `.ai/scripts/*.py` must be
+     byte-identical to its twin in this checkout's `scripts/` (`governing copy`).
+     In a tree that is not the skill's own checkout the check SKIPs by name — an
+     ordinary install has no in-tree source to compare against, and `scripts/`
+     full of the project's own code is not one.
 
 Exit 0 = every check that ran passed, 1 = at least one FAIL, 2 = no verdict
 (`ai_common.py` missing, install root unresolvable, config unusable). Every check prints
@@ -984,6 +989,105 @@ def check_extra(cfg: dict) -> None:
                                f"reads `{evidence}` -- not certified either way)")
         else:
             record(name, res.ok, f"cmd `{label}` rc={res.rc}; {evidence}")
+
+
+# The one file in a source checkout's `scripts/` that the installer never copies
+# into `.ai/scripts/`: `SCRIPT_MAP` in `init_sync.py` lists the other three and
+# this file is the thing a user runs BEFORE there is an `.ai/` to copy into. So
+# its presence answers "is this the skill's own checkout" structurally, where a
+# bare `scripts/` directory cannot — plenty of projects have one, and the C4 lane
+# tests of this very file create one full of unrelated `engine.py`.
+SOURCE_CHECKOUT_WITNESS = "init_sync.py"
+
+
+def _sha256_or_error(path: Path):
+    """`(digest, error)` for one file, with the read failure kept as a string.
+
+    `FileNotFoundError` is separated from the rest of `OSError` because the two
+    answer different questions below — "this copy has no source" is a different
+    sentence from "this source could not be read" — and neither is a mismatch.
+    """
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest(), None
+    except FileNotFoundError:
+        return None, "missing"
+    except OSError as exc:
+        return None, f"could not be read: {type(exc).__name__}: {exc}"
+
+
+def check_governing_copy() -> None:
+    """Q1: the bytes that ran this report must be the bytes this tree ships.
+
+    `path coverage` cannot answer this. It asks whether an edit was authorised, and
+    a record naming both walks authorises a mismatch as readily as a match — wave
+    1c edited `scripts/` twice and hand-copied it across, going green on each
+    occasion without proving the governing verifier was the one it had written.
+    The invariant here is identity, so it is one comparison per installed file.
+
+    Coverage limit, said rather than assumed: this checks that what RUNS matches
+    what is in `scripts/`. It does not check the reverse direction — a source file
+    that should have been installed and was not — because the list of what the
+    installer copies lives in `init_sync.py`, which is not itself installed, and
+    re-deriving it here would be a second copy of that promise to keep in step.
+    Nor can it tell a stale copy from a hand-edited one; it says only that the two
+    are not the same bytes, and which file.
+    """
+    src_dir = ROOT / "scripts"
+    inst_dir = AI_DIR / "scripts"
+    rel_src = src_dir.relative_to(ROOT).as_posix()
+    witness = (src_dir / SOURCE_CHECKOUT_WITNESS).is_file()
+    if not witness:
+        # Named, not silent: an ordinary install of this protocol has no in-tree
+        # source, and reporting PASS about a comparison that never happened is the
+        # fail-open this wave's whole existence is a reply to.
+        record("governing copy", None,
+               f"SKIP(not-source-checkout): no {rel_src}/{SOURCE_CHECKOUT_WITNESS} "
+               f"here, so this tree is an install rather than the skill's own "
+               f"checkout and there is no source to compare "
+               f"{(AI_DIR / 'scripts').relative_to(ROOT).as_posix()}/ against")
+        return
+    if not inst_dir.is_dir():
+        record("governing copy", False,
+               f"{rel_src} is a source walk but {(inst_dir.relative_to(ROOT)).as_posix()}/ "
+               f"is not a directory: the installed copy this check exists to "
+               f"compare is absent, so nothing here can be said about drift")
+        return
+    installed = sorted(inst_dir.glob("*.py"), key=lambda p: p.name)
+    problems = []
+    matched = 0
+    for inst in installed:
+        rel_inst = inst.relative_to(ROOT).as_posix()
+        inst_sum, inst_err = _sha256_or_error(inst)
+        if inst_err:
+            # A copy that cannot be read is not a copy that matched. Wave 1c's
+            # review made this rule explicit for the release walk: `exists()`
+            # answers False for files this host merely denies, so the read itself
+            # is the only witness, and it has to be believed in both directions.
+            problems.append(f"{rel_inst} {inst_err}")
+            continue
+        twin = src_dir / inst.name
+        src_sum, src_err = _sha256_or_error(twin)
+        rel_twin = twin.relative_to(ROOT).as_posix()
+        if src_err == "missing":
+            problems.append(f"{rel_inst} has no source twin in {rel_twin} -- the "
+                            f"copy that runs has no authored source in this tree")
+        elif src_err:
+            problems.append(f"{rel_twin} {src_err}, so {rel_inst} cannot be "
+                            f"compared to it")
+        elif src_sum != inst_sum:
+            problems.append(f"{rel_inst} digests to {inst_sum[:12]} but "
+                            f"{rel_twin} to {src_sum[:12]} -- the verifier that "
+                            f"ran this report is not the one this tree ships")
+        else:
+            matched += 1
+    if problems:
+        record("governing copy", False,
+               f"{len(problems)} of {len(installed)} installed files are not the "
+               f"bytes their source says: {'; '.join(problems)}")
+        return
+    record("governing copy", True,
+           f"{matched} installed files byte-identical to their twins "
+           f"in {rel_src}/ (sha-256 over the whole file)")
 
 
 # ---------------------------------------------------------------------------
@@ -1953,6 +2057,10 @@ def main() -> int:
             ("secrets ignored", lambda: check_secrets_ignored(cfg)),
             ("secret mirrors", lambda: check_secret_mirrors(cfg)),
             ("extra checks", lambda: check_extra(cfg)),
+            # Wave 1d Q1: still an install-facing question (it compares the bytes
+            # under `.ai/` to the bytes in this checkout), so it sits with the
+            # group above rather than with the four that read the records.
+            ("governing copy", check_governing_copy),
             # Wave 1b: the four governance checks, last on purpose. Everything
             # above asks about THIS install; these ask about the records the
             # install keeps about its own history, and they need a config that

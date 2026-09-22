@@ -6,14 +6,17 @@
 
 ## What ships
 
-Two shipped gaps that wave 1c found by being bitten by the first and by its own
-reviewers on the second. Each row is the defect in the product as published, not a
-description of the diff.
+Four lines, each a gap wave 1c found by being bitten by the first, by its own
+reviewers on the second and third, and by a count that moved under it on the
+fourth. Each row is the defect in the product as published, not a description of
+the diff.
 
 | File | Defect in the shipped product |
 |---|---|
 | `scripts/sync_verify.py` | `.ai/scripts/*.py` are the copies that actually govern an installing repository, and nothing compared them to `scripts/*.py`. Wave 1c edited the source twice and hand-copied, reporting green each time while the governing verifier could have been anything. A protocol whose own installed copy can silently differ from what it ships has no answer to "which rules ran". |
-| `scripts/sync_verify.py`, `scripts/ai_common.py` | The runtime coverage walk takes its window from one config line and compares it to nothing, so advancing `governance.window_start_commit` drops commits from the walk and they read as covered rather than as missing. Wave 1c closed this for the release face by asking each accepted record to declare its base; the runtime face has no such declaration, and the hole is the same shape. `checkpoint.py`'s window predicate also still accepts uppercase hex, a second definition of "is this a commit id" that `ai_common.window_is_valid` already refuses. |
+| `scripts/sync_verify.py` | The runtime coverage walk takes its window from one config line and compares it to nothing, so advancing `governance.window_start_commit` drops commits from the walk and they read as covered rather than as missing. Wave 1c closed this for the release face by asking each accepted record to declare its base; the runtime face has no such declaration, and the hole is the same shape. |
+| `scripts/checkpoint.py`, `scripts/ai_common.py` | `checkpoint._review_is_sha` accepts uppercase hex where `ai_common.window_is_valid` refuses it, so one repository carries two definitions of "is this a commit id" and the review prompt's window answer can disagree with the verifier's. One predicate, in `ai_common`, is the fix. |
+| `README.md`, `SKILL.md` | Both publish the fresh-install and migrated-install verifier figures as measured numbers. A check added to the shipped verifier falsifies them on the day it lands, which is how wave 1c's own review found the pair unprotected; they are re-measured here rather than carried forward. |
 
 ## What is deliberately not in here
 
@@ -34,6 +37,7 @@ grants nothing to its second path and a wildcard grants too much forever.
 - `scripts/sync_verify.py`
 - `scripts/ai_common.py`
 - `scripts/checkpoint.py`
+- `README.md`
 - `reference.md`
 - `SKILL.md`
 - `tests/test_lane_1d_governing_copy.py`

@@ -52,6 +52,12 @@ that actually governs and sits outside `protected_paths`, so it can drift from
 `scripts/*.py` while the verifier reports green; and the coverage walk unions the
 editable lists of every accepted record in the window, so a stage keeps
 authorising after it closes.
+Premise correction (2026-09-22, wave 1d): the first half is stale as written. This
+checkout's `.ai/sync_config.json` now lists `.ai/scripts/*` and `.ai/scripts/*.py`
+in `protected_paths`, so an *unauthorised* edit to the installed copy is caught by
+`path coverage`; what still was not caught was an *authorised* mismatch — a record
+naming both walks covers a diverged pair as readily as a faithful one — and that is
+the gap wave 1d's `governing copy` check closes. The second half stands unchanged.
 Rationale: both are prospective today — the installed copies are byte-identical
 by digest, and `.ai/` matches no protected pattern, so the stale grant is inert
 for a verdict. The real closure is a drift check and a record-expiry rule, both
