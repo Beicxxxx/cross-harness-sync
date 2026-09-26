@@ -606,6 +606,15 @@ def run_argv(root: Path, argv: list[str], timeout: int = 60,
     convenience), and the two failure modes that used to escape — a hung
     command and an unlaunchable one — come back as `GitResult` values.
 
+    That bytes-only rule is the whole encoding policy, so it is pinned here at
+    the one call site that could break it (ISSUE-40, "sync_verify 在 GBK 区域
+    下解码大段输出崩溃"): the bytes are decoded only by `decode()` (utf-8,
+    surrogateescape) and printed only through `protect_stdio()`. A future
+    caller that genuinely needs text mode must pass `encoding="utf-8",
+    errors="replace"` explicitly — an unset codec means the ANSI code page,
+    and on a cp936 host one unplaceable byte in a large child report kills
+    subprocess's reader thread: rc 0, stdout None, the whole report gone.
+
     The child environment is always explicit: without an `env` the silenced,
     scrubbed one is built here, and a caller-supplied `env` is still scrubbed,
     so constructing it from `os.environ` cannot re-open the leak.
