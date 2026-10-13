@@ -72,7 +72,7 @@ tier: T2
 executor: cursor/agent
 reviewer: cursor fresh-context T2 + F1 re-review ACCEPT; model family NOT_REPORTED (R5)
 verdict: accepted
-status: open
+status: closed
 window_start_commit: e6e10299bc58eba8ca89be09075a982ecaee0699
 red_before_green: true
 user_authorized: true

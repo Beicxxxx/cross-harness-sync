@@ -81,7 +81,7 @@ try:
                            REQUIRED_FILE_FLOOR, RepoError,
                            authorization_records, checkout_layout,
                            commit_exists, decode, is_accepted, is_full_sha,
-                           is_live_stage,
+                           is_live_stage, is_repo_relative_path,
                            parse_governance_block, protect_stdio,
                            resolve_authorizations_dir, resolve_roots,
                            run_argv, run_git,
@@ -672,6 +672,11 @@ def _declared_required_files():
         return None, [f"  CONFIG:  `required_files` must be a list of path "
                       f"strings, got {type(declared).__name__}"], \
             "`required_files` is not a list of paths"
+    escaping = [rel for rel in declared if not is_repo_relative_path(rel, ROOT)]
+    if escaping:
+        return None, ["  CONFIG:  `required_files` entries must be repo-relative "
+                      f"paths inside the checkout, not {escaping}"], \
+            "required-file paths escape the repository"
     return list(declared), None, None
 
 
@@ -693,12 +698,8 @@ def cmd_validate(args):
               "'files missing or empty'.")
         sys.exit(2)
     to_walk, _floor_only = with_required_file_floor(declared)
-    required_files = []
-    for rel in to_walk:
-        parts = [p for p in str(rel).split("/") if p and p != "."]
-        if parts and parts[0] == AI_DIR.name:
-            parts = parts[1:]
-        required_files.append(AI_DIR.joinpath(*parts) if parts else AI_DIR)
+    # Config paths are checkout-relative, exactly as in sync_verify.
+    required_files = [ROOT / rel for rel in to_walk]
     if not required_files:
         # Empty is not "nothing wrong": it is "this command checked nothing", and
         # the verdict it prints would be unearned (same law as the verifier's
@@ -709,7 +710,10 @@ def cmd_validate(args):
     all_ok = True
     unreadable = []
     for path in required_files:
-        rel = path.relative_to(AI_DIR)
+        try:
+            rel = path.relative_to(AI_DIR).as_posix()
+        except ValueError:
+            rel = path.relative_to(ROOT).as_posix()
         probed = _probe(path)
         if probed is None:
             print(f"  MISSING: {rel}")

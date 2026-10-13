@@ -1,27 +1,16 @@
 # Current Blockers
 
-> Last updated: 2026-09-23 03:25 (+10:00) by cursor.
+Updated 2026-10-13 (Australia/Sydney), Codex / GPT-6 / effort NOT_REPORTED.
 
-## Active blocker
+## Active blockers
 
-None.
+None for the six repairs. Independent review accepted; implementation commit
+2a8b5e3 passed the complete suite and all 28 verifier checks.
+The new accepted release grant covers the omitted historical wave-1e paths.
 
-## Not blockers
+## Binding limits
 
-- Tag `v2.1.1` and GitHub Release are published.
-- Protocol stamp remains `2.1.0` by design (skill release ≠ protocol bump).
-- Q9/Q10/Q14 known limits; Q13 unresolvable.
-
-## Binding disclosures
-
-1. Unverifiable here: second machine, real shallow → `UNKNOWN`, different
-   model family, wave 1b under this `.ai/`.
-2. Verifier detects omission, not fabrication; lock is advisory.
-3. Q14 escapes remain; window is not "enforced".
-4. Incomplete migrate uses `to: null` / `incomplete: true`.
-5. Numbers must be measured on the tree they describe.
-
-## Standing constraints
-
-- One active writer.
-- No force-push / history rewrite / blanket add.
+Q9/Q10/Q14 remain disclosed limits; Q13 remains unresolvable.
+The writer lock is advisory; records cannot prove their own truth.
+No second-machine or cross-family review claim. Protocol stays 2.1.0;
+latest published release stays v2.1.1. No new release was requested.

@@ -272,7 +272,6 @@ GITIGNORE_LINES = [
 PROTECTED_DESTS = frozenset(dst for _, dst in FILE_MAP
                             if not dst.startswith(".ai/templates/"))
 
-PLACEHOLDER_RE = re.compile(r"<[^<>]*>")
 _TEMPLATE_INDEX: tuple[frozenset[str], frozenset[str]] | None = None
 
 
@@ -327,9 +326,19 @@ def installer_slot_lines() -> tuple[re.Pattern, ...]:
     """
     global _INSTALLER_SLOT_LINES
     if _INSTALLER_SLOT_LINES is None:
-        slots = [slot for group in INSTALLER_SLOTS.values() for slot in group]
         out = []
-        for blob in _installed_template_texts():
+        sources = {dst: src for src, dst in FILE_MAP}
+        sources["AGENTS.md"] = "AGENTS.md"
+        for destination, slots in INSTALLER_SLOTS.items():
+            # Slot ownership is file-specific: CURRENT's <timezone> is user
+            # state, even though ROLE_POLICY's adoption timezone is filled
+            # by the installer. Never turn that shared spelling into a grant
+            # to overwrite the whole user-authored metadata line.
+            try:
+                blob = _normalised((TEMPLATES / sources[destination]).read_text(
+                    encoding="utf-8-sig"))
+            except (OSError, UnicodeDecodeError):
+                continue
             for line in blob.split("\n"):
                 if not any(slot in line for slot in slots):
                     continue
@@ -347,10 +356,9 @@ def is_template_shaped(text: str) -> bool:
 
       * the text is one whole installed template, unchanged apart from newline /
         BOM / trailing-whitespace noise, or
-      * every non-blank line is either a line that already appears in a shipped
-        template or a line still carrying an unfilled `<placeholder>`. The
-        second signal is what survives a protocol upgrade, where the file on
-        disk is the previous version's untouched template.
+      * every non-blank line appears in a shipped template or matches a slot
+        filled by the installer itself. A remaining placeholder or HTML
+        comment does not prove that the rest of its line is untouched.
 
     The line-by-line version of this rule, as written in the wave 1a plan,
     cannot work: our
@@ -374,7 +382,7 @@ def is_template_shaped(text: str) -> bool:
         return True
     slot_lines = installer_slot_lines()
     for line in (ln for ln in norm.split("\n") if ln.strip()):
-        if line in anchors or PLACEHOLDER_RE.search(line) or "<!--" in line:
+        if line in anchors:
             continue
         if any(match.match(line) for match in slot_lines):
             continue
@@ -1688,21 +1696,26 @@ def run_migration(root: Path, args) -> int:
         return _refuse(f"{CONFIG_REL} is not a JSON object")
 
     adir_rel = effective_authorizations_dir(cfg, args.authorizations_dir)
-    if args.authorizations_dir:
-        norm = args.authorizations_dir.replace("\\", "/").strip("/")
-        if (not norm or norm.startswith("/") or ":" in norm
-                or ".." in Path(norm).parts):
-            return _refuse(f"--authorizations-dir must be a repo-relative path "
-                           f"inside the checkout, got "
-                           f"{args.authorizations_dir!r}")
-        adir_rel = norm
+    # Validate the effective value, regardless of whether it came from the
+    # flag or the config. Do this before taking the lock or writing any file.
+    norm = adir_rel.replace("\\", "/")
+    if (not norm or norm.startswith("/") or ":" in norm
+            or ".." in Path(norm).parts):
+        return _refuse(f"authorizations_dir must be a repo-relative path "
+                       f"inside the checkout, got {adir_rel!r}")
+    try:
+        (root / norm).resolve().relative_to(root.resolve())
+    except (ValueError, OSError, RuntimeError):
+        return _refuse(f"authorizations_dir must resolve to a repo-relative "
+                       f"path inside the checkout, got {adir_rel!r}")
+    adir_rel = norm
     # Degradations collected here are PRINTED and, when this run writes the
     # record, RECORDED in it. A `.new` sidecar additionally forces
     # MIGRATE_INCOMPLETE (wave 1e Q8): the install still runs the OLD script,
     # so an rc-only caller must not see exit 0.
     warns: list = []
     incomplete_scripts = False
-    if not adir_rel.startswith(".ai/") and args.authorizations_dir:
+    if not adir_rel.startswith(".ai/"):
         print(f"[WARN] {adir_rel} is outside .ai/, so the index this run "
               "creates is NOT in the migration commit (which is scoped to "
               ".ai/**). Commit it yourself.")
@@ -1735,6 +1748,7 @@ def run_migration(root: Path, args) -> int:
     plan = script_plan(root)
 
     # --- idempotency: a re-run VERIFIES and writes nothing -------------------
+    prior = None
     if (root / MIGRATION_REL).is_file():
         try:
             prior = json.loads(_read_text(root / MIGRATION_REL) or "")
@@ -1782,6 +1796,24 @@ def run_migration(root: Path, args) -> int:
                 return MIGRATE_INCOMPLETE
             return 0
 
+    # A retry is another attempt at the same migration, not a new version step.
+    # Read its evidence before any writes; the previous journal may describe
+    # out-of-commit changes (notably .gitignore) that this attempt won't repeat.
+    retry = isinstance(prior, dict) and prior.get("incomplete") is True
+    previous_journal = ""
+    migration_from = installed
+    started = _now()
+    touched: list = []
+    if retry:
+        previous_journal, why = _read_raw_text(root / MIGRATION_JOURNAL_REL)
+        if not previous_journal:
+            return _refuse(f"incomplete migration journal cannot be preserved: "
+                           f"{why or 'missing or empty'}; restore it before retrying")
+        migration_from = prior.get("from") or installed
+        started = prior.get("started") or started
+        touched = [rel for rel in prior.get("files_touched", [])
+                   if isinstance(rel, str)]
+
     # --- the writer lock, taken before the first mutation --------------------
     # Spec §8's reason for the lock is that migration MUTATES TRACKED STATE. A
     # tree git CONFIRMS has no repository has no tracked state and no second
@@ -1798,9 +1830,6 @@ def run_migration(root: Path, args) -> int:
             return _refuse("the writer lock could not be acquired, and --migrate "
                            "mutates tracked state", [lock_detail])
         print(f"lock: {lock_detail or 'acquired'}")
-
-    started = _now()
-    touched: list = []
 
     # 1. the config, edited as text.
     if planned:
@@ -1905,6 +1934,11 @@ def run_migration(root: Path, args) -> int:
 
     # 5. the tracked placeholders and the append-only `.gitignore` (D16/D17).
     not_reversible: list = []
+    if previous_journal:
+        not_reversible.append(
+            "- This is a retry. The previous incomplete attempt's journal "
+            "is preserved below; its out-of-commit changes and rollback "
+            "limitations still apply.")
     for keep in (".ai/handoff/archive/.gitkeep", ".ai/state/archive/.gitkeep",
                  f"{adir_rel}/.gitkeep", ".ai/runtime/.gitkeep"):
         path = root / Path(keep)
@@ -1930,14 +1964,18 @@ def run_migration(root: Path, args) -> int:
                 f"copy ({detail}). Nothing here needs reverting, and nothing "
                 "here tells you the customisation still works under the new "
                 "protocol.")
-    journal = _journal(started, completed, installed, window, window_how,
+    journal = _journal(started, completed, migration_from, window, window_how,
                        adir_rel, sorted(set(touched)), not_reversible)
+    if previous_journal:
+        journal += ("\n## Previous incomplete attempt (preserved evidence)\n\n"
+                    + previous_journal)
     _write_text(root / MIGRATION_JOURNAL_REL, journal)
     touched.append(MIGRATION_JOURNAL_REL)
     # Wave 1e Q8: incomplete must not write `to: PROTOCOL_VERSION` — that is
     # exactly the claims_done predicate, and would trap the recovery re-run in
     # verify-only with VERSION still at the pre-upgrade stamp.
-    record = {"from": installed,
+    commit_failed = False
+    record = {"from": migration_from,
               "to": None if incomplete_scripts else PROTOCOL_VERSION,
               "incomplete": bool(incomplete_scripts),
               "started": started, "completed": completed,
@@ -1950,8 +1988,8 @@ def run_migration(root: Path, args) -> int:
         one degradation that can only be learned by attempting it."""
         record["warnings"] = list(warns)
         record["degraded"] = bool(warns)
-        record["incomplete"] = bool(incomplete_scripts)
-        record["to"] = None if incomplete_scripts else PROTOCOL_VERSION
+        record["incomplete"] = bool(incomplete_scripts or commit_failed)
+        record["to"] = None if record["incomplete"] else PROTOCOL_VERSION
         _write_text(root / MIGRATION_REL,
                     json.dumps(record, indent=2, ensure_ascii=False) + "\n")
     _write_record()
@@ -1965,18 +2003,19 @@ def run_migration(root: Path, args) -> int:
               f"{MIGRATION_REL} into; the files are on disk, nothing is in "
               "history.")
     else:
-        ok, detail = _migration_commit(root, installed,
+        ok, detail = _migration_commit(root, migration_from,
                                        incomplete=incomplete_scripts)
         if ok:
             if incomplete_scripts:
                 print(f"commit: {MIGRATION_COMMIT_TAG} incomplete from "
-                      f"v{installed} ({detail}); protocol stamp NOT advanced; "
+                      f"v{migration_from} ({detail}); protocol stamp NOT advanced; "
                       f"{WRITER_LOCK_REL} was deliberately left out")
             else:
-                print(f"commit: {MIGRATION_COMMIT_TAG} v{installed} -> "
+                print(f"commit: {MIGRATION_COMMIT_TAG} v{migration_from} -> "
                       f"v{PROTOCOL_VERSION} ({detail}); "
                       f"{WRITER_LOCK_REL} was deliberately left out")
         else:
+            commit_failed = True
             warns.append(f"the migration commit: {detail}")
             print(f"[WARN] commit failed: {detail}")
             # The record and the journal already went to disk and were already
@@ -2007,6 +2046,12 @@ def run_migration(root: Path, args) -> int:
           "expected; silence is not.")
     print(f"  4. Release the pen when you are done: python "
           f".ai/scripts/checkpoint.py --unlock --agent {MIGRATION_AGENT}")
+    if commit_failed:
+        print(f"\nMIGRATE INCOMPLETE: the migration commit failed. Files are "
+              f"on disk; {MIGRATION_REL} is marked incomplete (`to` is null). "
+              "Fix the reported git error and re-run `--migrate` to retry; "
+              "the run must not be treated as committed history.")
+        return MIGRATE_INCOMPLETE
     if incomplete_scripts:
         print(f"\nMIGRATE INCOMPLETE: {PROTOCOL_VERSION} was not stamped and "
               "at least one .ai/scripts/*.py.new sidecar remains while the "

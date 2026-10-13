@@ -1,32 +1,19 @@
 # Active Task
 
-> Last updated: 2026-09-23 03:25 (+10:00) by cursor.
-
-## Standing state — do not rewrite
-
-> Publish only what was measured on the tree being read.
-> Commits use this repository's LOCAL git identity.
+Updated 2026-10-13 (Australia/Sydney), Codex / GPT-6 / effort NOT_REPORTED.
 
 ## The one active task
 
-None. Wave 1e is on `main`, tag `v2.1.1` and the GitHub Release exist. Do not
-start a new row without user funding.
+None. The user-authorized six review repairs are implemented at
+`2a8b5e332b2480018636b0d39aa7a8723f21e01a` and passed independent T2 review.
 
-## Role ownership
+## Completion evidence
 
-- **Executor:** none for product code.
-- **User:** any next void funding or protocol bump.
+On that implementation commit: 564 passed, 5 skipped; sync_verify 28/28, exit 0.
+Runtime and release authorizations: `2026-10-13-review-fixes.md`, accepted,
+closed. Full evidence: `docs/evidence/2026-10-13-review-fixes.md`.
 
-## Required work
+## Next owner action
 
-1. Done — void closures + F1 recovery.
-2. Done — accept, merge PR #6, tag `v2.1.1`, GitHub Release.
-
-## Explicitly not authorized
-
-Force-push; history rewrite; blanket add; force-add `.superpowers/`; claiming
-the protocol stamp moved (it is still `2.1.0`).
-
-## Completion condition
-
-Met: Release URL https://github.com/Beicxxxx/cross-harness-sync/releases/tag/v2.1.1
+Review/merge `codex/fix-review-findings` when desired. Main is not merged by
+this repair stage. No version bump, tag, release, or published-history rewrite.

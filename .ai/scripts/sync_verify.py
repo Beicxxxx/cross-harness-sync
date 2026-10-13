@@ -412,19 +412,7 @@ def _is_repo_relative_path(val) -> bool:
     resolution. The resolution half needs `ROOT`, which a caller that never ran
     `main()` does not have — the by-name refusals hold there alone.
     """
-    if not _is_path_str(val):
-        return False
-    p = Path(val)
-    if p.is_absolute() or p.drive or p.root:
-        return False
-    if ".." in p.parts:
-        return False
-    if ROOT is not None:
-        try:
-            (ROOT / p).resolve().relative_to(ROOT.resolve())
-        except (OSError, ValueError):
-            return False
-    return True
+    return ai_common.is_repo_relative_path(val, ROOT)
 
 
 def _check_shape(key: str, val) -> None:
@@ -872,16 +860,16 @@ def check_secrets_ignored(cfg: dict) -> None:
     # may legitimately need, and there is no constant to fall back to.
     timeout = cfg["git_check_timeout"]
     for target in cfg["secret_files"]:
-        res = run_git(ROOT, ["check-ignore", "-v", target], timeout=timeout)
+        # --verbose also exits 0 for a matching NEGATION (!.env). Only the
+        # quiet predicate answers whether the path is actually ignored.
+        res = run_git(ROOT, ["check-ignore", "-q", "--", target], timeout=timeout)
         if res.timed_out:
             record(f"secret ignored: {target}", False,
                    f"git check-ignore timed out after {timeout}s")
         elif res.rc == 0:
-            # Lane S2 finding 11 (LOW): rc 0 proves an ignore RULE matched, not
-            # that a secret is safely placed. With no file on disk this PASS is
-            # about one line of `.gitignore`, and the reader is told so.
-            rule = (decode(res.stdout).strip()
-                    or f"git check-ignore rc={res.rc}")
+            # With no file on disk this proves only the ignore policy for the
+            # pathname, not that a secret is safely placed.
+            rule = "git check-ignore --quiet confirms the path is ignored"
             if not (ROOT / target).exists():
                 rule += " (file absent -- the ignore rule is all this saw)"
             record(f"secret ignored: {target}", True, rule)

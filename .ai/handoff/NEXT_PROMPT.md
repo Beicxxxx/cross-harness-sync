@@ -1,12 +1,7 @@
-# Next Prompt — nothing funded after v2.1.1
+# Next session
 
-Read CURRENT.md, TASK.md, BLOCKERS.md. There is no active implementation task.
-
-Do not start void follow-ups or a protocol bump without a fresh user ask in
-those terms. If asked to continue anyway: lock, re-run sync_verify before
-quoting figures, unlock at close-out.
-
-## Absolute stop boundary
-
-No force-push, no history rewrite, no blanket add, no force-add of
-`.superpowers/`, no global git config edits.
+Read L0. Six October review repairs are implemented, reviewed and accepted.
+Evidence: `docs/evidence/2026-10-13-review-fixes.md`; implementation `2a8b5e3`.
+Branch: `codex/fix-review-findings`; owner review/merge is the next action.
+No new code task, version bump, tag or release is authorized by this handoff.
+Do not repeat completed repairs or describe the same-family review as cross-family.

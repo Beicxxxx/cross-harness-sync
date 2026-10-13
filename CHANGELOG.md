@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased — code review fixes, 2026-10-13
+
+- Preserve partially filled state lines, user comments and update metadata
+  during `--force`; installer-owned slots are matched only in their templates.
+- Secret-ignore checks use Git's actual ignored-path predicate, so a negating
+  rule cannot certify a committable `.env` as ignored.
+- A failed migration commit exits incomplete and leaves a retryable record.
+- Validate the effective authorization directory (config or CLI) before writes;
+  reject absolute paths, parent traversal and resolved paths outside the repo.
+- Resolve checkpoint requirements against the repository root, matching verify.
+- Reconcile two omitted wave-1e test paths through a new release authorization;
+  preserve the original stage's historical record.
+
+Evidence: `docs/evidence/2026-10-13-review-fixes.md`. No version or tag change.
+
 ## v2.1.1 — wave 1e (void queue closures + release), 2026-09-23
 
 Wave 1d left implementable void rows open and three known limits named. This

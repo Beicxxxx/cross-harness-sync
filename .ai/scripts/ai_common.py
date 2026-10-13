@@ -99,6 +99,21 @@ def with_required_file_floor(declared: list[str]) -> tuple[list[str], list[str]]
     return entries + floor_only, floor_only
 
 
+def is_repo_relative_path(value, root: Path | None = None) -> bool:
+    """A nonempty relative path whose resolved destination stays in root."""
+    if not isinstance(value, str) or not value.strip():
+        return False
+    path = Path(value)
+    if path.is_absolute() or path.drive or path.root or ".." in path.parts:
+        return False
+    if root is not None:
+        try:
+            (root / path).resolve().relative_to(root.resolve())
+        except (OSError, ValueError, RuntimeError):
+            return False
+    return True
+
+
 def parse_version(raw) -> tuple[int, int, int]:
     """`X.Y.Z` as an int tuple, or `ValueError`. Never `None`.
 

@@ -1,44 +1,26 @@
-# Current Project State — the single source of truth for progress
+# Current Project State
 
-> Last updated: 2026-09-23 03:25 (+10:00) by cursor (v2.1.1 tagged and released).
-> Budget: ≤ 60 lines.
+Updated 2026-10-13 (Australia/Sydney), Codex / GPT-6 / effort NOT_REPORTED.
 
-## At a glance
+## Current outcome
 
-| Item | State |
-|---|---|
-| Current stage | Wave 1e on `main` tip `85aeab0`; tag `v2.1.1` published |
-| Authorization | wave-1e both faces `verdict: accepted` (1 live) |
-| Blockers | none |
-| Health check | `python .ai/scripts/sync_verify.py` |
-| Red lines | no "all green", no "enforced", no unverified cross-family |
+Six code-review findings repaired on `codex/fix-review-findings`.
+Implementation: `2a8b5e332b2480018636b0d39aa7a8723f21e01a`.
+Independent T2 review: ACCEPT after two scoped residual corrections;
+Codex / GPT-6 / configured ultra, same-family, fresh-context, uncalibrated.
 
-## 1. Objective
+## Evidence on the implementation commit
 
-Make one repository's work pick-up-able by several AI harnesses and several
-machines using files and git alone.
+`python .ai/scripts/sync_verify.py`: 28/28 checks passed, exit 0.
+Included suite: 564 passed, 5 skipped in 81.86s; three installed copies match.
+117 protected touches and 178 release-face pairs covered on that commit.
+See `docs/evidence/2026-10-13-review-fixes.md`; do not carry these counts to a
+later tree without remeasurement.
 
-## 2. Active authorization
+## Authorization and next step
 
-`.ai/state/authorizations/2026-09-23-wave1e.md` and
-`docs/release-authorizations/2026-09-23-wave1e-void-and-release.md` — accepted.
-Facts: `docs/evidence/wave1e-facts.md`. Queue: `docs/evidence/wave1d-queue.md`.
-
-## 3. Where the work stands
-
-| Stream | State |
-|---|---|
-| Waves 1a–1d | on `main` |
-| Wave 1e | merged as PR #6; void queue closed |
-| Release | GitHub Release `v2.1.1`; protocol stamp still `2.1.0` |
-| Next | no funded row |
-
-## 4. Stage history
-
-`.ai/state/archive/STAGE_MAP.md` — pointers only.
-
-## 5. Standing rules
-
-- Roles: `.ai/state/ROLE_POLICY.md`. Decisions: `DECISIONS_INDEX.md`.
-- Publish only numbers measured on the tree they describe.
-- Unverifiable here: second machine, real shallow → `UNKNOWN`, different family.
+October runtime and release records accepted and closed. No active task.
+Repairs await owner review/merge of the repair branch; no new release requested.
+Protocol stays 2.1.0; published release stays v2.1.1.
+Q9/Q10/Q14 remain known limits; Q13 remains unresolvable. Advisory locks and
+self-reported records do not prevent fabrication.
