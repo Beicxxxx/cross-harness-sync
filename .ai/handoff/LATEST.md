@@ -4,31 +4,32 @@ Updated 2026-10-13 (Australia/Sydney), Codex / GPT-6 / effort NOT_REPORTED.
 
 ## 1. Done
 
-Six reviewed fixes implemented on `codex/fix-review-findings` from `306683e`.
-New regressions demonstrated failures before fixes; 561 passed, 5 skipped
-in the complete pre-acceptance suite. Installed script copies match source.
+Six code-review defects repaired in `2a8b5e332b2480018636b0d39aa7a8723f21e01a`.
+Independent T2 review ACCEPT; two residual issues reproduced and corrected.
+On that commit: 564 passed, 5 skipped; sync_verify 28/28, exit 0.
+All three installed scripts match source. Stage authorizations accepted/closed.
 
 ## 2. Not done
 
-Independent T2 review, acceptance, committed-tree verification and push.
+Merge to main and a new release were not part of this repair close-out.
 
 ## 3. Evidence pointers
 
-`docs/evidence/2026-10-13-review-fixes.md` has red/green runs and boundaries.
-Runtime and release records are both `2026-10-13-review-fixes.md`, in
+`docs/evidence/2026-10-13-review-fixes.md` records red/green and review evidence.
+Runtime and release records are `2026-10-13-review-fixes.md`, under
 `.ai/state/authorizations/` and `docs/release-authorizations/` respectively.
 
 ## 4. Warnings
 
-Review pending; new release grant is not active yet. Four historical release
-pairs remain uncovered until acceptance. Q9/Q10/Q14 are still known limits.
-Protocol stays 2.1.0, published release v2.1.1; no new tag or release.
+Reviewer: Codex / GPT-6 / ultra, same-family, fresh-context, uncalibrated.
+Q9/Q10/Q14 remain known limits. Protocol 2.1.0, published release v2.1.1.
+Counts above describe the implementation commit, not an arbitrary later tree.
 
 ## 5. Next step
 
-Finish scoped T2 review, then accept, commit, verify and push stage-owned paths.
+Owner can review/merge `codex/fix-review-findings`; PR is linked in the chat.
+No active implementation task remains. Re-read live state before new work.
 
 ## 6. Must-read list
 
-The two October authorization records and the October evidence file above.
-Read L0 before continuing; do not reread archives or repeat completed tests.
+The two October authorization records and October evidence file above.

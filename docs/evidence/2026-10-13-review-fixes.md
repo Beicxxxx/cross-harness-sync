@@ -61,8 +61,8 @@ preserve the previous incomplete attempt instead of erasing its exclusions.
 The same reviewer returned ACCEPT on the scoped closure check: 4 passed,
 10 deselected; all three installed copies byte-identical to source. No second
 reviewer, cross-family claim, or reviewer-authored edits. Final full validation
-will run on the implementation commit; its immutable revision and result will
-be recorded in the close-out section below.
+will run on the implementation commit; its immutable revision and result are
+recorded in the close-out section below.
 
 ## Authorization reconciliation
 
@@ -70,3 +70,18 @@ New release record: docs/release-authorizations/2026-10-13-review-fixes.md.
 The two historical paths are explicit grants under the existing union rule;
 the old accepted record will only be closed by status. No history rewrite,
 retroactive successful-check claim, version bump or release is involved.
+
+## Committed implementation receipt
+
+Tree: `2a8b5e332b2480018636b0d39aa7a8723f21e01a`.
+Command: `python .ai/scripts/sync_verify.py`, exit 0.
+Suite: `564 passed, 5 skipped in 81.86s (0:01:21)`.
+Summary: `== 28/28 checks passed ==`.
+Governing copy: three installed scripts byte-identical to shipped source.
+Path coverage: 117 protected touches. Release authorization: 178 pairs covered.
+The six findings, including the four formerly uncovered historical pairs,
+are closed on this revision. The follow-up close-out commit changes only
+continuity/evidence/record status; these figures remain attributed here.
+
+No version bump, tag or release. No source or tests changed after this receipt.
+The writer lock is excluded from commits and released during close-out.

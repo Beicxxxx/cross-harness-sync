@@ -1,24 +1,19 @@
-# Active Task — October code review fixes
+# Active Task
 
 Updated 2026-10-13 (Australia/Sydney), Codex / GPT-6 / effort NOT_REPORTED.
-User authorization: "有问题就都修复"; base `306683e`.
 
 ## The one active task
 
-Fix the six reviewed defects: partial-template overwrite, negated secret
-ignore, failed migration commit recovery, authorization-directory escape,
-required-file resolver mismatch, and omitted wave-1e release grants.
+None. The user-authorized six review repairs are implemented at
+`2a8b5e332b2480018636b0d39aa7a8723f21e01a` and passed independent T2 review.
 
-## Required work
+## Completion evidence
 
-1. Red-first regressions on unchanged product code.
-2. Fix product and installed copies; targeted and complete tests.
-3. One fresh-context T2 review; accept stage records after findings close.
-4. Commit stage-owned paths, verify committed tree, push and release lock.
+On that implementation commit: 564 passed, 5 skipped; sync_verify 28/28, exit 0.
+Runtime and release authorizations: `2026-10-13-review-fixes.md`, accepted,
+closed. Full evidence: `docs/evidence/2026-10-13-review-fixes.md`.
 
-## Roles and boundary
+## Next owner action
 
-Executor: Codex / GPT-6 / effort NOT_REPORTED; reviewer pending.
-Read `.ai/state/authorizations/2026-10-13-review-fixes.md` and
-`docs/release-authorizations/2026-10-13-review-fixes.md`.
-No tag, GitHub Release, version bump, force-push or history rewrite.
+Review/merge `codex/fix-review-findings` when desired. Main is not merged by
+this repair stage. No version bump, tag, release, or published-history rewrite.

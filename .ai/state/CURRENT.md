@@ -2,26 +2,25 @@
 
 Updated 2026-10-13 (Australia/Sydney), Codex / GPT-6 / effort NOT_REPORTED.
 
-## Objective
+## Current outcome
 
-Repair the six findings from the user-requested code review of `306683e`.
+Six code-review findings repaired on `codex/fix-review-findings`.
+Implementation: `2a8b5e332b2480018636b0d39aa7a8723f21e01a`.
+Independent T2 review: ACCEPT after two scoped residual corrections;
+Codex / GPT-6 / configured ultra, same-family, fresh-context, uncalibrated.
 
-## Active stage
+## Evidence on the implementation commit
 
-- Branch: `codex/fix-review-findings`; user authorized all six repairs.
-- Runtime: `.ai/state/authorizations/2026-10-13-review-fixes.md`.
-- Release: `docs/release-authorizations/2026-10-13-review-fixes.md`.
-- Both verdicts accepted. Reviewer: Codex / GPT-6 / ultra, same-family, uncalibrated.
-- Writer lock held by codex. Repairs and T2 review complete; commit verification next.
+`python .ai/scripts/sync_verify.py`: 28/28 checks passed, exit 0.
+Included suite: 564 passed, 5 skipped in 81.86s; three installed copies match.
+117 protected touches and 178 release-face pairs covered on that commit.
+See `docs/evidence/2026-10-13-review-fixes.md`; do not carry these counts to a
+later tree without remeasurement.
 
-## Evidence
+## Authorization and next step
 
-- Baseline suite: 550 passed, 5 skipped on `306683e`.
-- Baseline release gate: four uncovered pairs for two omitted wave-1e tests.
-- New evidence: `docs/evidence/2026-10-13-review-fixes.md` (red/green and review evidence).
-
-## Boundaries
-
-No release, tag or version bump. Protocol remains 2.1.0; latest release v2.1.1.
-Q9/Q10/Q14 stay known limits; Q13 remains unresolvable. Advisory lock and
-self-reported authorization records do not prevent fabrication.
+October runtime and release records accepted and closed. No active task.
+Repairs await owner review/merge of the repair branch; no new release requested.
+Protocol stays 2.1.0; published release stays v2.1.1.
+Q9/Q10/Q14 remain known limits; Q13 remains unresolvable. Advisory locks and
+self-reported records do not prevent fabrication.

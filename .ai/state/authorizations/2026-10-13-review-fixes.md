@@ -47,7 +47,7 @@ tier: T2
 executor: Codex / GPT-6 / effort NOT_REPORTED
 reviewer: Codex / GPT-6 / configured ultra; same-family, fresh-context, uncalibrated; ACCEPT
 verdict: accepted
-status: open
+status: closed
 window_start_commit: 306683e9ea9a56ab3994a2f0c614a8a021dbe23e
 red_before_green: true
 user_authorized: true

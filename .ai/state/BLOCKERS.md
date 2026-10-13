@@ -2,11 +2,11 @@
 
 Updated 2026-10-13 (Australia/Sydney), Codex / GPT-6 / effort NOT_REPORTED.
 
-## Active gate
+## Active blockers
 
-October review fixes await the independent T2 verdict. The new release grant
-is pending, so the four historical wave-1e uncovered pairs still fail verify.
-Product tests passed: 561 passed, 5 skipped on the pre-acceptance working tree.
+None for the six repairs. Independent review accepted; implementation commit
+2a8b5e3 passed the complete suite and all 28 verifier checks.
+The new accepted release grant covers the omitted historical wave-1e paths.
 
 ## Binding limits
 
