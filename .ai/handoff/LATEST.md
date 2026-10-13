@@ -1,33 +1,34 @@
 # Latest Handoff
 
-> Updated: 2026-09-23 03:25 (+10:00) by cursor: v2.1.1 released. Budget: ≤ 80.
+Updated 2026-10-13 (Australia/Sydney), Codex / GPT-6 / effort NOT_REPORTED.
 
 ## 1. Done
 
-- Wave 1e void closures (Q6/Q8/Q11/Q12/Q15) + known-limit dispositions
-  (Q9/Q10/Q14); F1 recovery fix; accepted; PR #6 merged; tag + Release
-  `v2.1.1`.
+Six reviewed fixes implemented on `codex/fix-review-findings` from `306683e`.
+New regressions demonstrated failures before fixes; 561 passed, 5 skipped
+in the complete pre-acceptance suite. Installed script copies match source.
 
 ## 2. Not done
 
-- Nothing from the prior "undone" list. Next work needs new funding.
+Independent T2 review, acceptance, committed-tree verification and push.
 
 ## 3. Evidence pointers
 
-- Release: https://github.com/Beicxxxx/cross-harness-sync/releases/tag/v2.1.1
-- `docs/evidence/wave1e-facts.md`, `docs/evidence/wave1d-queue.md`
-- Merge: `85aeab0` (PR #6)
+`docs/evidence/2026-10-13-review-fixes.md` has red/green runs and boundaries.
+Runtime and release records are both `2026-10-13-review-fixes.md`, in
+`.ai/state/authorizations/` and `docs/release-authorizations/` respectively.
 
 ## 4. Warnings
 
-- Protocol stamp is still `2.1.0`.
-- Re-run verify before quoting figures from a later tip.
+Review pending; new release grant is not active yet. Four historical release
+pairs remain uncovered until acceptance. Q9/Q10/Q14 are still known limits.
+Protocol stays 2.1.0, published release v2.1.1; no new tag or release.
 
 ## 5. Next step
 
-Stop until the user funds a new stage.
+Finish scoped T2 review, then accept, commit, verify and push stage-owned paths.
 
 ## 6. Must-read list
 
-- Release notes / CHANGELOG `v2.1.1`
-- `docs/evidence/wave1e-facts.md`
+The two October authorization records and the October evidence file above.
+Read L0 before continuing; do not reread archives or repeat completed tests.

@@ -1,32 +1,24 @@
-# Active Task
+# Active Task — October code review fixes
 
-> Last updated: 2026-09-23 03:25 (+10:00) by cursor.
-
-## Standing state — do not rewrite
-
-> Publish only what was measured on the tree being read.
-> Commits use this repository's LOCAL git identity.
+Updated 2026-10-13 (Australia/Sydney), Codex / GPT-6 / effort NOT_REPORTED.
+User authorization: "有问题就都修复"; base `306683e`.
 
 ## The one active task
 
-None. Wave 1e is on `main`, tag `v2.1.1` and the GitHub Release exist. Do not
-start a new row without user funding.
-
-## Role ownership
-
-- **Executor:** none for product code.
-- **User:** any next void funding or protocol bump.
+Fix the six reviewed defects: partial-template overwrite, negated secret
+ignore, failed migration commit recovery, authorization-directory escape,
+required-file resolver mismatch, and omitted wave-1e release grants.
 
 ## Required work
 
-1. Done — void closures + F1 recovery.
-2. Done — accept, merge PR #6, tag `v2.1.1`, GitHub Release.
+1. Red-first regressions on unchanged product code.
+2. Fix product and installed copies; targeted and complete tests.
+3. One fresh-context T2 review; accept stage records after findings close.
+4. Commit stage-owned paths, verify committed tree, push and release lock.
 
-## Explicitly not authorized
+## Roles and boundary
 
-Force-push; history rewrite; blanket add; force-add `.superpowers/`; claiming
-the protocol stamp moved (it is still `2.1.0`).
-
-## Completion condition
-
-Met: Release URL https://github.com/Beicxxxx/cross-harness-sync/releases/tag/v2.1.1
+Executor: Codex / GPT-6 / effort NOT_REPORTED; reviewer pending.
+Read `.ai/state/authorizations/2026-10-13-review-fixes.md` and
+`docs/release-authorizations/2026-10-13-review-fixes.md`.
+No tag, GitHub Release, version bump, force-push or history rewrite.

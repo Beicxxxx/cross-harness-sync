@@ -813,7 +813,7 @@ def test_a_sidecar_divergence_is_recorded_not_just_printed(tmp_path):
 
 
 def test_the_record_names_a_commit_that_did_not_land(tmp_path, monkeypatch):
-    """A failed commit is a degradation the record carries, not a printout."""
+    """A failed commit is incomplete and retryable, not a successful upgrade."""
     repo = installed(make_repo(tmp_path))
     monkeypatch.setattr(
         init_sync, "_migration_commit",
@@ -821,9 +821,10 @@ def test_the_record_names_a_commit_that_did_not_land(tmp_path, monkeypatch):
                                          "simulated: `git commit` exited 128"))
     rc = init_sync.run_migration(repo, argparse.Namespace(
         authorizations_dir=None))
-    assert rc == 0, rc
+    assert rc == init_sync.MIGRATE_INCOMPLETE, rc
     record = json.loads((repo / MIGRATION_REL).read_text("utf-8"))
     assert record["degraded"] is True, record
+    assert record["incomplete"] is True and record["to"] is None, record
     assert any("commit" in w and "simulated" in w for w in record["warnings"]), \
         record
     # the journal is the other half of the record: it names the same failure
