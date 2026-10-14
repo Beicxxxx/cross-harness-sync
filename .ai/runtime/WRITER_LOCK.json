@@ -1,10 +1,10 @@
 {
-  "agent": "cursor",
-  "reason": "void-queue-and-release",
-  "acquired_at": "2026-09-23T02:46:36+10:00",
-  "expires_at": "2026-09-23T06:46:36+10:00",
-  "released_at": "2026-09-23T03:28:13+10:00",
-  "epoch": 6,
+  "agent": "codex",
+  "reason": "2026-10-15 handoff absorption authorized by user",
+  "acquired_at": "2026-10-15T02:03:47+11:00",
+  "expires_at": "2026-10-15T06:03:47+11:00",
+  "released_at": "2026-10-15T02:13:38+11:00",
+  "epoch": 7,
   "prior_forced": [
     {
       "agent": "qoder-cli",
@@ -12,5 +12,5 @@
       "acquired_at": "2026-09-22T22:34:54+10:00"
     }
   ],
-  "released_by": "cursor"
+  "released_by": "codex"
 }

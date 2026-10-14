@@ -386,6 +386,69 @@ because on a localized Windows host `tzname()` returns the OS's translated name
 like `CST` is ambiguous anyway; there the line reads `(UTC+10:00)` and nothing
 is lost.
 
+## Handoff writing and portable briefs
+
+The two outputs serve different jobs. A normal repo handoff updates the
+existing six-section `LATEST.md` and task-focused `NEXT_PROMPT.md`, under the
+repo's writer protocol. A portable brief is a read-only dispatch snapshot for a
+different directory, repo, recipient, or side task. Neither is a new ledger.
+
+### Write the useful context, not a second copy of the project
+
+- Aim the brief at the recipient's next task. Keep the motivation, material
+  constraints, unresolved choices, and why a promising alternative was rejected
+  when they affect that task. Do not flatten those reasons into a done list.
+- Read canonical live state before summarizing repo work. If the conversation
+  and state disagree, disclose the discrepancy; do not silently mark something
+  done or update canonical state as a side effect of exporting a brief.
+- Separate observed facts with evidence, unverified inferences, and pending
+  work. Summaries, hashes and file existence do not prove task completion.
+- Point to specs, plans, decisions, tests and diffs rather than copying them.
+  Carry only the rationale not already recorded, or a minimal necessary excerpt
+  when the recipient cannot obtain the original. Label omissions and inaccessible
+  evidence so the next agent knows what must be rechecked.
+- When RepoLedger is in use, resolve referenced entities through its current
+  lookup and keep their full registered names. Do not create new entities merely
+  to produce a brief, or cache an identity across a context that invalidates it.
+- List suggested skills only if relevant, naming their job and checking the
+  recipient's availability where possible. Do not require a tool named `Skill`,
+  auto-install anything, or treat a recommendation as authorization.
+- Before writing, omit credentials and unnecessary personal information from
+  the summary and quoted output. Replace needed secrets with the name of their
+  authorized source, never the value. This is a writing check, not a claim that
+  `sync_verify.py` automatically detects secrets in narrative text.
+
+### Portable brief: delivery and authority
+
+Use a user-selected accessible destination. OS temp is suitable for immediate
+local transfer only; use a durable location for delayed or cross-machine use.
+Return the exact path and how to consume it. File creation is not delivery to a
+colleague or a message to another agent; perform those actions only when
+authorized. Never interpolate the brief's body into a shell command.
+
+For repo work, record source repo, branch and commit, capture time, and relevant
+uncommitted paths so its age and scope are visible. Use repo-relative pointers
+plus the commit/source location when useful; a sender's absolute path may not
+exist on the recipient's machine. The recipient must obtain and recheck the
+source before relying on a pointer. For projectless work, omit Git metadata.
+
+A compact structure is: target and purpose; source snapshot; verified progress
+and evidence; unresolved reasoning; next action and established scope/stop
+boundary; required pointers and optional suggested skills. Use it in ordinary
+Markdown; no extra mandatory template, startup read, or runtime script is needed.
+
+Exporting a side-task brief leaves the source's one active task, writer lock,
+and authoritative state unchanged. It does not appoint a second source-checkout
+writer. Assign an isolated destination or read-only role under existing user
+authorization; writing back follows the source repo's ownership protocol. A
+brief cannot create or broaden authorization, bypass layout refusals, or turn
+self-reported review statements into independently verified events.
+
+These writing ideas selectively adapt Matt Pocock's
+[`handoff`](https://github.com/mattpocock/skills/blob/49dd158d1076134a641b33efb035946536778336/skills/productivity/handoff/SKILL.md).
+Focus and artifact deduplication were already part of this protocol; skill
+recommendations and an optional portable dispatch make them more explicit.
+
 ## Provenance of borrowed mechanisms
 
 | Mechanism | Source |

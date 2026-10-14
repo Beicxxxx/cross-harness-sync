@@ -67,6 +67,22 @@ handoff protocol, and on overlap it warns by name rather than arbitrating; nor
 for semantic/vector memory retrieval (this is narrative state, not a knowledge
 base).
 
+## Handoff writing and portable briefs
+
+For same-repo continuation, keep `CURRENT/TASK/BLOCKERS` authoritative and
+write `LATEST.md` plus the focused `NEXT_PROMPT.md`; do not replace them with a
+conversation summary. Preserve the reason for the next step, evidence versus
+inference, and any existing authorization boundary. Reference settled artifacts
+instead of repeating them. Recommend available skills only when they help the
+recipient's next action; their names neither install them nor grant authority.
+
+When the work must travel to another directory, repo, person, or side task,
+produce a **portable brief** only when requested. This is a read-only snapshot,
+not a new state store or permission to share a checkout's writer role. No `.ai`
+install, runtime command, git operation, or new required file is needed for
+this writing-only mode. Follow [handoff guidance](reference.md#handoff-writing-and-portable-briefs)
+for focus, redaction, recipient-accessible evidence, and delivery paths.
+
 ## Install into a repo
 
 The target must be a git repository (`git init` first): git is the transport, and

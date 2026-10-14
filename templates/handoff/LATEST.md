@@ -3,10 +3,13 @@
 > Updated: <YYYY-MM-DD HH:MM> (<timezone>) by <harness/model> after <trigger>.
 > Budget: ≤ 80 lines. Background and boundary statements live in
 > `.ai/state/CURRENT.md` — link, never copy.
+> Write for the next action, retaining why it matters. Before saving, omit
+> credentials and unnecessary personal data; do not copy them from chat.
 
 ## 1. Done
 
-- <Completed item with verdict/evidence in one line.>
+- <Completed item with observed verdict/evidence in one line; inference is
+  not completion.>
 - <Completed item.>
 
 ## 2. Not done
@@ -22,7 +25,7 @@
 ## 4. Warnings
 
 - <What the next agent could easily get wrong — scope traps, stale caches,
-  things that look authorized but aren't.>
+  things that look authorized but aren't. Label unverified assumptions.>
 
 ## 5. Next step
 
@@ -32,4 +35,5 @@
 ## 6. Must-read list
 
 - L0: `.ai/state/CURRENT.md`, `TASK.md`, `BLOCKERS.md`.
-- <Task-specific reads only. Explicitly forbid wholesale reads of L2 archives.>
+- <Task-specific reads only; keep relevant rationale at its source. Verify
+  the recipient can resolve these pointers. No wholesale L2 archive reads.>

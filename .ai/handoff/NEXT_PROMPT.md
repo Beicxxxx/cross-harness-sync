@@ -1,7 +1,8 @@
-# Next session
+# Next Prompt — handoff writing stage closed
 
-Read L0. Six October review repairs are implemented, reviewed and accepted.
-Evidence: `docs/evidence/2026-10-13-review-fixes.md`; implementation `2a8b5e3`.
-Branch: `codex/fix-review-findings`; owner review/merge is the next action.
-No new code task, version bump, tag or release is authorized by this handoff.
-Do not repeat completed repairs or describe the same-family review as cross-family.
+Read CURRENT/TASK/BLOCKERS for live state. No active execution task remains.
+The owner may review codex/handoff-writing-improvements; do not merge, publish,
+upgrade adopted projects or modify RepoLedger merely because this prompt exists.
+Relevant evidence: docs/evidence/2026-10-15-handoff-writing.md.
+Skill recommendation: cross-harness-sync for a requested repo takeover or portable
+brief; use the receiving harness's available invocation mechanism.

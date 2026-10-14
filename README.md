@@ -174,6 +174,16 @@ state-file pin, and more than one accepted authorization live at once each print
 a named `[FAIL]`. Details, hook snippets, and configuration:
 [reference.md](reference.md).
 
+## Optional portable handoff
+
+Repo continuation still uses `.ai` state, `LATEST.md` and `NEXT_PROMPT.md`.
+When requested, the same skill can also write a focused portable brief for a
+different repo, directory, recipient or side task without installing `.ai`
+there. It records source freshness, useful reasoning, evidence pointers and
+optional available skills, and omits sensitive data. The export is a snapshot,
+not a new authority, writer assignment or persistent state store. See
+[handoff guidance](reference.md#handoff-writing-and-portable-briefs).
+
 ## Why not Beads / Memory Bank / agent-mail?
 
 - **Cline Memory Bank** reads ALL memory files every session; this uses layered

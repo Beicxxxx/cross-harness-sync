@@ -1,35 +1,37 @@
 # Latest Handoff
 
-Updated 2026-10-13 (Australia/Sydney), Codex / GPT-6 / effort NOT_REPORTED.
+Updated 2026-10-15 (Australia/Sydney), Codex / GPT-6 / effort NOT_REPORTED.
 
 ## 1. Done
 
-Six code-review defects repaired in `2a8b5e332b2480018636b0d39aa7a8723f21e01a`.
-Independent T2 review ACCEPT; two residual issues reproduced and corrected.
-On that commit: 564 passed, 5 skipped; sync_verify 28/28, exit 0.
-All three installed scripts match source. Stage authorizations accepted/closed.
+User-authorized handoff writing improvements completed in skill docs/templates.
+Independent review ACCEPT; targeted 29 passed; pre-commit verifier 28/28 with
+564 passed, 5 skipped. No runtime script change; prior code-review fixes retained.
+Stage runtime and release records accepted/closed.
 
 ## 2. Not done
 
-Merge to main and a new release were not part of this repair close-out.
+Merge to main, version/tag/Release, RepoLedger change and adopted-project migration.
 
 ## 3. Evidence pointers
 
-`docs/evidence/2026-10-13-review-fixes.md` records red/green and review evidence.
-Runtime and release records are `2026-10-13-review-fixes.md`, under
-`.ai/state/authorizations/` and `docs/release-authorizations/` respectively.
+`docs/evidence/2026-10-15-handoff-writing.md`.
+2026-10-15-handoff-writing.md under `.ai/state/authorizations/` and
+`docs/release-authorizations/`; source baseline c03ef43.
 
 ## 4. Warnings
 
-Reviewer: Codex / GPT-6 / ultra, same-family, fresh-context, uncalibrated.
-Q9/Q10/Q14 remain known limits. Protocol 2.1.0, published release v2.1.1.
-Counts above describe the implementation commit, not an arbitrary later tree.
+Reviewer Codex / GPT-6 self-report, requested ultra, same-family, uncalibrated;
+incidental memory-index access unused for verdict; no served receipt.
+Portable briefs are snapshots, never new authority or another source writer.
+Global package sync does not migrate projects. Check live source before resuming.
 
 ## 5. Next step
 
-Owner can review/merge `codex/fix-review-findings`; PR is linked in the chat.
-No active implementation task remains. Re-read live state before new work.
+Owner may review `codex/handoff-writing-improvements`; no active task.
+An owner merge decision is separate; no publication action follows automatically.
 
 ## 6. Must-read list
 
-The two October authorization records and October evidence file above.
+L0 CURRENT/TASK/BLOCKERS, then the stage evidence and two authorizations if relevant.
+No wholesale archive reads.

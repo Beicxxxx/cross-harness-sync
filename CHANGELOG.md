@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased — handoff writing improvements, 2026-10-15
+
+- Preserve focused reasoning and distinguish observed facts from inferences in
+  handoff templates, while retaining the six-section and line-budget contracts.
+- Add optional available-skill recommendations to the takeover prompt, without
+  assuming a `Skill` tool or authorizing installation.
+- Document writing-only portable briefs for cross-directory/repo/side-task
+  dispatch, with accessible evidence, durable delivery choices and redaction.
+- Explicitly preserve source state, one-writer ownership and authorization:
+  portable copies do not appoint a second writer or prove their narrative.
+
+No runtime, protocol version, release or tag change. Selective writing ideas
+from Matt Pocock's `handoff`; no upstream skill dependency was added.
+
 ## Unreleased — code review fixes, 2026-10-13
 
 - Preserve partially filled state lines, user comments and update metadata
